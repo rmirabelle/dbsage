@@ -1,0 +1,110 @@
+import { create } from "zustand";
+
+export type PaneId = "tree" | "tabs";
+
+interface UiState {
+  sidebarWidth: number;
+  treeZoom: number;
+  tabsZoom: number;
+  focusedPane: PaneId;
+  expandedPanelHeight: number;
+
+  setSidebarWidth: (px: number) => void;
+  setZoom: (pane: PaneId, factor: number) => void;
+  bumpZoom: (pane: PaneId, delta: number) => void;
+  resetZoom: (pane: PaneId) => void;
+  setFocusedPane: (pane: PaneId) => void;
+  setExpandedPanelHeight: (px: number) => void;
+}
+
+const KEY = "dbsage.ui.v1";
+
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 560;
+const ZOOM_MIN = 0.7;
+const ZOOM_MAX = 2.0;
+const ZOOM_STEP = 0.1;
+const PANEL_MIN = 80;
+const PANEL_MAX = 1200;
+
+interface Persisted {
+  sidebarWidth?: number;
+  treeZoom?: number;
+  tabsZoom?: number;
+  expandedPanelHeight?: number;
+}
+
+const clamp = (v: number, lo: number, hi: number) =>
+  Math.max(lo, Math.min(hi, v));
+
+const roundZoom = (z: number) => Math.round(z * 100) / 100;
+
+const loadPersisted = (): Persisted => {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Persisted;
+  } catch {
+    return {};
+  }
+};
+
+const savePersisted = (state: UiState) => {
+  try {
+    const data: Persisted = {
+      sidebarWidth: state.sidebarWidth,
+      treeZoom: state.treeZoom,
+      tabsZoom: state.tabsZoom,
+      expandedPanelHeight: state.expandedPanelHeight,
+    };
+    localStorage.setItem(KEY, JSON.stringify(data));
+  } catch {
+    /* localStorage unavailable; ignore */
+  }
+};
+
+const persisted = loadPersisted();
+
+export const useUi = create<UiState>((set, get) => ({
+  sidebarWidth: clamp(persisted.sidebarWidth ?? 256, SIDEBAR_MIN, SIDEBAR_MAX),
+  treeZoom: clamp(persisted.treeZoom ?? 1, ZOOM_MIN, ZOOM_MAX),
+  tabsZoom: clamp(persisted.tabsZoom ?? 1, ZOOM_MIN, ZOOM_MAX),
+  focusedPane: "tabs",
+  expandedPanelHeight: clamp(
+    persisted.expandedPanelHeight ?? 240,
+    PANEL_MIN,
+    PANEL_MAX
+  ),
+
+  setSidebarWidth: (px) => {
+    set({ sidebarWidth: clamp(Math.round(px), SIDEBAR_MIN, SIDEBAR_MAX) });
+    savePersisted(get());
+  },
+
+  setZoom: (pane, factor) => {
+    const z = roundZoom(clamp(factor, ZOOM_MIN, ZOOM_MAX));
+    set(pane === "tree" ? { treeZoom: z } : { tabsZoom: z });
+    savePersisted(get());
+  },
+
+  bumpZoom: (pane, delta) => {
+    const current = pane === "tree" ? get().treeZoom : get().tabsZoom;
+    get().setZoom(pane, current + delta);
+  },
+
+  resetZoom: (pane) => {
+    set(pane === "tree" ? { treeZoom: 1 } : { tabsZoom: 1 });
+    savePersisted(get());
+  },
+
+  setFocusedPane: (pane) => set({ focusedPane: pane }),
+
+  setExpandedPanelHeight: (px) => {
+    set({ expandedPanelHeight: clamp(Math.round(px), PANEL_MIN, PANEL_MAX) });
+    savePersisted(get());
+  },
+}));
+
+export const ZOOM_BOUNDS = { MIN: ZOOM_MIN, MAX: ZOOM_MAX, STEP: ZOOM_STEP };
+export const SIDEBAR_BOUNDS = { MIN: SIDEBAR_MIN, MAX: SIDEBAR_MAX };
+export const PANEL_BOUNDS = { MIN: PANEL_MIN, MAX: PANEL_MAX };

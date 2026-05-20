@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+
+  --color-accent-50: #ecfeff;
+  --color-accent-300: #67e8f9;
+  --color-accent-400: #22d3ee;
+  --color-accent-500: #06b6d4;
+  --color-accent-600: #0891b2;
+
+  /**
+   * Slate-tinted dark palette anchored on #22252f. We remap the zinc-950/900/800
+   * slots (the only zinc shades the UI uses for chrome) instead of renaming
+   * classes, so every existing utility picks the new value automatically.
+   */
+  --color-zinc-950: #22252f;
+  --color-zinc-900: #2a2d38;
+  --color-zinc-800: #393d4d;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  background: #22252f;
+  color: #d4d4d8;
+}
+
+/** Custom scrollbar — narrow, dark, hidden until hover */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #393d4d;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #4a4f63;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+button, input, select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+}
+
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+}
