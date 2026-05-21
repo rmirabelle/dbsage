@@ -49,24 +49,30 @@ if (Test-Path $msiSrc) {
   Copy-Item $msiSrc "dist/$msiName" -Force
   $assets += "dist/$msiName"
 } else {
-  Write-Host "    (no MSI artifact found — publishing NSIS installer only)" -ForegroundColor Yellow
+  Write-Host "    (no MSI artifact found - publishing NSIS installer only)" -ForegroundColor Yellow
 }
 
+# gh writes progress/info to stderr; under EAP=Stop in Windows PowerShell 5.1
+# that surfaces as a terminating NativeCommandError, so relax it for the gh calls
+# and gate on $LASTEXITCODE instead.
+$ErrorActionPreference = "Continue"
+
 Write-Host "==> Removing prior releases ..." -ForegroundColor Cyan
-$existing = gh release list --json tagName -q '.[].tagName'
+$existing = @(gh release list --json tagName -q '.[].tagName')
 foreach ($existingTag in $existing) {
   if ($existingTag -and $existingTag -ne $tag) {
     Write-Host "    - deleting release $existingTag"
-    gh release delete $existingTag --yes --cleanup-tag 2>$null
+    gh release delete $existingTag --yes --cleanup-tag
   }
 }
 
-Write-Host "==> Creating release $tag ..." -ForegroundColor Cyan
-gh release view $tag *> $null
-if ($LASTEXITCODE -eq 0) {
+if ($existing -contains $tag) {
+  Write-Host "==> Updating existing release $tag ..." -ForegroundColor Cyan
   gh release upload $tag @assets --clobber
+  if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
   gh release edit $tag --title "DBSage $tag" --notes "DBSage $tag"
 } else {
+  Write-Host "==> Creating release $tag ..." -ForegroundColor Cyan
   gh release create $tag @assets --title "DBSage $tag" --notes "DBSage $tag"
 }
 if ($LASTEXITCODE -ne 0) { throw "gh release step failed" }
