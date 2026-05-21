@@ -3,6 +3,7 @@ mod db;
 mod error;
 mod state;
 mod store;
+mod updater;
 
 use commands::{connect, folders, profiles, query};
 use state::AppState;
@@ -31,6 +32,9 @@ pub fn run() {
             folders::rename_folder,
             folders::delete_folder,
             folders::set_table_folder,
+            updater::check_for_update,
+            updater::download_and_run_installer,
+            updater::get_app_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DBSage");

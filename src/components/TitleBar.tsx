@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, Database } from "@phosphor-icons/react";
+import { Minus, Square, X, Database, Info } from "@phosphor-icons/react";
 
-export function TitleBar() {
+interface Props {
+  onAbout: () => void;
+  updateAvailable?: boolean;
+}
+
+export function TitleBar({ onAbout, updateAvailable }: Props) {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -32,6 +37,17 @@ export function TitleBar() {
       </div>
 
       <div className="flex items-center">
+        <button
+          aria-label={updateAvailable ? "About — update available" : "About"}
+          title={updateAvailable ? "Update available" : "About DBSage"}
+          onClick={onAbout}
+          className="relative h-9 w-11 inline-flex items-center justify-center text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100 transition"
+        >
+          <Info size={15} />
+          {updateAvailable && (
+            <span className="absolute right-2.5 top-2 h-2 w-2 rounded-full bg-accent-400 ring-2 ring-zinc-950" />
+          )}
+        </button>
         <button
           aria-label="Minimize"
           onClick={() => win.minimize()}
