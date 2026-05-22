@@ -97,17 +97,18 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-[440px] rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/60">
+      <div data-el="profile-dialog" className="w-[440px] rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/60">
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
           <h2 className="text-sm font-medium text-zinc-100">
             {editing ? "Edit connection" : "New connection"}
           </h2>
           <button
+            data-el="profile-dialog-close-btn"
             onClick={onClose}
             className="text-zinc-500 hover:text-zinc-200"
             aria-label="Close"
           >
-            <X size={16} />
+            <X size={18} />
           </button>
         </div>
 
@@ -115,6 +116,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
           <Field label="Name">
             <input
               autoFocus
+              data-el="profile-name-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Local MySQL"
@@ -125,6 +127,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
           <div className="grid grid-cols-[1fr_88px] gap-2">
             <Field label="Host">
               <input
+                data-el="profile-host-input"
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
                 placeholder="127.0.0.1"
@@ -134,6 +137,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
             <Field label="Port">
               <input
                 type="number"
+                data-el="profile-port-input"
                 value={port}
                 onChange={(e) => setPort(parseInt(e.target.value || "0") || 0)}
                 className="dbs-input"
@@ -143,6 +147,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
 
           <Field label="Username">
             <input
+              data-el="profile-username-input"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="root"
@@ -160,6 +165,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
           >
             <input
               type="password"
+              data-el="profile-password-input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder={editing && profile?.hasPassword ? "••••••••" : ""}
@@ -169,6 +175,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
 
           <Field label="Default database (optional)">
             <input
+              data-el="profile-database-input"
               value={defaultDatabase}
               onChange={(e) => setDefaultDatabase(e.target.value)}
               placeholder="optional"
@@ -181,29 +188,30 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
           <div className="flex items-center gap-2 min-w-0 text-[11px]">
             {test.kind === "testing" && (
               <span className="flex items-center gap-1.5 text-zinc-400">
-                <Loader2 size={12} className="animate-spin" /> Testing…
+                <Loader2 size={14} className="animate-spin" /> Testing…
               </span>
             )}
             {test.kind === "ok" && (
               <span className="flex items-center gap-1.5 text-emerald-400">
-                <CheckCircle2 size={12} /> Connection OK
+                <CheckCircle2 size={14} /> Connection OK
               </span>
             )}
             {test.kind === "err" && (
               <span className="flex items-center gap-1.5 text-rose-400 truncate">
-                <AlertCircle size={12} className="shrink-0" />
+                <AlertCircle size={14} className="shrink-0" />
                 <span className="truncate">{test.message}</span>
               </span>
             )}
             {error && (
               <span className="flex items-center gap-1.5 text-rose-400 truncate">
-                <AlertCircle size={12} className="shrink-0" />
+                <AlertCircle size={14} className="shrink-0" />
                 <span className="truncate">{error}</span>
               </span>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
+              data-el="test-connection-btn"
               onClick={handleTest}
               disabled={test.kind === "testing" || saving}
               className="dbs-btn-secondary"
@@ -211,12 +219,13 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
               Test
             </button>
             <button
+              data-el="save-profile-btn"
               onClick={handleSave}
               disabled={saving}
               className="dbs-btn-primary"
             >
               {saving ? (
-                <Loader2 size={12} className="animate-spin" />
+                <Loader2 size={14} className="animate-spin" />
               ) : editing ? (
                 "Save"
               ) : (

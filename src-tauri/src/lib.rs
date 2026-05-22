@@ -5,7 +5,7 @@ mod state;
 mod store;
 mod updater;
 
-use commands::{connect, folders, profiles, query};
+use commands::{connect, folders, profiles, query, relations};
 use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -25,13 +25,18 @@ pub fn run() {
             connect::is_connected,
             query::list_databases,
             query::list_tables,
+            query::list_columns,
             query::fetch_rows,
+            query::count_rows,
             query::update_cell,
             folders::list_folders,
             folders::create_folder,
             folders::rename_folder,
             folders::delete_folder,
             folders::set_table_folder,
+            relations::list_relations,
+            relations::save_relation,
+            relations::delete_relation,
             updater::check_for_update,
             updater::download_and_run_installer,
             updater::get_app_version,

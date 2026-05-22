@@ -8,6 +8,7 @@ interface UiState {
   tabsZoom: number;
   focusedPane: PaneId;
   expandedPanelHeight: number;
+  relationsEditorWidth: number;
 
   setSidebarWidth: (px: number) => void;
   setZoom: (pane: PaneId, factor: number) => void;
@@ -15,6 +16,7 @@ interface UiState {
   resetZoom: (pane: PaneId) => void;
   setFocusedPane: (pane: PaneId) => void;
   setExpandedPanelHeight: (px: number) => void;
+  setRelationsEditorWidth: (px: number) => void;
 }
 
 const KEY = "dbsage.ui.v1";
@@ -26,12 +28,15 @@ const ZOOM_MAX = 2.0;
 const ZOOM_STEP = 0.1;
 const PANEL_MIN = 80;
 const PANEL_MAX = 1200;
+const RELATIONS_EDITOR_MIN = 320;
+const RELATIONS_EDITOR_MAX = 760;
 
 interface Persisted {
   sidebarWidth?: number;
   treeZoom?: number;
   tabsZoom?: number;
   expandedPanelHeight?: number;
+  relationsEditorWidth?: number;
 }
 
 const clamp = (v: number, lo: number, hi: number) =>
@@ -56,6 +61,7 @@ const savePersisted = (state: UiState) => {
       treeZoom: state.treeZoom,
       tabsZoom: state.tabsZoom,
       expandedPanelHeight: state.expandedPanelHeight,
+      relationsEditorWidth: state.relationsEditorWidth,
     };
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch {
@@ -74,6 +80,11 @@ export const useUi = create<UiState>((set, get) => ({
     persisted.expandedPanelHeight ?? 240,
     PANEL_MIN,
     PANEL_MAX
+  ),
+  relationsEditorWidth: clamp(
+    persisted.relationsEditorWidth ?? 460,
+    RELATIONS_EDITOR_MIN,
+    RELATIONS_EDITOR_MAX
   ),
 
   setSidebarWidth: (px) => {
@@ -101,6 +112,17 @@ export const useUi = create<UiState>((set, get) => ({
 
   setExpandedPanelHeight: (px) => {
     set({ expandedPanelHeight: clamp(Math.round(px), PANEL_MIN, PANEL_MAX) });
+    savePersisted(get());
+  },
+
+  setRelationsEditorWidth: (px) => {
+    set({
+      relationsEditorWidth: clamp(
+        Math.round(px),
+        RELATIONS_EDITOR_MIN,
+        RELATIONS_EDITOR_MAX
+      ),
+    });
     savePersisted(get());
   },
 }));

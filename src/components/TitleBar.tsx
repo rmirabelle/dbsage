@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, Database, Info } from "@phosphor-icons/react";
+import { Database } from "@phosphor-icons/react";
 
 interface Props {
   onAbout: () => void;
@@ -28,48 +28,168 @@ export function TitleBar({ onAbout, updateAvailable }: Props) {
 
   return (
     <div
+      data-el="titlebar"
       data-tauri-drag-region
       className="h-9 flex items-center justify-between bg-zinc-950 border-b border-zinc-800/80 px-3 select-none"
     >
-      <div data-tauri-drag-region className="flex items-center gap-2 text-zinc-300 pointer-events-none">
-        <Database size={14} className="text-accent-400" />
-        <span className="text-[12px] font-medium tracking-wide">DBSage</span>
+      <div className="flex items-center">
+        <div
+          data-tauri-drag-region
+          className="flex items-center gap-2 pr-3 text-zinc-300 pointer-events-none"
+        >
+          <Database size={16} className="text-accent-400" />
+          <span className="text-[12px] font-medium tracking-wide">DB Sage</span>
+        </div>
+        <nav data-el="app-menu" className="flex items-center">
+          <TitleBarMenu label="Help" badge={updateAvailable}>
+            {(close) => (
+              <button
+                data-el="menu-about"
+                onClick={() => {
+                  close();
+                  onAbout();
+                }}
+                className={MENU_ITEM_CLASS}
+              >
+                <span>About DB Sage</span>
+                {updateAvailable && (
+                  <span className="text-[10px] text-accent-400">
+                    update available
+                  </span>
+                )}
+              </button>
+            )}
+          </TitleBarMenu>
+        </nav>
       </div>
 
       <div className="flex items-center">
         <button
-          aria-label={updateAvailable ? "About — update available" : "About"}
-          title={updateAvailable ? "Update available" : "About DBSage"}
-          onClick={onAbout}
-          className="relative h-9 w-11 inline-flex items-center justify-center text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100 transition"
-        >
-          <Info size={15} />
-          {updateAvailable && (
-            <span className="absolute right-2.5 top-2 h-2 w-2 rounded-full bg-accent-400 ring-2 ring-zinc-950" />
-          )}
-        </button>
-        <button
+          data-el="titlebar-minimize-btn"
           aria-label="Minimize"
           onClick={() => win.minimize()}
           className="h-9 w-11 inline-flex items-center justify-center text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100 transition"
         >
-          <Minus size={14} />
+          <MinimizeIcon />
         </button>
         <button
+          data-el="titlebar-maximize-btn"
           aria-label={maximized ? "Restore" : "Maximize"}
           onClick={() => win.toggleMaximize()}
           className="h-9 w-11 inline-flex items-center justify-center text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100 transition"
         >
-          <Square size={12} weight="bold" />
+          {maximized ? <RestoreIcon /> : <MaximizeIcon />}
         </button>
         <button
+          data-el="titlebar-close-btn"
           aria-label="Close"
           onClick={() => win.close()}
           className="h-9 w-11 inline-flex items-center justify-center text-zinc-400 hover:bg-red-600 hover:text-white transition"
         >
-          <X size={14} />
+          <CloseIcon />
         </button>
       </div>
     </div>
+  );
+}
+
+const MENU_ITEM_CLASS =
+  "flex w-full items-center justify-between gap-6 px-3 py-1.5 text-left text-[12px] text-zinc-200 hover:bg-zinc-800";
+
+function TitleBarMenu({
+  label,
+  badge,
+  children,
+}: {
+  label: string;
+  badge?: boolean;
+  children: (close: () => void) => ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        data-el={`menu-${label.toLowerCase()}`}
+        onClick={() => setOpen((o) => !o)}
+        className={`relative h-9 px-3 text-[12px] transition hover:bg-zinc-800/80 hover:text-zinc-100 ${
+          open ? "bg-zinc-800/80 text-zinc-100" : "text-zinc-300"
+        }`}
+      >
+        {label}
+        {badge && (
+          <span className="absolute right-1 top-2 h-1.5 w-1.5 rounded-full bg-accent-400" />
+        )}
+      </button>
+      {open && (
+        <div
+          data-el={`menu-${label.toLowerCase()}-dropdown`}
+          className="absolute left-0 top-full z-50 min-w-[200px] rounded-b border border-zinc-800 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/50"
+        >
+          {children(() => setOpen(false))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const glyphProps = {
+  width: 10,
+  height: 10,
+  viewBox: "0 0 10 10",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1,
+  shapeRendering: "geometricPrecision" as const,
+};
+
+function MinimizeIcon() {
+  return (
+    <svg {...glyphProps}>
+      <path d="M0.5 5h9" />
+    </svg>
+  );
+}
+
+function MaximizeIcon() {
+  return (
+    <svg {...glyphProps}>
+      <rect x="0.5" y="0.5" width="9" height="9" />
+    </svg>
+  );
+}
+
+/** Two overlapping squares — the Windows "restore down" glyph shown when maximized. */
+function RestoreIcon() {
+  return (
+    <svg {...glyphProps}>
+      <rect x="0.5" y="2.5" width="7" height="7" />
+      <path d="M2.5 2.5v-2h7v7h-2" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg {...glyphProps}>
+      <path d="M0.5 0.5l9 9M9.5 0.5l-9 9" />
+    </svg>
   );
 }

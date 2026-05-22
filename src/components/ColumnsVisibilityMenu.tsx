@@ -64,6 +64,7 @@ export function ColumnsVisibilityMenu({
   return createPortal(
     <div
       ref={ref}
+      data-el="columns-menu"
       style={{ top, left, width: MENU_WIDTH, maxHeight: MENU_MAX_HEIGHT }}
       className="fixed z-50 flex flex-col rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[11px] text-zinc-200 select-none overflow-hidden"
       onClick={(e) => e.stopPropagation()}
@@ -74,12 +75,14 @@ export function ColumnsVisibilityMenu({
         </span>
         <div className="flex items-center gap-1">
           <button
+            data-el="columns-show-all-btn"
             onClick={showAll}
             className="px-2 py-0.5 rounded text-zinc-300 hover:bg-zinc-800"
           >
             Show all
           </button>
           <button
+            data-el="columns-hide-all-btn"
             onClick={hideAll}
             className="px-2 py-0.5 rounded text-zinc-300 hover:bg-zinc-800"
           >
@@ -94,6 +97,7 @@ export function ColumnsVisibilityMenu({
           return (
             <button
               key={col.name}
+              data-el="column-toggle"
               onClick={() => toggle(col.name)}
               className={clsx(
                 "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800 text-left",
@@ -102,9 +106,9 @@ export function ColumnsVisibilityMenu({
               title={hide ? "Click to show" : "Click to hide"}
             >
               {hide ? (
-                <EyeSlash size={12} className="shrink-0 text-zinc-500" />
+                <EyeSlash size={14} className="shrink-0 text-zinc-500" />
               ) : (
-                <Eye size={12} className="shrink-0 text-accent-400" />
+                <Eye size={14} className="shrink-0 text-accent-400" />
               )}
               <span className={clsx("truncate flex-1", hide && "line-through")}>
                 {col.name}

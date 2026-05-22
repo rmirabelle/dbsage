@@ -102,6 +102,7 @@ export function AboutDialog({ open, version, initialUpdateInfo, onClose }: Props
       onClick={() => overlayClickable && onClose()}
     >
       <div
+        data-el="about-dialog"
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
@@ -110,20 +111,21 @@ export function AboutDialog({ open, version, initialUpdateInfo, onClose }: Props
         {state.kind !== "downloading" && (
           <button
             type="button"
+            data-el="about-dialog-close-btn"
             onClick={onClose}
             className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-200"
             aria-label="Close"
           >
-            <X size={16} />
+            <X size={18} />
           </button>
         )}
 
         <div className="flex items-center gap-4 px-5 pt-6 pb-4">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-accent-500/10 border border-accent-500/30">
-            <Database size={32} weight="duotone" className="text-accent-400" />
+            <Database size={37} weight="duotone" className="text-accent-400" />
           </div>
           <div className="flex flex-col gap-0.5">
-            <div className="text-lg font-semibold text-zinc-100">DBSage</div>
+            <div className="text-lg font-semibold text-zinc-100">DB Sage</div>
             <div className="text-[11px] text-zinc-500">Version {version || "—"}</div>
             <div className="mt-1 text-xs text-zinc-400">by Robert Mirabelle</div>
             <div className="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
@@ -142,7 +144,7 @@ export function AboutDialog({ open, version, initialUpdateInfo, onClose }: Props
 
         {state.kind !== "downloading" && (
           <div className="flex justify-end border-t border-zinc-800 px-5 py-3">
-            <button type="button" onClick={onClose} className="dbs-btn-secondary">
+            <button type="button" data-el="about-close-btn" onClick={onClose} className="dbs-btn-secondary">
               Close
             </button>
           </div>
@@ -192,10 +194,11 @@ function UpdateSection({
           </span>
           <button
             type="button"
+            data-el="check-update-btn"
             onClick={onCheck}
             className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[11px] font-medium text-zinc-200 hover:bg-zinc-700"
           >
-            <ArrowClockwise size={13} />
+            <ArrowClockwise size={15} />
             Check for updates
           </button>
         </div>
@@ -204,7 +207,7 @@ function UpdateSection({
     case "checking":
       return (
         <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-          <CircleNotch size={13} className="animate-spin" />
+          <CircleNotch size={15} className="animate-spin" />
           Checking for updates&hellip;
         </div>
       );
@@ -213,7 +216,7 @@ function UpdateSection({
       return (
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-[11px] text-zinc-300">
-            <CheckCircle size={15} className="text-emerald-400" weight="fill" />
+            <CheckCircle size={17} className="text-emerald-400" weight="fill" />
             You&apos;re up to date.
           </div>
           <button
@@ -221,7 +224,7 @@ function UpdateSection({
             onClick={onCheck}
             className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-[10px] text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
           >
-            <ArrowClockwise size={11} />
+            <ArrowClockwise size={13} />
             Check again
           </button>
         </div>
@@ -239,8 +242,8 @@ function UpdateSection({
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" onClick={onDownload} className="dbs-btn-primary text-[12px]">
-              <DownloadSimple size={14} />
+            <button type="button" data-el="download-update-btn" onClick={onDownload} className="dbs-btn-primary text-[12px]">
+              <DownloadSimple size={16} />
               Download &amp; install
             </button>
             <button
@@ -248,7 +251,7 @@ function UpdateSection({
               onClick={() => void openUrl(state.info.releaseUrl)}
               className="flex items-center gap-1.5 text-[11px] text-zinc-400 hover:text-zinc-200"
             >
-              <ArrowSquareOut size={13} />
+              <ArrowSquareOut size={15} />
               Release notes
             </button>
           </div>
@@ -263,7 +266,7 @@ function UpdateSection({
       return (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2 text-[11px] text-zinc-200">
-            <CircleNotch size={13} className="animate-spin" />
+            <CircleNotch size={15} className="animate-spin" />
             Downloading v{state.info.latestVersion}
             {pct !== null ? ` — ${pct}%` : "…"}
           </div>
@@ -274,7 +277,7 @@ function UpdateSection({
             />
           </div>
           <div className="text-[10px] text-zinc-500">
-            The installer will launch when the download completes. DBSage will close
+            The installer will launch when the download completes. DB Sage will close
             to apply the update.
           </div>
         </div>

@@ -5,6 +5,8 @@ import type {
   DatabaseTab,
   Folder,
   ProfileView,
+  Relation,
+  RelationsTab,
   RowsTab,
   SortSpec,
   Tab,
@@ -37,6 +39,10 @@ interface Store {
 
   tabs: Tab[];
   activeTabId: string | null;
+  /** Last table opened per `${profileId}::${database}`, for re-selecting in the DB view. */
+  lastOpenedTables: Record<string, string>;
+  /** Defined relations per `${profileId}::${database}`. */
+  relations: Record<string, Relation[]>;
 
   loadProfiles: () => Promise<void>;
   connectProfile: (profileId: string) => Promise<void>;
@@ -57,10 +63,30 @@ interface Store {
   setTablesFolder: (tabId: string, tables: string[], folderId: string | null) => Promise<void>;
 
   openTable: (profileId: string, profileName: string, database: string, table: string) => Promise<void>;
+  openRelations: (profileId: string, profileName: string, database: string) => void;
+  loadRelations: (profileId: string, database: string) => Promise<void>;
+  saveRelation: (args: {
+    profileId: string;
+    database: string;
+    id?: string | null;
+    fromTable: string;
+    fromColumn: string;
+    toTable: string;
+    toColumn: string;
+    kind: string;
+    name?: string;
+  }) => Promise<void>;
+  deleteRelation: (
+    profileId: string,
+    database: string,
+    id: string
+  ) => Promise<void>;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   setTabPage: (tabId: string, page: number) => Promise<void>;
+  setPageSize: (tabId: string, pageSize: number) => Promise<void>;
   refreshTab: (tabId: string) => Promise<void>;
+  countExactRows: (tabId: string) => Promise<void>;
 
   setRowsSort: (tabId: string, sort: SortSpec | null) => Promise<void>;
   setRowsFilter: (tabId: string, column: string, filter: ColumnFilter | null) => Promise<void>;
@@ -98,6 +124,8 @@ export const useStore = create<Store>((set, get) => ({
   expandedProfiles: new Set(),
   tabs: [],
   activeTabId: null,
+  lastOpenedTables: {},
+  relations: {},
 
   loadProfiles: async () => {
     set({ loadingProfiles: true });
@@ -251,7 +279,15 @@ export const useStore = create<Store>((set, get) => ({
       filter: "",
       currentFolderId: null,
     };
-    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+    /* Only one database view at a time — replace the current one in place,
+       keeping any open table tabs. */
+    set((s) => {
+      const idx = s.tabs.findIndex((t) => t.kind === "database");
+      const tabs = s.tabs.slice();
+      if (idx >= 0) tabs[idx] = tab;
+      else tabs.push(tab);
+      return { tabs, activeTabId: tabId };
+    });
     await loadDatabaseTab(tabId, set, get);
   },
 
@@ -336,6 +372,12 @@ export const useStore = create<Store>((set, get) => ({
 
   openTable: async (profileId, profileName, database, table) => {
     const tabId = `rows::${profileId}::${database}::${table}`;
+    set((s) => ({
+      lastOpenedTables: {
+        ...s.lastOpenedTables,
+        [`${profileId}::${database}`]: table,
+      },
+    }));
     const existing = get().tabs.find((t) => t.id === tabId);
     if (existing) {
       set({ activeTabId: tabId });
@@ -352,6 +394,7 @@ export const useStore = create<Store>((set, get) => ({
       page: 1,
       pageSize: 500,
       data: null,
+      exactTotal: null,
       loading: true,
       error: null,
       sort: null,
@@ -375,16 +418,80 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
 
+  openRelations: (profileId, profileName, database) => {
+    const tabId = `relations::${profileId}::${database}`;
+    const existing = get().tabs.find((t) => t.id === tabId);
+    if (existing) {
+      set({ activeTabId: tabId });
+      return;
+    }
+    const tab: RelationsTab = {
+      id: tabId,
+      kind: "relations",
+      profileId,
+      profileName,
+      database,
+    };
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+  },
+
+  loadRelations: async (profileId, database) => {
+    const list = await ipc.listRelations(profileId, database);
+    set((s) => ({
+      relations: { ...s.relations, [`${profileId}::${database}`]: list },
+    }));
+  },
+
+  saveRelation: async (args) => {
+    await ipc.saveRelation(args);
+    await get().loadRelations(args.profileId, args.database);
+  },
+
+  deleteRelation: async (profileId, database, id) => {
+    await ipc.deleteRelation(profileId, database, id);
+    await get().loadRelations(profileId, database);
+  },
+
   setActiveTab: (tabId) => set({ activeTabId: tabId }),
 
   setTabPage: async (tabId, page) => {
     await loadTabPage(tabId, page, set, get);
   },
 
+  setPageSize: async (tabId, pageSize) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows" ? { ...t, pageSize, page: 1 } : t
+      ),
+    }));
+    await loadTabPage(tabId, 1, set, get);
+  },
+
+  countExactRows: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows") return;
+    const exact = await ipc.countRows({
+      profileId: tab.profileId,
+      database: tab.database,
+      table: tab.table,
+      filters: tab.filters,
+    });
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: exact } : t
+      ),
+    }));
+  },
+
   refreshTab: async (tabId) => {
     const tab = get().tabs.find((t) => t.id === tabId);
     if (!tab) return;
     if (tab.kind === "rows") {
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: null } : t
+        ),
+      }));
       await loadTabPage(tabId, tab.page, set, get);
     } else {
       await loadDatabaseTab(tabId, set, get);
@@ -406,7 +513,7 @@ export const useStore = create<Store>((set, get) => ({
         if (t.id !== tabId || t.kind !== "rows") return t;
         const without = t.filters.filter((f) => f.column !== column);
         const next = filter ? [...without, filter] : without;
-        return { ...t, filters: next, page: 1 };
+        return { ...t, filters: next, page: 1, exactTotal: null };
       }),
     }));
     await loadTabPage(tabId, 1, set, get);

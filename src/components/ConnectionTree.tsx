@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   CaretRight as ChevronRight,
   Database,
@@ -28,21 +29,42 @@ export function ConnectionTree() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProfileView | null>(null);
-  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{
+    profileId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadProfiles();
   }, [loadProfiles]);
 
+  const commitRename = async (profile: ProfileView, rawName: string) => {
+    setRenamingId(null);
+    const name = rawName.trim();
+    if (!name || name === profile.name) return;
+    await ipc.saveProfile({
+      id: profile.id,
+      name,
+      host: profile.host,
+      port: profile.port,
+      username: profile.username,
+      defaultDatabase: profile.defaultDatabase,
+    });
+    await loadProfiles();
+  };
+
   return (
-    <aside className="w-full h-full bg-zinc-950 border-r border-zinc-800/80 flex flex-col">
-      <div className="h-9 flex items-center justify-between px-3 border-b border-zinc-800/60 gap-2">
+    <aside data-el="connection-tree" className="w-full h-full bg-zinc-950 border-r border-zinc-800/80 flex flex-col">
+      <div data-el="connection-tree-header" className="h-9 flex items-center justify-between px-3 border-b border-zinc-800/60 gap-2">
         <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
           Connections
         </span>
         <div className="flex items-center gap-1">
           <ZoomControls pane="tree" />
           <button
+            data-el="add-connection-btn"
             onClick={() => {
               setEditing(null);
               setDialogOpen(true);
@@ -50,15 +72,15 @@ export function ConnectionTree() {
             className="text-zinc-400 hover:text-accent-400 transition h-5 w-5 inline-flex items-center justify-center rounded hover:bg-zinc-800"
             aria-label="Add connection"
           >
-            <Plus size={13} />
+            <Plus size={15} />
           </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto py-1">
+      <div className="flex-1 overflow-y-auto py-1 select-none">
         {loadingProfiles && profiles.length === 0 && (
           <div className="px-3 py-4 text-zinc-500 text-xs flex items-center gap-2">
-            <Loader2 size={12} className="animate-spin" /> Loading…
+            <Loader2 size={14} className="animate-spin" /> Loading…
           </div>
         )}
 
@@ -83,52 +105,90 @@ export function ConnectionTree() {
           return (
             <div key={profile.id} className="text-xs">
               <div
+                data-el="connection-row"
                 className={clsx(
                   "group flex items-center gap-1 px-2 py-1.5 cursor-pointer hover:bg-zinc-900/70",
                   expanded && "bg-zinc-900/40"
                 )}
                 onClick={() => toggleProfileExpanded(profile.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenu({ profileId: profile.id, x: e.clientX, y: e.clientY });
+                }}
               >
                 <ChevronRight
-                  size={12}
+                  size={16}
                   className={clsx(
                     "text-zinc-500 transition-transform",
                     expanded && "rotate-90"
                   )}
                 />
                 {conn?.connecting ? (
-                  <Loader2 size={12} className="animate-spin text-accent-400" />
+                  <Loader2 size={18} className="shrink-0 animate-spin text-lime-400" />
                 ) : conn?.connected ? (
-                  <PlugZap size={12} className="text-accent-400" />
+                  <button
+                    data-el="disconnect-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      disconnectProfile(profile.id);
+                    }}
+                    className="shrink-0 text-lime-400 hover:text-zinc-300 transition-colors"
+                    aria-label="Disconnect"
+                    title="Disconnect"
+                  >
+                    <PlugZap size={18} />
+                  </button>
                 ) : (
-                  <Server size={12} className="text-zinc-500" />
+                  <Server size={18} className="shrink-0 text-zinc-500" />
                 )}
-                <span className="flex-1 truncate text-zinc-200">{profile.name}</span>
+                {renamingId === profile.id ? (
+                  <ProfileRenameInput
+                    initial={profile.name}
+                    onCommit={(name) => commitRename(profile, name)}
+                    onCancel={() => setRenamingId(null)}
+                  />
+                ) : (
+                  <span className="flex-1 truncate text-zinc-200 text-[16px] font-bold">
+                    {profile.name}
+                  </span>
+                )}
                 <button
+                  data-el="connection-menu-btn"
                   className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-zinc-200 transition"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setMenuOpen(menuOpen === profile.id ? null : profile.id);
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    setMenu(
+                      menu?.profileId === profile.id
+                        ? null
+                        : { profileId: profile.id, x: r.left, y: r.bottom }
+                    );
                   }}
                   aria-label="Profile actions"
                 >
-                  <MoreVertical size={12} />
+                  <MoreVertical size={14} />
                 </button>
               </div>
 
-              {menuOpen === profile.id && (
-                <ProfileMenu
+              {menu?.profileId === profile.id && (
+                <ConnectionContextMenu
+                  x={menu.x}
+                  y={menu.y}
                   profile={profile}
                   connected={!!conn?.connected}
-                  onClose={() => setMenuOpen(null)}
+                  onClose={() => setMenu(null)}
+                  onRename={() => {
+                    setRenamingId(profile.id);
+                    setMenu(null);
+                  }}
                   onEdit={() => {
                     setEditing(profile);
                     setDialogOpen(true);
-                    setMenuOpen(null);
+                    setMenu(null);
                   }}
                   onDisconnect={async () => {
                     await disconnectProfile(profile.id);
-                    setMenuOpen(null);
+                    setMenu(null);
                   }}
                 />
               )}
@@ -163,42 +223,68 @@ export function ConnectionTree() {
   );
 }
 
-function ProfileMenu({
+function ConnectionContextMenu({
+  x,
+  y,
   profile,
   connected,
   onClose,
+  onRename,
   onEdit,
   onDisconnect,
 }: {
+  x: number;
+  y: number;
   profile: ProfileView;
   connected: boolean;
   onClose: () => void;
+  onRename: () => void;
   onEdit: () => void;
   onDisconnect: () => void;
 }) {
   const loadProfiles = useStore((s) => s.loadProfiles);
 
-  return (
+  useEffect(() => {
+    const close = () => onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  const item = "w-full text-left px-3 py-1.5 hover:bg-zinc-800";
+
+  return createPortal(
     <div
-      className="ml-7 mt-0.5 mb-1 rounded border border-zinc-800 bg-zinc-900/95 backdrop-blur-sm py-1 text-[11px] shadow-xl shadow-black/50"
-      onMouseLeave={onClose}
+      data-el="connection-menu"
+      style={{ top: y, left: x }}
+      onClick={(e) => e.stopPropagation()}
+      className="fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 text-[12px] shadow-xl shadow-black/60"
     >
       <button
-        className="w-full text-left px-3 py-1.5 hover:bg-zinc-800 text-zinc-200"
-        onClick={onEdit}
+        data-el="rename-connection-btn"
+        className={clsx(item, "text-zinc-200")}
+        onClick={onRename}
       >
+        Rename
+      </button>
+      <button className={clsx(item, "text-zinc-200")} onClick={onEdit}>
         Edit…
       </button>
       {connected && (
-        <button
-          className="w-full text-left px-3 py-1.5 hover:bg-zinc-800 text-zinc-200"
-          onClick={onDisconnect}
-        >
+        <button className={clsx(item, "text-zinc-200")} onClick={onDisconnect}>
           Disconnect
         </button>
       )}
       <button
-        className="w-full text-left px-3 py-1.5 hover:bg-zinc-800 text-rose-400"
+        className={clsx(item, "text-rose-400")}
         onClick={async () => {
           if (!confirm(`Delete connection "${profile.name}"?`)) return;
           await ipc.deleteProfile(profile.id);
@@ -208,7 +294,52 @@ function ProfileMenu({
       >
         Delete
       </button>
-    </div>
+    </div>,
+    document.body
+  );
+}
+
+function ProfileRenameInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [val, setVal] = useState(initial);
+  const ref = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  const finish = (fn: () => void) => {
+    if (done.current) return;
+    done.current = true;
+    fn();
+  };
+  return (
+    <input
+      ref={ref}
+      data-el="connection-rename-input"
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish(() => onCommit(val));
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          finish(onCancel);
+        }
+      }}
+      onBlur={() => finish(() => onCommit(val))}
+      className="flex-1 min-w-0 bg-zinc-900 border border-accent-500/60 rounded px-1.5 py-0.5 text-[16px] font-bold text-zinc-100 outline-none"
+    />
   );
 }
 
@@ -227,7 +358,7 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
   if (!tree) return null;
   if (tree.databases.length === 0) {
     return (
-      <div className="pl-7 py-1.5 text-zinc-600 text-[11px]">No databases</div>
+      <div className="pl-9 py-1.5 text-zinc-600 text-[11px]">No databases</div>
     );
   }
 
@@ -266,12 +397,14 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
         return (
           <div key={db}>
             <div
+              data-el="db-row"
               className={clsx(
-                "flex items-center gap-1 pl-3 pr-2 py-1.5 cursor-pointer hover:bg-zinc-900/70",
+                "flex items-center gap-1 pl-6 pr-2 py-1.5 cursor-pointer hover:bg-zinc-900/70",
                 isActive && "bg-zinc-900/60"
               )}
               onClick={() => openDatabase(profile.id, profile.name, db)}
-              title="Click to view tables · arrow to expand inline"
+              onDoubleClick={() => toggleDbExpanded(profile.id, db)}
+              title="Click to view tables · double-click or arrow to expand"
             >
               <button
                 onClick={(e) => {
@@ -282,7 +415,7 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                 aria-label={expanded ? "Collapse" : "Expand"}
               >
                 <ChevronRight
-                  size={11}
+                  size={13}
                   className={clsx(
                     "transition-transform",
                     expanded && "rotate-90"
@@ -290,7 +423,7 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                 />
               </button>
               <Database
-                size={11}
+                size={13}
                 className={isActive ? "text-accent-400" : "text-zinc-500"}
               />
               <span
@@ -305,12 +438,12 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
             {expanded && state && (
               <div>
                 {state.loading && (
-                  <div className="pl-12 py-1.5 text-zinc-600 text-[11px] flex items-center gap-2">
-                    <Loader2 size={10} className="animate-spin" /> Loading…
+                  <div className="pl-14 py-1.5 text-zinc-600 text-[11px] flex items-center gap-2">
+                    <Loader2 size={12} className="animate-spin" /> Loading…
                   </div>
                 )}
                 {state.error && (
-                  <div className="pl-12 py-1.5 text-rose-400 text-[11px] break-words">
+                  <div className="pl-14 py-1.5 text-rose-400 text-[11px] break-words">
                     {state.error}
                   </div>
                 )}
@@ -318,7 +451,7 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                   !state.error &&
                   state.folders.length === 0 &&
                   state.items.length === 0 && (
-                    <div className="pl-12 py-1.5 text-zinc-600 text-[11px]">
+                    <div className="pl-14 py-1.5 text-zinc-600 text-[11px]">
                       No tables
                     </div>
                   )}
@@ -329,21 +462,22 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                   return (
                     <div key={folder.id}>
                       <div
+                        data-el="folder-row"
                         onClick={() =>
                           toggleFolderExpandedInTree(profile.id, db, folder.id)
                         }
-                        className="flex items-center gap-1 pl-8 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-300"
+                        className="flex items-center gap-1 pl-11 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-300"
                         title={`${folder.name} · ${folder.tables.length} table(s)`}
                       >
                         <ChevronRight
-                          size={11}
+                          size={13}
                           className={clsx(
                             "text-zinc-600 transition-transform",
                             folderExpanded && "rotate-90"
                           )}
                         />
                         <FolderIcon
-                          size={11}
+                          size={13}
                           className="text-accent-400"
                           strokeWidth={1.8}
                         />
@@ -356,13 +490,14 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                         folderTables.map((t) => (
                           <div
                             key={t.name}
+                            data-el="table-row"
                             onDoubleClick={() =>
                               openTable(profile.id, profile.name, db, t.name)
                             }
-                            className="flex items-center gap-2 pl-16 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-400 hover:text-zinc-100"
+                            className="flex items-center gap-2 pl-20 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-400 hover:text-zinc-100"
                             title="Double-click to open"
                           >
-                            <Table2 size={11} className="text-zinc-600" />
+                            <Table2 size={13} className="text-zinc-600" />
                             <span className="truncate">{t.name}</span>
                           </div>
                         ))}
@@ -373,13 +508,14 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                 {unsortedTables.map((t) => (
                   <div
                     key={t.name}
+                    data-el="table-row"
                     onDoubleClick={() =>
                       openTable(profile.id, profile.name, db, t.name)
                     }
-                    className="flex items-center gap-2 pl-12 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-400 hover:text-zinc-100"
+                    className="flex items-center gap-2 pl-14 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-400 hover:text-zinc-100"
                     title="Double-click to open"
                   >
-                    <Table2 size={11} className="text-zinc-600" />
+                    <Table2 size={13} className="text-zinc-600" />
                     <span className="truncate">{t.name}</span>
                   </div>
                 ))}

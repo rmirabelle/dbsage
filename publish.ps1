@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Build a versioned DBSage release and publish it to GitHub.
+  Build a versioned DB Sage release and publish it to GitHub.
 
 .DESCRIPTION
   Reads the version from src-tauri/Cargo.toml, builds the release bundle,
@@ -29,24 +29,26 @@ Write-Host "==> Building release $tag ..." -ForegroundColor Cyan
 cargo tauri build
 if ($LASTEXITCODE -ne 0) { throw "cargo tauri build failed" }
 
-$productFs = "DBSage"
+# Locate the bundle artifacts by version. productName may contain spaces, so
+# match on the version suffix rather than the product-name prefix.
+$nsisDir = "src-tauri/target/release/bundle/nsis"
+$msiDir = "src-tauri/target/release/bundle/msi"
+$exeSrc = Get-ChildItem $nsisDir -Filter "*_${version}_x64-setup.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $exeSrc) { throw "expected NSIS installer not found in $nsisDir for version $version" }
+$msiSrc = Get-ChildItem $msiDir -Filter "*_${version}_x64_en-US.msi" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+
+# Publish under clean, space-free asset names regardless of productName.
 $assetBase = "DBSage_$version"
-
-$exeSrc = "src-tauri/target/release/bundle/nsis/${productFs}_${version}_x64-setup.exe"
-$msiSrc = "src-tauri/target/release/bundle/msi/${productFs}_${version}_x64_en-US.msi"
-
-if (-not (Test-Path $exeSrc)) { throw "expected NSIS installer not found: $exeSrc" }
-
 $exeName = "${assetBase}_x64-setup.exe"
 $msiName = "${assetBase}_x64_en-US.msi"
 
 New-Item -ItemType Directory -Force -Path "dist" | Out-Null
 Get-ChildItem "dist" -Include *.exe, *.msi -File -ErrorAction SilentlyContinue | Remove-Item -Force
-Copy-Item $exeSrc "dist/$exeName" -Force
+Copy-Item $exeSrc.FullName "dist/$exeName" -Force
 
 $assets = @("dist/$exeName")
-if (Test-Path $msiSrc) {
-  Copy-Item $msiSrc "dist/$msiName" -Force
+if ($msiSrc) {
+  Copy-Item $msiSrc.FullName "dist/$msiName" -Force
   $assets += "dist/$msiName"
 } else {
   Write-Host "    (no MSI artifact found - publishing NSIS installer only)" -ForegroundColor Yellow
@@ -70,10 +72,10 @@ if ($existing -contains $tag) {
   Write-Host "==> Updating existing release $tag ..." -ForegroundColor Cyan
   gh release upload $tag @assets --clobber
   if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
-  gh release edit $tag --title "DBSage $tag" --notes "DBSage $tag"
+  gh release edit $tag --title "DB Sage $tag" --notes "DB Sage $tag"
 } else {
   Write-Host "==> Creating release $tag ..." -ForegroundColor Cyan
-  gh release create $tag @assets --title "DBSage $tag" --notes "DBSage $tag"
+  gh release create $tag @assets --title "DB Sage $tag" --notes "DB Sage $tag"
 }
 if ($LASTEXITCODE -ne 0) { throw "gh release step failed" }
 

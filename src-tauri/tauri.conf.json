@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DBSage",
-  "version": "0.1.0",
+  "productName": "DB Sage",
+  "version": "0.2.0",
   "identifier": "com.dbsage.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "DBSage",
+        "title": "DB Sage",
         "width": 1440,
         "height": 880,
         "minWidth": 1080,

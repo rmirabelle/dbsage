@@ -85,6 +85,7 @@ export function ColumnHeaderMenu({
   return createPortal(
     <div
       ref={ref}
+      data-el="column-header-menu"
       style={{ top, left, width: MENU_WIDTH }}
       className="fixed z-50 rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[11px] text-zinc-200 select-none"
       onClick={(e) => e.stopPropagation()}
@@ -95,7 +96,7 @@ export function ColumnHeaderMenu({
 
       <div className="py-1">
         <MenuItem
-          icon={<ArrowUp size={11} />}
+          icon={<ArrowUp size={13} />}
           active={sortedHere === "asc"}
           onClick={() => {
             onSort("asc");
@@ -105,7 +106,7 @@ export function ColumnHeaderMenu({
           Sort ascending
         </MenuItem>
         <MenuItem
-          icon={<ArrowDown size={11} />}
+          icon={<ArrowDown size={13} />}
           active={sortedHere === "desc"}
           onClick={() => {
             onSort("desc");
@@ -116,7 +117,7 @@ export function ColumnHeaderMenu({
         </MenuItem>
         {sortedHere && (
           <MenuItem
-            icon={<X size={11} />}
+            icon={<X size={13} />}
             onClick={() => {
               onSort(null);
               onClose();
@@ -130,7 +131,7 @@ export function ColumnHeaderMenu({
       <div className="border-t border-zinc-800 px-3 py-2 space-y-2">
         <FilterField
           label="EQUALS"
-          icon={<Funnel size={10} />}
+          icon={<Funnel size={12} />}
           value={eqValue}
           active={currentFilter?.op === "equals"}
           placeholder="exact value"
@@ -146,7 +147,7 @@ export function ColumnHeaderMenu({
         />
         <FilterField
           label="LIKE"
-          icon={<Funnel size={10} />}
+          icon={<Funnel size={12} />}
           value={likeValue}
           active={currentFilter?.op === "like"}
           placeholder="contains"
@@ -169,7 +170,7 @@ export function ColumnHeaderMenu({
               onClose();
             }}
           >
-            <FunnelSimpleX size={11} /> Clear filter
+            <FunnelSimpleX size={13} /> Clear filter
           </button>
         )}
       </div>
@@ -242,6 +243,7 @@ function FilterField({
       <div className="relative">
         <input
           ref={inputRef}
+          data-el="column-filter-input"
           value={value}
           placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
@@ -265,7 +267,7 @@ function FilterField({
             className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200"
             aria-label="Clear"
           >
-            <X size={11} />
+            <X size={13} />
           </button>
         )}
       </div>

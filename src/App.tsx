@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { TitleBar } from "./components/TitleBar";
 import { ConnectionTree } from "./components/ConnectionTree";
-import { TableTabs } from "./components/TableTabs";
+import { Tabs } from "./components/Tabs";
 import { Splitter } from "./components/Splitter";
 import { AboutDialog } from "./components/AboutDialog";
 import { checkForUpdate, getAppVersion, type UpdateInfo } from "./lib/updater";
@@ -39,13 +39,14 @@ export default function App() {
   }, []);
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-zinc-950 text-zinc-200">
+    <div data-el="app-root" className="h-screen w-screen flex flex-col bg-zinc-950 text-zinc-200">
       <TitleBar
         onAbout={() => setAboutOpen(true)}
         updateAvailable={startupUpdate !== null}
       />
       <div className="flex-1 min-h-0 flex">
         <div
+          data-el="sidebar-pane"
           onPointerDownCapture={() => setFocusedPane("tree")}
           data-focused={focusedPane === "tree"}
           style={{
@@ -58,12 +59,13 @@ export default function App() {
         </div>
         <Splitter />
         <div
+          data-el="main-pane"
           onPointerDownCapture={() => setFocusedPane("tabs")}
           data-focused={focusedPane === "tabs"}
           style={tabsZoom !== 1 ? { zoom: tabsZoom } : undefined}
           className="flex-1 min-w-0 h-full overflow-hidden"
         >
-          <TableTabs />
+          <Tabs />
         </div>
       </div>
       <AboutDialog

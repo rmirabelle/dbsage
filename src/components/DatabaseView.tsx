@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
-  ArrowLeft,
+  CaretUp,
   Folder as FolderIcon,
   FolderPlus,
   CircleNotch as Loader2,
   ArrowsClockwise as RefreshCw,
   MagnifyingGlass as Search,
+  ShareNetwork,
   Table as Table2,
   X,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import {
-  closestCenter,
+  pointerWithin,
   DndContext,
   DragOverlay,
   PointerSensor,
@@ -50,6 +52,18 @@ export function DatabaseView({ tab }: Props) {
   const renameFolder = useStore((s) => s.renameFolder);
   const deleteFolder = useStore((s) => s.deleteFolder);
   const setTablesFolder = useStore((s) => s.setTablesFolder);
+  const openRelations = useStore((s) => s.openRelations);
+  const loadRelations = useStore((s) => s.loadRelations);
+  const relationCount = useStore(
+    (s) => (s.relations[`${tab.profileId}::${tab.database}`] ?? []).length
+  );
+  const rememberedTable = useStore(
+    (s) => s.lastOpenedTables[`${tab.profileId}::${tab.database}`]
+  );
+
+  useEffect(() => {
+    loadRelations(tab.profileId, tab.database).catch(() => {});
+  }, [tab.profileId, tab.database, loadRelations]);
 
   const currentFolder = useMemo(
     () =>
@@ -101,6 +115,16 @@ export function DatabaseView({ tab }: Props) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const lastSelectedRef = useRef<string | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const appliedRememberedRef = useRef(false);
+  const [marqueeRect, setMarqueeRect] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const marqueeMovedRef = useRef(false);
 
   /**
    * Drop the selection whenever the visible table set changes shape — keeps
@@ -118,6 +142,28 @@ export function DatabaseView({ tab }: Props) {
       return changed ? next : prev;
     });
   }, [visibleTables]);
+
+  /**
+   * On first load, re-select the table most recently opened from this database
+   * so returning to the DB view highlights (and scrolls to) it. Runs once.
+   */
+  useEffect(() => {
+    if (appliedRememberedRef.current) return;
+    if (!rememberedTable) {
+      appliedRememberedRef.current = true;
+      return;
+    }
+    if (tab.tables.length === 0) return;
+    appliedRememberedRef.current = true;
+    if (!visibleTables.some((t) => t.name === rememberedTable)) return;
+    setSelectedTables(new Set([rememberedTable]));
+    lastSelectedRef.current = rememberedTable;
+    requestAnimationFrame(() => {
+      scrollContainerRef.current
+        ?.querySelector(`[data-table-name="${CSS.escape(rememberedTable)}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  }, [rememberedTable, tab.tables, visibleTables]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -169,6 +215,76 @@ export function DatabaseView({ tab }: Props) {
   const clearSelection = () => {
     setSelectedTables(new Set());
     lastSelectedRef.current = null;
+  };
+
+  /**
+   * Rubber-band (lasso) selection: press on empty grid space and drag a box to
+   * select every table tile it touches. dnd-kit only captures pointer-downs on
+   * the tiles themselves, so a press on empty space is free for the marquee.
+   * Hold Shift/Ctrl to add to the existing selection.
+   */
+  const handleMarqueeDown = (e: React.PointerEvent) => {
+    if (e.button !== 0 || e.target !== e.currentTarget) return;
+    const base =
+      e.shiftKey || e.metaKey || e.ctrlKey
+        ? new Set(selectedTables)
+        : new Set<string>();
+    marqueeStartRef.current = { x: e.clientX, y: e.clientY };
+    marqueeMovedRef.current = false;
+
+    const onMove = (ev: PointerEvent) => {
+      const start = marqueeStartRef.current;
+      if (!start) return;
+      if (
+        !marqueeMovedRef.current &&
+        Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 4
+      )
+        return;
+      marqueeMovedRef.current = true;
+      const left = Math.min(start.x, ev.clientX);
+      const top = Math.min(start.y, ev.clientY);
+      const right = Math.max(start.x, ev.clientX);
+      const bottom = Math.max(start.y, ev.clientY);
+      setMarqueeRect({ left, top, width: right - left, height: bottom - top });
+
+      const names = new Set(base);
+      const tiles =
+        scrollContainerRef.current?.querySelectorAll<HTMLElement>(
+          "[data-table-name]"
+        ) ?? [];
+      tiles.forEach((el) => {
+        const r = el.getBoundingClientRect();
+        const hit = !(
+          r.right < left ||
+          r.left > right ||
+          r.bottom < top ||
+          r.top > bottom
+        );
+        const name = el.getAttribute("data-table-name");
+        if (hit && name) names.add(name);
+      });
+      setSelectedTables(names);
+      lastSelectedRef.current = null;
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      marqueeStartRef.current = null;
+      setMarqueeRect(null);
+      if (marqueeMovedRef.current) {
+        /* Swallow the trailing click so it doesn't clear the new selection. */
+        const swallow = (ce: MouseEvent) => {
+          ce.stopPropagation();
+          ce.preventDefault();
+          window.removeEventListener("click", swallow, true);
+        };
+        window.addEventListener("click", swallow, true);
+      }
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   };
 
   useEffect(() => {
@@ -236,20 +352,21 @@ export function DatabaseView({ tab }: Props) {
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={pointerWithin}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveTable(null)}
     >
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="px-3 py-1.5 border-b border-zinc-800/60 flex items-center gap-2 text-[11px] text-zinc-400">
+      <div data-el="database-view" className="flex-1 flex flex-col min-h-0">
+        <div data-el="database-toolbar" className="px-3 py-1.5 border-b border-zinc-800/60 flex items-center gap-2 text-[11px] text-zinc-400">
           <div className="relative">
             <Search
-              size={11}
+              size={13}
               className="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none"
             />
             <input
               ref={inputRef}
+              data-el="table-filter-input"
               value={tab.filter}
               onChange={(e) => setDatabaseFilter(tab.id, e.target.value)}
               placeholder={currentFolder ? "Filter tables…" : "Filter folders & tables…"}
@@ -257,6 +374,7 @@ export function DatabaseView({ tab }: Props) {
             />
             {tab.filter && (
               <button
+                data-el="filter-clear-btn"
                 onClick={() => {
                   setDatabaseFilter(tab.id, "");
                   inputRef.current?.focus();
@@ -264,7 +382,7 @@ export function DatabaseView({ tab }: Props) {
                 className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200"
                 aria-label="Clear filter"
               >
-                <X size={11} />
+                <X size={13} />
               </button>
             )}
           </div>
@@ -273,38 +391,56 @@ export function DatabaseView({ tab }: Props) {
             <UpButton onExit={() => exitFolder(tab.id)} />
           ) : (
             <button
+              data-el="new-folder-btn"
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800 text-zinc-300"
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800 text-amber-300 hover:text-amber-200"
               title="Create a new folder"
             >
-              <FolderPlus size={11} /> New folder
+              <FolderPlus size={13} /> New folder
             </button>
           )}
 
           {currentFolder && (
             <span className="inline-flex items-center gap-1 font-semibold text-amber-300">
-              <FolderIcon size={11} className="text-amber-300" />
+              <FolderIcon size={13} className="text-amber-300" />
               {currentFolder.name}
             </span>
           )}
 
           <button
+            data-el="database-refresh-btn"
             onClick={() => refreshTab(tab.id)}
             disabled={tab.loading}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800 disabled:opacity-30"
             title="Refresh"
           >
             {tab.loading ? (
-              <Loader2 size={11} className="animate-spin" />
+              <Loader2 size={13} className="animate-spin" />
             ) : (
-              <RefreshCw size={11} />
+              <RefreshCw size={13} />
+            )}
+          </button>
+
+          <button
+            data-el="relationships-btn"
+            onClick={() =>
+              openRelations(tab.profileId, tab.profileName, tab.database)
+            }
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800 text-zinc-300"
+            title="Open the relationships view for this database"
+          >
+            <ShareNetwork size={13} /> Relationships
+            {relationCount > 0 && (
+              <span className="rounded-full bg-violet-500/20 text-violet-300 px-1.5 text-[10px] font-semibold tabular-nums">
+                {relationCount}
+              </span>
             )}
           </button>
 
           <span className="ml-auto">
             {tab.loading ? (
               <span className="inline-flex items-center gap-1.5">
-                <Loader2 size={11} className="animate-spin" />
+                <Loader2 size={13} className="animate-spin" />
                 Loading…
               </span>
             ) : (
@@ -329,6 +465,7 @@ export function DatabaseView({ tab }: Props) {
         )}
 
         <div
+          ref={scrollContainerRef}
           className="flex-1 min-h-0 overflow-auto p-2 bg-[#1d2029] select-none"
           onClick={(e) => {
             if (e.target === e.currentTarget) clearSelection();
@@ -336,7 +473,7 @@ export function DatabaseView({ tab }: Props) {
         >
           {tab.loading && tab.tables.length === 0 ? (
             <div className="h-full flex items-center justify-center text-zinc-500 text-xs gap-2">
-              <Loader2 size={14} className="animate-spin" /> Loading…
+              <Loader2 size={16} className="animate-spin" /> Loading…
             </div>
           ) : visibleCount === 0 && !creating ? (
             <div className="h-full flex items-center justify-center text-zinc-600 text-xs">
@@ -350,6 +487,11 @@ export function DatabaseView({ tab }: Props) {
             </div>
           ) : (
             <div
+              data-el="tile-grid"
+              onPointerDown={handleMarqueeDown}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) clearSelection();
+              }}
               style={{
                 columnWidth: MIN_TILE_PX,
                 columnGap: 0,
@@ -448,14 +590,32 @@ export function DatabaseView({ tab }: Props) {
         )}
       </div>
 
-      <DragOverlay dropAnimation={null}>
-        {activeTable ? (
-          <TableDragGhost
-            name={activeTable}
-            count={selectedTables.has(activeTable) ? selectedTables.size : 1}
-          />
-        ) : null}
-      </DragOverlay>
+      {createPortal(
+        <DragOverlay dropAnimation={null}>
+          {activeTable ? (
+            <TableDragGhost
+              name={activeTable}
+              count={selectedTables.has(activeTable) ? selectedTables.size : 1}
+            />
+          ) : null}
+        </DragOverlay>,
+        document.body
+      )}
+
+      {marqueeRect &&
+        createPortal(
+          <div
+            data-el="marquee"
+            className="fixed z-50 rounded-[1px] border border-accent-400/70 bg-accent-500/15 pointer-events-none"
+            style={{
+              left: marqueeRect.left,
+              top: marqueeRect.top,
+              width: marqueeRect.width,
+              height: marqueeRect.height,
+            }}
+          />,
+          document.body
+        )}
     </DndContext>
   );
 }
@@ -465,14 +625,17 @@ function UpButton({ onExit }: { onExit: () => void }) {
   return (
     <button
       ref={setNodeRef}
+      data-el="up-btn"
       onClick={onExit}
       className={clsx(
         "inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800",
-        isOver && "ring-1 ring-accent-400 bg-accent-500/10 text-accent-300"
+        isOver
+          ? "ring-1 ring-accent-400 bg-accent-500/10 text-accent-300"
+          : "text-amber-300 hover:text-amber-200"
       )}
       title="Back to all tables · drop a table here to remove it from this folder"
     >
-      <ArrowLeft size={11} /> Up
+      <CaretUp size={13} /> Up
     </button>
   );
 }
@@ -496,6 +659,7 @@ function FolderTile({
   return (
     <div
       ref={setNodeRef}
+      data-el="folder-tile"
       onDoubleClick={renaming ? undefined : onOpen}
       onContextMenu={onContextMenu}
       title={`${folder.name} · ${folder.tables.length} table(s)\nDouble-click to open · right-click for actions`}
@@ -504,7 +668,7 @@ function FolderTile({
         isOver && "ring-1 ring-inset ring-accent-400 bg-accent-500/15"
       )}
     >
-      <FolderIcon size={13} className="text-amber-300 shrink-0" strokeWidth={1.8} />
+      <FolderIcon size={15} className="text-amber-300 shrink-0" strokeWidth={1.8} />
       {renaming ? (
         <RenameInput
           initial={folder.name}
@@ -534,7 +698,7 @@ function NewFolderTile({
 }) {
   return (
     <div className="group flex items-center gap-2 px-2.5 py-1.5 bg-amber-300/5 ring-1 ring-inset ring-amber-300/40 min-w-0 break-inside-avoid">
-      <FolderIcon size={13} className="text-amber-300 shrink-0" strokeWidth={1.8} />
+      <FolderIcon size={15} className="text-amber-300 shrink-0" strokeWidth={1.8} />
       <RenameInput initial="" placeholder="Folder name" onCommit={onCommit} onCancel={onCancel} />
     </div>
   );
@@ -563,6 +727,8 @@ function TableTile({
   return (
     <div
       ref={setNodeRef}
+      data-el="table-tile"
+      data-table-name={table.name}
       {...attributes}
       {...listeners}
       onClick={onClick}
@@ -575,18 +741,22 @@ function TableTile({
       className={clsx(
         "group flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors min-w-0 cursor-grab active:cursor-grabbing break-inside-avoid",
         isSelected
-          ? "bg-accent-500/15 ring-1 ring-inset ring-accent-500/60"
+          ? "bg-accent-500/15"
+          : isAnyDragging
+          ? "bg-transparent"
           : "bg-transparent hover:bg-accent-500/10",
         (isDragging || isActiveDrag) && "opacity-50",
         isAnyDragging && isSelected && !isActiveDrag && "opacity-60"
       )}
     >
       <Table2
-        size={12}
+        size={14}
         className={clsx(
           "shrink-0",
           isSelected
             ? "text-accent-300"
+            : isAnyDragging
+            ? "text-zinc-500"
             : "text-zinc-500 group-hover:text-accent-400"
         )}
       />
@@ -610,7 +780,7 @@ function TableTile({
 function TableDragGhost({ name, count }: { name: string; count: number }) {
   return (
     <div className="inline-flex items-center gap-2 px-2.5 py-1.5 bg-zinc-900 border border-accent-500/60 rounded shadow-lg shadow-black/60">
-      <Table2 size={12} className="text-accent-400 shrink-0" />
+      <Table2 size={14} className="text-accent-400 shrink-0" />
       <span className="text-[12px] text-zinc-100">{name}</span>
       {count > 1 && (
         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-accent-500/30 text-accent-100">
@@ -673,8 +843,9 @@ function FolderContextMenu({
   onRename: () => void;
   onDelete: () => void;
 }) {
-  return (
+  return createPortal(
     <div
+      data-el="folder-context-menu"
       style={{ top: y, left: x }}
       onClick={(e) => e.stopPropagation()}
       className="fixed z-50 min-w-[140px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 text-[11px] shadow-xl shadow-black/60"
@@ -691,7 +862,8 @@ function FolderContextMenu({
       >
         Delete
       </button>
-    </div>
+    </div>,
+    document.body
   );
 }
 

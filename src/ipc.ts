@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ColumnFilter,
+  ColumnInfo,
   Folder,
   ProfileInput,
   ProfileView,
+  Relation,
   RowsResult,
   SortSpec,
   TableInfo,
@@ -34,6 +36,8 @@ export const ipc = {
     invoke<string[]>("list_databases", { profileId }),
   listTables: (profileId: string, database: string) =>
     invoke<TableInfo[]>("list_tables", { profileId, database }),
+  listColumns: (profileId: string, database: string, table: string) =>
+    invoke<ColumnInfo[]>("list_columns", { profileId, database, table }),
   fetchRows: (args: {
     profileId: string;
     database: string;
@@ -44,6 +48,13 @@ export const ipc = {
     filters: ColumnFilter[];
   }) => invoke<RowsResult>("fetch_rows", args),
 
+  countRows: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    filters: ColumnFilter[];
+  }) => invoke<number>("count_rows", args),
+
   updateCell: (args: {
     profileId: string;
     database: string;
@@ -52,6 +63,22 @@ export const ipc = {
     column: string;
     value: string | null;
   }) => invoke<number>("update_cell", args),
+
+  listRelations: (profileId: string, database: string) =>
+    invoke<Relation[]>("list_relations", { profileId, database }),
+  saveRelation: (args: {
+    profileId: string;
+    database: string;
+    id?: string | null;
+    fromTable: string;
+    fromColumn: string;
+    toTable: string;
+    toColumn: string;
+    kind: string;
+    name?: string;
+  }) => invoke<Relation>("save_relation", args),
+  deleteRelation: (profileId: string, database: string, id: string) =>
+    invoke<void>("delete_relation", { profileId, database, id }),
 
   listFolders: (profileId: string, database: string) =>
     invoke<Folder[]>("list_folders", { profileId, database }),

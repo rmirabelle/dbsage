@@ -1,0 +1,144 @@
+use crate::error::{AppError, AppResult};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use tauri::{AppHandle, Manager};
+
+/// A virtual (app-defined) relationship between two tables. Independent of any
+/// MySQL foreign key — `from_table.from_column` joins to `to_table.to_column`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Relation {
+    pub id: String,
+    pub from_table: String,
+    pub from_column: String,
+    pub to_table: String,
+    pub to_column: String,
+    /// "has_one" (belongs-to) or "has_many".
+    pub kind: String,
+    #[serde(default)]
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/**
+ * relations.json layout (mirrors folders.json):
+ *   { "<profile-id>": { "<database>": [Relation, ...] } }
+ */
+type RelationsFile = BTreeMap<String, BTreeMap<String, Vec<Relation>>>;
+
+fn relations_path(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = app.path().app_config_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("relations.json"))
+}
+
+fn load_file(app: &AppHandle) -> AppResult<RelationsFile> {
+    let path = relations_path(app)?;
+    if !path.exists() {
+        return Ok(RelationsFile::default());
+    }
+    let bytes = std::fs::read(&path)?;
+    if bytes.is_empty() {
+        return Ok(RelationsFile::default());
+    }
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+fn save_file(app: &AppHandle, file: &RelationsFile) -> AppResult<()> {
+    let path = relations_path(app)?;
+    let bytes = serde_json::to_vec_pretty(file)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+pub fn list(app: &AppHandle, profile_id: &str, database: &str) -> AppResult<Vec<Relation>> {
+    let file = load_file(app)?;
+    Ok(file
+        .get(profile_id)
+        .and_then(|m| m.get(database))
+        .cloned()
+        .unwrap_or_default())
+}
+
+/// Create or update a relation. When `id` is supplied and found, updates it in
+/// place; otherwise creates a new relation with a generated id.
+#[allow(clippy::too_many_arguments)]
+pub fn save(
+    app: &AppHandle,
+    profile_id: &str,
+    database: &str,
+    id: Option<&str>,
+    from_table: &str,
+    from_column: &str,
+    to_table: &str,
+    to_column: &str,
+    kind: &str,
+    name: &str,
+) -> AppResult<Relation> {
+    if from_table.is_empty()
+        || from_column.is_empty()
+        || to_table.is_empty()
+        || to_column.is_empty()
+    {
+        return Err(AppError::Other(
+            "relation requires both tables and both columns".to_string(),
+        ));
+    }
+    if kind != "has_one" && kind != "has_many" {
+        return Err(AppError::Other(format!("invalid relation kind: {kind}")));
+    }
+
+    let now = Utc::now();
+    let mut file = load_file(app)?;
+    let list = file
+        .entry(profile_id.to_string())
+        .or_default()
+        .entry(database.to_string())
+        .or_default();
+
+    if let Some(id) = id.filter(|s| !s.is_empty()) {
+        if let Some(r) = list.iter_mut().find(|r| r.id == id) {
+            r.from_table = from_table.to_string();
+            r.from_column = from_column.to_string();
+            r.to_table = to_table.to_string();
+            r.to_column = to_column.to_string();
+            r.kind = kind.to_string();
+            r.name = name.to_string();
+            r.updated_at = now;
+            let result = r.clone();
+            save_file(app, &file)?;
+            return Ok(result);
+        }
+    }
+
+    let relation = Relation {
+        id: uuid::Uuid::new_v4().to_string(),
+        from_table: from_table.to_string(),
+        from_column: from_column.to_string(),
+        to_table: to_table.to_string(),
+        to_column: to_column.to_string(),
+        kind: kind.to_string(),
+        name: name.to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+    list.push(relation.clone());
+    save_file(app, &file)?;
+    Ok(relation)
+}
+
+pub fn delete(app: &AppHandle, profile_id: &str, database: &str, id: &str) -> AppResult<()> {
+    let mut file = load_file(app)?;
+    if let Some(by_db) = file.get_mut(profile_id) {
+        if let Some(list) = by_db.get_mut(database) {
+            list.retain(|r| r.id != id);
+        }
+    }
+    save_file(app, &file)?;
+    Ok(())
+}

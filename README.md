@@ -1,4 +1,4 @@
-# DBSage
+# DB Sage
 
 A sleek, modern Windows desktop client for MySQL — built with Tauri 2, React 19, and Rust.
 

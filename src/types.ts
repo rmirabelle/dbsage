@@ -36,6 +36,21 @@ export interface ColumnInfo {
   key: string;
 }
 
+export type RelationKind = "has_one" | "has_many";
+
+/** A virtual, app-defined relationship between two tables (no MySQL FK involved). */
+export interface Relation {
+  id: string;
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+  kind: RelationKind;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type CellValue = string | number | boolean | null;
 export type RowRecord = Record<string, CellValue>;
 
@@ -75,6 +90,8 @@ export interface RowsTab extends BaseTab {
   page: number;
   pageSize: number;
   data: RowsResult | null;
+  /** Exact COUNT(*) result, set on demand; null means show the cheap estimate. */
+  exactTotal: number | null;
   loading: boolean;
   error: string | null;
   sort: SortSpec | null;
@@ -100,4 +117,8 @@ export interface DatabaseTab extends BaseTab {
   currentFolderId: string | null;
 }
 
-export type Tab = RowsTab | DatabaseTab;
+export interface RelationsTab extends BaseTab {
+  kind: "relations";
+}
+
+export type Tab = RowsTab | DatabaseTab | RelationsTab;

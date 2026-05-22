@@ -73,6 +73,43 @@ fn prepare_like_value(value: &str) -> String {
     }
 }
 
+/// Build the `WHERE …` clause and ordered bind values for the given filters.
+/// Returns an empty string when there are no filters.
+fn build_where(
+    filters: Option<&Vec<ColumnFilter>>,
+    column_set: &HashSet<&str>,
+) -> AppResult<(String, Vec<String>)> {
+    let mut where_clauses: Vec<String> = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+    if let Some(fs) = filters {
+        for f in fs {
+            if !column_set.contains(f.column.as_str()) {
+                return Err(AppError::Other(format!(
+                    "unknown filter column: {}",
+                    f.column
+                )));
+            }
+            let ident = quote_ident(&f.column);
+            match f.op {
+                FilterOp::Equals => {
+                    where_clauses.push(format!("{ident} = ?"));
+                    bindings.push(f.value.clone());
+                }
+                FilterOp::Like => {
+                    where_clauses.push(format!("{ident} LIKE ?"));
+                    bindings.push(prepare_like_value(&f.value));
+                }
+            }
+        }
+    }
+    let where_clause = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", where_clauses.join(" AND "))
+    };
+    Ok((where_clause, bindings))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PkValue {
@@ -181,34 +218,7 @@ pub async fn fetch_rows(
     let safe_limit = limit.clamp(1, 5000);
     let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
 
-    let mut where_clauses: Vec<String> = Vec::new();
-    let mut bindings: Vec<String> = Vec::new();
-    if let Some(fs) = filters.as_ref() {
-        for f in fs {
-            if !column_set.contains(f.column.as_str()) {
-                return Err(AppError::Other(format!(
-                    "unknown filter column: {}",
-                    f.column
-                )));
-            }
-            let ident = quote_ident(&f.column);
-            match f.op {
-                FilterOp::Equals => {
-                    where_clauses.push(format!("{ident} = ?"));
-                    bindings.push(f.value.clone());
-                }
-                FilterOp::Like => {
-                    where_clauses.push(format!("{ident} LIKE ?"));
-                    bindings.push(prepare_like_value(&f.value));
-                }
-            }
-        }
-    }
-    let where_clause = if where_clauses.is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE {}", where_clauses.join(" AND "))
-    };
+    let (where_clause, bindings) = build_where(filters.as_ref(), &column_set)?;
 
     let order_clause = if let Some(s) = sort.as_ref() {
         if !column_set.contains(s.column.as_str()) {
@@ -236,15 +246,20 @@ pub async fn fetch_rows(
     let rows = q.fetch_all(&pool).await?;
     let json_rows: Vec<Value> = rows.iter().map(row_to_json).collect();
 
-    let total: Option<u64> = if offset == 0 {
-        let count_sql = format!("SELECT COUNT(*) FROM {qualified}{where_clause}");
-        let mut count_q = sqlx::query(&count_sql);
-        for v in &bindings {
-            count_q = count_q.bind(v);
-        }
-        let row = count_q.fetch_one(&pool).await?;
-        let n: i64 = row.try_get(0).unwrap_or(0);
-        Some(n.max(0) as u64)
+    /* Cheap row-count estimate from table statistics. Only meaningful for the
+       whole table — with an active filter we can't estimate, so return None and
+       let the UI offer an on-demand exact count. */
+    let total: Option<u64> = if where_clause.is_empty() {
+        let est = sqlx::query(
+            "SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES \
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+        )
+        .bind(&database)
+        .bind(&table)
+        .fetch_optional(&pool)
+        .await?;
+        est.and_then(|r| r.try_get::<Option<i64>, _>(0).ok().flatten())
+            .map(|n| n.max(0) as u64)
     } else {
         None
     };
@@ -256,6 +271,41 @@ pub async fn fetch_rows(
         limit: safe_limit,
         offset,
     })
+}
+
+#[tauri::command]
+pub async fn list_columns(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<Vec<ColumnInfo>> {
+    let pool = pool_for(&state, &profile_id).await?;
+    fetch_columns(&pool, &database, &table).await
+}
+
+#[tauri::command]
+pub async fn count_rows(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    filters: Option<Vec<ColumnFilter>>,
+) -> AppResult<u64> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let columns = fetch_columns(&pool, &database, &table).await?;
+    let column_set: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    let (where_clause, bindings) = build_where(filters.as_ref(), &column_set)?;
+
+    let sql = format!("SELECT COUNT(*) FROM {qualified}{where_clause}");
+    let mut q = sqlx::query(&sql);
+    for v in &bindings {
+        q = q.bind(v);
+    }
+    let row = q.fetch_one(&pool).await?;
+    let n: i64 = row.try_get(0).unwrap_or(0);
+    Ok(n.max(0) as u64)
 }
 
 #[tauri::command]

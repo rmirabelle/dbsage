@@ -91,6 +91,30 @@ export function DataGrid({
     return () => window.removeEventListener("mouseup", onUp);
   }, []);
 
+  /**
+   * Horizontal wheel scrolling. Registered non-passively so preventDefault
+   * actually works (React's onWheel is passive). Shift+wheel scrolls
+   * horizontally, and a vertical wheel over a wide table with no vertical
+   * overflow is redirected horizontally so off-screen columns are reachable
+   * without the scrollbar. A native horizontal wheel/trackpad (deltaX) is left
+   * alone to scroll on its own.
+   */
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0) return;
+      if (el.scrollWidth <= el.clientWidth) return;
+      const hasVerticalOverflow = el.scrollHeight > el.clientHeight;
+      if (e.shiftKey || !hasVerticalOverflow) {
+        el.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   const extendSelection = (from: number, to: number, additive = false) => {
     const [lo, hi] = from < to ? [from, to] : [to, from];
     setSelectedRows((prev) => {
@@ -174,21 +198,9 @@ export function DataGrid({
   return (
     <div
       ref={scrollRef}
+      data-el="data-grid"
       className="flex-1 overflow-auto bg-zinc-950 select-none"
       style={{ contain: "strict" }}
-      onWheel={(e) => {
-        if (!scrollRef.current) return;
-        /**
-         * Shift+wheel → horizontal scroll (universal convention).
-         * Plain horizontal-tilt wheel (deltaX) already scrolls horizontally
-         * natively; this handler only intervenes when deltaY is being
-         * redirected via Shift.
-         */
-        if (e.shiftKey && e.deltaY !== 0) {
-          scrollRef.current.scrollLeft += e.deltaY;
-          e.preventDefault();
-        }
-      }}
     >
       <div style={{ width: totalWidth, minWidth: "100%" }}>
         <HeaderRow
@@ -220,6 +232,7 @@ export function DataGrid({
         />
         {rows.length === 0 ? (
           <div
+            data-el="grid-empty"
             className="sticky left-0 flex items-center justify-center text-zinc-600 text-xs italic"
             style={{ height: 160 }}
           >
@@ -239,6 +252,7 @@ export function DataGrid({
               return (
                 <div
                   key={vItem.key}
+                  data-el="grid-row"
                   onMouseDown={(e) => handleRowMouseDown(vItem.index, e)}
                   onMouseEnter={() => handleRowMouseEnter(vItem.index)}
                   className={clsx(
@@ -346,9 +360,10 @@ function HeaderRow({
   onColumnsButtonClick: (rect: DOMRect) => void;
 }) {
   return (
-    <div className="sticky top-0 z-20 flex items-stretch bg-zinc-900 border-b border-zinc-800 select-none">
+    <div data-el="grid-header" className="sticky top-0 z-20 flex items-stretch bg-zinc-900 border-b border-zinc-800 select-none">
       <div className="sticky left-0 z-30 w-14 shrink-0 border-r border-zinc-800 bg-zinc-900 flex items-center justify-center">
         <button
+          data-el="columns-toggle-btn"
           onClick={(e) => {
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
             onColumnsButtonClick(rect);
@@ -365,7 +380,7 @@ function HeaderRow({
               : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
           )}
         >
-          <Columns size={13} />
+          <Columns size={15} />
         </button>
       </div>
       {columns.map((col, i) => {
@@ -401,14 +416,14 @@ function HeaderRow({
               )}
               <span className="truncate flex-1">{col.name}</span>
               {isFiltered && (
-                <Funnel size={10} className="text-amber-400 shrink-0" />
+                <Funnel size={12} className="text-amber-400 shrink-0" />
               )}
               {isSorted && (
                 <span className="text-accent-400 shrink-0">
                   {sort?.direction === "asc" ? (
-                    <ArrowUp size={11} />
+                    <ArrowUp size={13} />
                   ) : (
-                    <ArrowDown size={11} />
+                    <ArrowDown size={13} />
                   )}
                 </span>
               )}
@@ -504,6 +519,7 @@ function Cell({
   return (
     <div
       style={{ width }}
+      data-el="grid-cell"
       onClick={(e) => {
         e.stopPropagation();
         onActivate();
@@ -590,6 +606,7 @@ function CellEditor({
     >
       <input
         ref={inputRef}
+        data-el="cell-editor-input"
         value={value}
         disabled={saving}
         onChange={(e) => setValue(e.target.value)}
