@@ -18,8 +18,8 @@ import { useStore } from "../state/store";
 import { DataGrid } from "./DataGrid";
 import { DatabaseView } from "./DatabaseView";
 import { RelationsView } from "./RelationsView";
+import { TableDesignerView } from "./TableDesignerView";
 import { ExpandedPanel } from "./ExpandedPanel";
-import { ZoomControls } from "./ZoomControls";
 import type { RowsTab, Tab } from "../types";
 
 export function Tabs() {
@@ -32,14 +32,10 @@ export function Tabs() {
 
   return (
     <div className="w-full h-full flex flex-col bg-zinc-950 min-w-0">
+      {tabs.length > 0 && (
       <div data-el="tab-bar" className="flex items-stretch border-b border-zinc-800/80 bg-zinc-950 overflow-hidden">
         <div className="flex-1 flex items-stretch overflow-x-auto">
-        {tabs.length === 0 ? (
-          <div className="flex items-center px-4 text-zinc-600 text-xs">
-            Double-click a table to open it.
-          </div>
-        ) : (
-          tabs.map((tab) => {
+        {tabs.map((tab) => {
             let primary: string;
             let secondary: string;
             let Icon: typeof Database;
@@ -54,6 +50,11 @@ export function Tabs() {
               secondary = `${tab.profileName} / ${tab.database}`;
               Icon = ShareNetwork;
               iconColor = "text-violet-400";
+            } else if (tab.kind === "create-table") {
+              primary = tab.tableName.trim() || "New table";
+              secondary = `${tab.profileName} / ${tab.database}`;
+              Icon = Table2;
+              iconColor = "text-emerald-400";
             } else {
               primary = tab.table;
               secondary = `${tab.profileName} / ${tab.database}`;
@@ -98,13 +99,10 @@ export function Tabs() {
                 </button>
               </div>
             );
-          })
-        )}
-        </div>
-        <div className="flex items-center px-2 border-l border-zinc-800/60 shrink-0">
-          <ZoomControls pane="tabs" />
+        })}
         </div>
       </div>
+      )}
 
       <div className="flex-1 min-h-0 flex flex-col">
         {active ? <TabBody tab={active} /> : <EmptyState />}
@@ -119,6 +117,9 @@ function TabBody({ tab }: { tab: Tab }) {
   }
   if (tab.kind === "relations") {
     return <RelationsView tab={tab} />;
+  }
+  if (tab.kind === "create-table") {
+    return <TableDesignerView tab={tab} />;
   }
   return <RowsTabBody tab={tab} />;
 }
@@ -194,7 +195,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       <div
         data-el="rows-toolbar"
         data-toolbar="rows"
-        className="h-8 px-3 border-b border-zinc-800/60 flex items-center gap-2 text-[11px] text-zinc-400"
+        className="dbs-toolbar h-8 px-3 border-b border-zinc-800/60 flex items-center gap-2 text-[11px] text-zinc-400"
       >
         <button
           data-el="expanded-toggle-btn"

@@ -3,9 +3,9 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{MySqlPool, Row};
+use sqlx::{Executor, MySqlPool, Row};
 use std::collections::HashSet;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -306,6 +306,192 @@ pub async fn count_rows(
     let row = q.fetch_one(&pool).await?;
     let n: i64 = row.try_get(0).unwrap_or(0);
     Ok(n.max(0) as u64)
+}
+
+#[tauri::command]
+pub async fn table_exists(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<bool> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let row = sqlx::query(
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+    )
+    .bind(&database)
+    .bind(&table)
+    .fetch_one(&pool)
+    .await?;
+    let n: i64 = row.try_get(0).unwrap_or(0);
+    Ok(n > 0)
+}
+
+/// Run a CREATE TABLE statement built by the designer. All statements run on a
+/// single pooled connection so `USE` sticks. When `overwrite` is set the table
+/// is dropped first (destructive — the caller must have confirmed).
+#[tauri::command]
+pub async fn create_table(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table_name: String,
+    sql: String,
+    overwrite: bool,
+) -> AppResult<()> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+    /* Run as raw (simple-protocol) statements: `USE` and most DDL aren't allowed
+       through MySQL's prepared-statement protocol (error 1295), which is what
+       `sqlx::query(...)` uses. Passing a &str to `execute` uses COM_QUERY. */
+    (&mut *conn)
+        .execute(format!("USE {}", quote_ident(&database)).as_str())
+        .await?;
+    if overwrite {
+        (&mut *conn)
+            .execute(format!("DROP TABLE IF EXISTS {}", quote_ident(&table_name)).as_str())
+            .await?;
+    }
+    (&mut *conn).execute(sql.as_str()).await?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnDef {
+    pub name: String,
+    /// Full SQL type as stored, e.g. "int(11) unsigned" or "varchar(255)".
+    pub column_type: String,
+    pub nullable: bool,
+    pub key: String,
+    pub default_value: Option<String>,
+    pub extra: String,
+    pub comment: String,
+}
+
+/// Full column metadata for editing an existing table (richer than `list_columns`).
+#[tauri::command]
+pub async fn column_definitions(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<Vec<ColumnDef>> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let rows = sqlx::query(
+        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT \
+         FROM INFORMATION_SCHEMA.COLUMNS \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+         ORDER BY ORDINAL_POSITION",
+    )
+    .bind(&database)
+    .bind(&table)
+    .fetch_all(&pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| ColumnDef {
+            name: get_string(r, 0),
+            column_type: get_string(r, 1),
+            nullable: get_string(r, 2) == "YES",
+            key: get_string(r, 3),
+            default_value: r.try_get::<Option<String>, _>(4).ok().flatten(),
+            extra: get_string(r, 5),
+            comment: get_string(r, 6),
+        })
+        .collect())
+}
+
+/// The table's current AUTO_INCREMENT counter (None when it has no such column).
+#[tauri::command]
+pub async fn table_auto_increment(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<Option<u64>> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let row = sqlx::query(
+        "SELECT AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+    )
+    .bind(&database)
+    .bind(&table)
+    .fetch_optional(&pool)
+    .await?;
+    Ok(row.and_then(|r| r.try_get::<Option<u64>, _>(0).ok().flatten()))
+}
+
+/// Run a single DDL statement (e.g. ALTER TABLE) in the context of `database`.
+/// Uses the simple query protocol so `USE`/DDL aren't rejected (error 1295).
+#[tauri::command]
+pub async fn run_ddl(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    sql: String,
+) -> AppResult<()> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+    (&mut *conn)
+        .execute(format!("USE {}", quote_ident(&database)).as_str())
+        .await?;
+    (&mut *conn).execute(sql.as_str()).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn truncate_table(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<()> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    (&mut *conn)
+        .execute(format!("TRUNCATE TABLE {qualified}").as_str())
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn rename_table(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    old_name: String,
+    new_name: String,
+) -> AppResult<()> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+    let from = format!("{}.{}", quote_ident(&database), quote_ident(&old_name));
+    let to = format!("{}.{}", quote_ident(&database), quote_ident(&new_name));
+    (&mut *conn)
+        .execute(format!("RENAME TABLE {from} TO {to}").as_str())
+        .await?;
+    /* Keep folder membership pointing at the new name. */
+    crate::store::folders::rename_table(&app, &profile_id, &database, &old_name, &new_name)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn drop_table(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<()> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    (&mut *conn)
+        .execute(format!("DROP TABLE {qualified}").as_str())
+        .await?;
+    Ok(())
 }
 
 #[tauri::command]

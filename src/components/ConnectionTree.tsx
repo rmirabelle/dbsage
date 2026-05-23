@@ -10,12 +10,15 @@ import {
   Table as Table2,
   Lightning as PlugZap,
   DotsThreeVertical as MoreVertical,
+  PencilSimple,
+  Trash,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useStore } from "../state/store";
+import { notifyError } from "../state/notify";
 import type { ProfileView } from "../types";
 import { ProfileDialog } from "./ProfileDialog";
-import { ZoomControls } from "./ZoomControls";
+import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { ipc } from "../ipc";
 
 export function ConnectionTree() {
@@ -57,12 +60,11 @@ export function ConnectionTree() {
 
   return (
     <aside data-el="connection-tree" className="w-full h-full bg-zinc-950 border-r border-zinc-800/80 flex flex-col">
-      <div data-el="connection-tree-header" className="h-9 flex items-center justify-between px-3 border-b border-zinc-800/60 gap-2">
+      <div data-el="connection-tree-header" className="dbs-toolbar h-9 flex items-center justify-between px-3 border-b border-zinc-800/60 gap-2">
         <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
           Connections
         </span>
         <div className="flex items-center gap-1">
-          <ZoomControls pane="tree" />
           <button
             data-el="add-connection-btn"
             onClick={() => {
@@ -113,6 +115,7 @@ export function ConnectionTree() {
                 onClick={() => toggleProfileExpanded(profile.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
+                  e.stopPropagation();
                   setMenu({ profileId: profile.id, x: e.clientX, y: e.clientY });
                 }}
               >
@@ -349,6 +352,26 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
   const toggleFolderExpandedInTree = useStore((s) => s.toggleFolderExpandedInTree);
   const openDatabase = useStore((s) => s.openDatabase);
   const openTable = useStore((s) => s.openTable);
+  const renameFolderInDb = useStore((s) => s.renameFolderInDb);
+  const deleteFolderInDb = useStore((s) => s.deleteFolderInDb);
+  const [folderMenu, setFolderMenu] = useState<{
+    db: string;
+    folderId: string;
+    folderName: string;
+    tableCount: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState<{
+    db: string;
+    folderId: string;
+  } | null>(null);
+  const [pendingFolderDelete, setPendingFolderDelete] = useState<{
+    db: string;
+    folderId: string;
+    folderName: string;
+    tableCount: number;
+  } | null>(null);
   const activeDbName = useStore((s) => {
     const tab = s.tabs.find((t) => t.id === s.activeTabId);
     if (!tab || tab.kind !== "database" || tab.profileId !== profile.id) return null;
@@ -466,8 +489,20 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                         onClick={() =>
                           toggleFolderExpandedInTree(profile.id, db, folder.id)
                         }
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setFolderMenu({
+                            db,
+                            folderId: folder.id,
+                            folderName: folder.name,
+                            tableCount: folder.tables.length,
+                            x: e.clientX,
+                            y: e.clientY,
+                          });
+                        }}
                         className="flex items-center gap-1 pl-11 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-300"
-                        title={`${folder.name} · ${folder.tables.length} table(s)`}
+                        title={`${folder.name} · ${folder.tables.length} table(s) · right-click for actions`}
                       >
                         <ChevronRight
                           size={13}
@@ -481,10 +516,29 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                           className="text-accent-400"
                           strokeWidth={1.8}
                         />
-                        <span className="truncate flex-1">{folder.name}</span>
-                        <span className="text-[10px] font-mono text-zinc-600">
-                          {folder.tables.length}
-                        </span>
+                        {renamingFolder?.db === db &&
+                        renamingFolder.folderId === folder.id ? (
+                          <TreeRenameInput
+                            initial={folder.name}
+                            onCommit={(name) => {
+                              setRenamingFolder(null);
+                              if (name.trim() && name.trim() !== folder.name) {
+                                renameFolderInDb(profile.id, db, folder.id, name).catch(
+                                  (err) =>
+                                    notifyError(`Could not rename folder: ${String(err)}`)
+                                );
+                              }
+                            }}
+                            onCancel={() => setRenamingFolder(null)}
+                          />
+                        ) : (
+                          <>
+                            <span className="truncate flex-1">{folder.name}</span>
+                            <span className="text-[10px] font-mono text-zinc-600">
+                              {folder.tables.length}
+                            </span>
+                          </>
+                        )}
                       </div>
                       {folderExpanded &&
                         folderTables.map((t) => (
@@ -524,7 +578,133 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
           </div>
         );
       })}
+
+      {folderMenu && (
+        <TreeFolderContextMenu
+          x={folderMenu.x}
+          y={folderMenu.y}
+          onClose={() => setFolderMenu(null)}
+          onRename={() => {
+            setRenamingFolder({ db: folderMenu.db, folderId: folderMenu.folderId });
+            setFolderMenu(null);
+          }}
+          onDelete={() => {
+            const { db, folderId, folderName, tableCount } = folderMenu;
+            setFolderMenu(null);
+            setPendingFolderDelete({ db, folderId, folderName, tableCount });
+          }}
+        />
+      )}
+
+      {pendingFolderDelete && (
+        <FolderDeleteDialog
+          folderName={pendingFolderDelete.folderName}
+          tableCount={pendingFolderDelete.tableCount}
+          onConfirm={() =>
+            deleteFolderInDb(
+              profile.id,
+              pendingFolderDelete.db,
+              pendingFolderDelete.folderId
+            )
+          }
+          onClose={() => setPendingFolderDelete(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function TreeRenameInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [val, setVal] = useState(initial);
+  const ref = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  const finish = (fn: () => void) => {
+    if (done.current) return;
+    done.current = true;
+    fn();
+  };
+  return (
+    <input
+      ref={ref}
+      data-el="folder-rename-input"
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish(() => onCommit(val));
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          finish(onCancel);
+        }
+      }}
+      onBlur={() => finish(() => onCommit(val))}
+      className="flex-1 min-w-0 bg-zinc-900 border border-accent-500/60 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none"
+    />
+  );
+}
+
+function TreeFolderContextMenu({
+  x,
+  y,
+  onClose,
+  onRename,
+  onDelete,
+}: {
+  x: number;
+  y: number;
+  onClose: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  useEffect(() => {
+    const close = () => onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  const item = "flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800";
+
+  return createPortal(
+    <div
+      data-el="tree-folder-menu"
+      style={{ top: y, left: x }}
+      onClick={(e) => e.stopPropagation()}
+      className="fixed z-50 min-w-[150px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 text-[12px] shadow-xl shadow-black/60"
+    >
+      <button className={clsx(item, "text-zinc-200")} onClick={onRename}>
+        <PencilSimple size={14} className="text-accent-400 shrink-0" />
+        Rename…
+      </button>
+      <button className={clsx(item, "text-rose-400")} onClick={onDelete}>
+        <Trash size={14} className="shrink-0" />
+        Delete
+      </button>
+    </div>,
+    document.body
   );
 }
 

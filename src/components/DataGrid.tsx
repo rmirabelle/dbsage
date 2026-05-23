@@ -93,18 +93,24 @@ export function DataGrid({
 
   /**
    * Horizontal wheel scrolling. Registered non-passively so preventDefault
-   * actually works (React's onWheel is passive). Shift+wheel scrolls
-   * horizontally, and a vertical wheel over a wide table with no vertical
-   * overflow is redirected horizontally so off-screen columns are reachable
-   * without the scrollbar. A native horizontal wheel/trackpad (deltaX) is left
-   * alone to scroll on its own.
+   * actually works (React's onWheel is passive). We drive scrollLeft ourselves
+   * for ALL horizontal intent rather than trusting WebView2's flaky native
+   * deltaX handling:
+   *   - a horizontal wheel/tilt (deltaX, e.g. MX Master thumb wheel),
+   *   - Shift+wheel,
+   *   - and a vertical wheel over a wide table with no vertical overflow.
    */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (e.deltaY === 0) return;
       if (el.scrollWidth <= el.clientWidth) return;
+      if (e.deltaX !== 0) {
+        el.scrollLeft += e.deltaX;
+        e.preventDefault();
+        return;
+      }
+      if (e.deltaY === 0) return;
       const hasVerticalOverflow = el.scrollHeight > el.clientHeight;
       if (e.shiftKey || !hasVerticalOverflow) {
         el.scrollLeft += e.deltaY;

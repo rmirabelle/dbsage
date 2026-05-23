@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { ipc } from "../ipc";
+import { columnDefToDraft } from "../lib/tableSql";
 import type {
   ColumnFilter,
+  CreateTableTab,
   DatabaseTab,
   Folder,
   ProfileView,
@@ -45,6 +47,8 @@ interface Store {
   relations: Record<string, Relation[]>;
 
   loadProfiles: () => Promise<void>;
+  /** Refresh visible state after a bundle import (profiles, open tabs, tree folders, relations). */
+  reloadAfterImport: () => Promise<void>;
   connectProfile: (profileId: string) => Promise<void>;
   disconnectProfile: (profileId: string) => Promise<void>;
   toggleProfileExpanded: (profileId: string) => Promise<void>;
@@ -59,11 +63,57 @@ interface Store {
   createFolder: (tabId: string, name: string) => Promise<Folder | null>;
   renameFolder: (tabId: string, folderId: string, name: string) => Promise<void>;
   deleteFolder: (tabId: string, folderId: string) => Promise<void>;
+  /** Folder rename/delete addressed by (profile, database) — used by the sidebar tree. */
+  renameFolderInDb: (
+    profileId: string,
+    database: string,
+    folderId: string,
+    name: string
+  ) => Promise<void>;
+  deleteFolderInDb: (
+    profileId: string,
+    database: string,
+    folderId: string
+  ) => Promise<void>;
   setTableFolder: (tabId: string, table: string, folderId: string | null) => Promise<void>;
   setTablesFolder: (tabId: string, tables: string[], folderId: string | null) => Promise<void>;
 
   openTable: (profileId: string, profileName: string, database: string, table: string) => Promise<void>;
+  /** Empty a table (TRUNCATE) and refresh any open views of it. */
+  truncateTable: (profileId: string, database: string, table: string) => Promise<void>;
+  /** Drop a table, close any open tabs for it, and refresh the DB view + tree. */
+  deleteTable: (profileId: string, database: string, table: string) => Promise<void>;
+  /** Rename a table (and its folder membership); updates open tabs + refreshes. */
+  renameTable: (
+    profileId: string,
+    database: string,
+    oldName: string,
+    newName: string
+  ) => Promise<void>;
   openRelations: (profileId: string, profileName: string, database: string) => void;
+  openTableDesigner: (profileId: string, profileName: string, database: string) => void;
+  /** Open the designer in edit mode, pre-loaded with an existing table's columns. */
+  openTableEditor: (
+    profileId: string,
+    profileName: string,
+    database: string,
+    table: string
+  ) => Promise<void>;
+  updateCreateTable: (
+    tabId: string,
+    patch: Partial<
+      Pick<CreateTableTab, "tableName" | "columns" | "autoIncrementValue">
+    >
+  ) => void;
+  /** After a table is created: close the designer tab and open the DB view with
+   * the new table selected. */
+  finishTableCreation: (
+    createTabId: string,
+    profileId: string,
+    profileName: string,
+    database: string,
+    tableName: string
+  ) => Promise<void>;
   loadRelations: (profileId: string, database: string) => Promise<void>;
   saveRelation: (args: {
     profileId: string;
@@ -135,6 +185,30 @@ export const useStore = create<Store>((set, get) => ({
     } catch (e) {
       console.error(e);
       set({ loadingProfiles: false });
+    }
+  },
+
+  reloadAfterImport: async () => {
+    await get().loadProfiles();
+
+    const pairs = new Map<string, { profileId: string; database: string }>();
+    for (const t of get().tabs) {
+      pairs.set(`${t.profileId}::${t.database}`, {
+        profileId: t.profileId,
+        database: t.database,
+      });
+    }
+    for (const [profileId, tree] of Object.entries(get().trees)) {
+      for (const database of Object.keys(tree.tablesByDb)) {
+        pairs.set(`${profileId}::${database}`, { profileId, database });
+      }
+    }
+
+    for (const { profileId, database } of pairs.values()) {
+      await refreshFoldersEverywhere(profileId, database, set, get);
+      if (get().relations[`${profileId}::${database}`]) {
+        await get().loadRelations(profileId, database);
+      }
     }
   },
 
@@ -353,6 +427,29 @@ export const useStore = create<Store>((set, get) => ({
     await refreshFoldersEverywhere(tab.profileId, tab.database, set, get);
   },
 
+  renameFolderInDb: async (profileId, database, folderId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await ipc.renameFolder(profileId, database, folderId, trimmed);
+    await refreshFoldersEverywhere(profileId, database, set, get);
+  },
+
+  deleteFolderInDb: async (profileId, database, folderId) => {
+    await ipc.deleteFolder(profileId, database, folderId);
+    /* If a database tab is currently inside this folder, pop it back to root. */
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.kind === "database" &&
+        t.profileId === profileId &&
+        t.database === database &&
+        t.currentFolderId === folderId
+          ? { ...t, currentFolderId: null }
+          : t
+      ),
+    }));
+    await refreshFoldersEverywhere(profileId, database, set, get);
+  },
+
   setTableFolder: async (tabId, table, folderId) => {
     const tab = get().tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "database") return;
@@ -405,6 +502,67 @@ export const useStore = create<Store>((set, get) => ({
     await loadTabPage(tabId, 1, set, get);
   },
 
+  truncateTable: async (profileId, database, table) => {
+    await ipc.truncateTable(profileId, database, table);
+    /* Reload any open rows view of this table (now empty) and refresh the
+       table list everywhere (row estimates change). */
+    for (const t of get().tabs) {
+      if (
+        t.kind === "rows" &&
+        t.profileId === profileId &&
+        t.database === database &&
+        t.table === table
+      ) {
+        await get().refreshTab(t.id);
+      }
+    }
+    await refreshFoldersEverywhere(profileId, database, set, get);
+  },
+
+  deleteTable: async (profileId, database, table) => {
+    await ipc.dropTable(profileId, database, table);
+    /* Close any open rows tab for the now-gone table. */
+    set((s) => {
+      const tabs = s.tabs.filter(
+        (t) =>
+          !(
+            t.kind === "rows" &&
+            t.profileId === profileId &&
+            t.database === database &&
+            t.table === table
+          )
+      );
+      const activeTabId = tabs.some((t) => t.id === s.activeTabId)
+        ? s.activeTabId
+        : tabs[tabs.length - 1]?.id ?? null;
+      return { tabs, activeTabId };
+    });
+    await refreshFoldersEverywhere(profileId, database, set, get);
+  },
+
+  renameTable: async (profileId, database, oldName, newName) => {
+    await ipc.renameTable(profileId, database, oldName, newName);
+    /* Repoint any open rows tab (id encodes the table name) and the remembered
+       selection at the new name. Folder membership is updated server-side. */
+    const oldId = `rows::${profileId}::${database}::${oldName}`;
+    const newId = `rows::${profileId}::${database}::${newName}`;
+    set((s) => {
+      const tabs = s.tabs.map((t) =>
+        t.id === oldId && t.kind === "rows"
+          ? { ...t, table: newName, id: newId }
+          : t
+      );
+      const activeTabId = s.activeTabId === oldId ? newId : s.activeTabId;
+      const key = `${profileId}::${database}`;
+      const lastOpenedTables =
+        s.lastOpenedTables[key] === oldName
+          ? { ...s.lastOpenedTables, [key]: newName }
+          : s.lastOpenedTables;
+      return { tabs, activeTabId, lastOpenedTables };
+    });
+    await refreshFoldersEverywhere(profileId, database, set, get);
+  },
+
   closeTab: (tabId) => {
     set((s) => {
       const idx = s.tabs.findIndex((t) => t.id === tabId);
@@ -433,6 +591,80 @@ export const useStore = create<Store>((set, get) => ({
       database,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+  },
+
+  openTableDesigner: (profileId, profileName, database) => {
+    const tabId = `create-table::${profileId}::${database}::${Date.now()}`;
+    const tab: CreateTableTab = {
+      id: tabId,
+      kind: "create-table",
+      mode: "create",
+      profileId,
+      profileName,
+      database,
+      tableName: "",
+      originalName: "",
+      columns: [],
+      originalColumns: [],
+      autoIncrementValue: "",
+      originalAutoIncrementValue: "",
+    };
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+  },
+
+  openTableEditor: async (profileId, profileName, database, table) => {
+    const tabId = `edit-table::${profileId}::${database}::${table}`;
+    if (get().tabs.some((t) => t.id === tabId)) {
+      set({ activeTabId: tabId });
+      return;
+    }
+    const [defs, autoInc] = await Promise.all([
+      ipc.columnDefinitions(profileId, database, table),
+      ipc.tableAutoIncrement(profileId, database, table),
+    ]);
+    const columns = defs.map(columnDefToDraft);
+    const ai = autoInc != null ? String(autoInc) : "";
+    const tab: CreateTableTab = {
+      id: tabId,
+      kind: "create-table",
+      mode: "edit",
+      profileId,
+      profileName,
+      database,
+      tableName: table,
+      originalName: table,
+      columns,
+      originalColumns: columns.map((c) => ({ ...c })),
+      autoIncrementValue: ai,
+      originalAutoIncrementValue: ai,
+    };
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+  },
+
+  updateCreateTable: (tabId, patch) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "create-table" ? { ...t, ...patch } : t
+      ),
+    }));
+  },
+
+  finishTableCreation: async (createTabId, profileId, profileName, database, tableName) => {
+    /* Remember the new table so the (re-mounted) DB view auto-selects it. */
+    set((s) => ({
+      lastOpenedTables: {
+        ...s.lastOpenedTables,
+        [`${profileId}::${database}`]: tableName,
+      },
+    }));
+    /* Close the designer tab and any existing DB view for this database, then
+       open a fresh one — remounting DatabaseView so it applies the remembered
+       table as the selection and reloads the table list (including the new one). */
+    const dbTabId = `db::${profileId}::${database}`;
+    get().closeTab(createTabId);
+    if (get().tabs.some((t) => t.id === dbTabId)) get().closeTab(dbTabId);
+    await refreshFoldersEverywhere(profileId, database, set, get);
+    await get().openDatabase(profileId, profileName, database);
   },
 
   loadRelations: async (profileId, database) => {

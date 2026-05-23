@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useUi, ZOOM_BOUNDS } from "../state/ui";
+import { useUi, ZOOM_BOUNDS, type PaneId } from "../state/ui";
 
 /**
  * Global Ctrl+= / Ctrl+- / Ctrl+0 listener. Targets whichever pane currently
@@ -29,7 +29,13 @@ export function useZoomShortcuts() {
     const onWheel = (e: WheelEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
-      const pane = useUi.getState().focusedPane;
+      /* Scale the pane under the cursor (falling back to the focused one). */
+      const target = e.target as HTMLElement;
+      const pane: PaneId = target.closest('[data-el="sidebar-pane"]')
+        ? "tree"
+        : target.closest('[data-el="main-pane"]')
+        ? "tabs"
+        : useUi.getState().focusedPane;
       const direction = e.deltaY > 0 ? -1 : 1;
       useUi.getState().bumpZoom(pane, direction * ZOOM_BOUNDS.STEP);
     };

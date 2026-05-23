@@ -27,7 +27,7 @@ pub struct Relation {
  * relations.json layout (mirrors folders.json):
  *   { "<profile-id>": { "<database>": [Relation, ...] } }
  */
-type RelationsFile = BTreeMap<String, BTreeMap<String, Vec<Relation>>>;
+pub type RelationsFile = BTreeMap<String, BTreeMap<String, Vec<Relation>>>;
 
 fn relations_path(app: &AppHandle) -> AppResult<PathBuf> {
     let dir = app.path().app_config_dir()?;
@@ -141,4 +141,35 @@ pub fn delete(app: &AppHandle, profile_id: &str, database: &str, id: &str) -> Ap
     }
     save_file(app, &file)?;
     Ok(())
+}
+
+pub fn export_all(app: &AppHandle) -> AppResult<RelationsFile> {
+    load_file(app)
+}
+
+/// Merge an imported relations tree into the store, upserting each relation by
+/// id within its (profile, database) bucket. Returns the number of relations
+/// processed.
+pub fn import_merge(app: &AppHandle, incoming: &RelationsFile) -> AppResult<usize> {
+    let mut file = load_file(app)?;
+    let mut count = 0;
+    for (profile_id, by_db) in incoming {
+        for (database, relations) in by_db {
+            let list = file
+                .entry(profile_id.clone())
+                .or_default()
+                .entry(database.clone())
+                .or_default();
+            for relation in relations {
+                if let Some(existing) = list.iter_mut().find(|r| r.id == relation.id) {
+                    *existing = relation.clone();
+                } else {
+                    list.push(relation.clone());
+                }
+                count += 1;
+            }
+        }
+    }
+    save_file(app, &file)?;
+    Ok(count)
 }

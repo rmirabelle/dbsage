@@ -19,7 +19,7 @@ pub struct Folder {
  * folders.json layout:
  *   { "<profile-id>": { "<database>": [Folder, ...] } }
  */
-type FoldersFile = BTreeMap<String, BTreeMap<String, Vec<Folder>>>;
+pub type FoldersFile = BTreeMap<String, BTreeMap<String, Vec<Folder>>>;
 
 fn folders_path(app: &AppHandle) -> AppResult<PathBuf> {
     let dir = app.path().app_config_dir()?;
@@ -163,4 +163,67 @@ pub fn set_table_folder(
 
     save_file(app, &file)?;
     Ok(())
+}
+
+pub fn export_all(app: &AppHandle) -> AppResult<FoldersFile> {
+    load_file(app)
+}
+
+/// Keep folder membership in sync when a table is renamed: replace `old_name`
+/// with `new_name` in any folder under (profile, database).
+pub fn rename_table(
+    app: &AppHandle,
+    profile_id: &str,
+    database: &str,
+    old_name: &str,
+    new_name: &str,
+) -> AppResult<()> {
+    let mut file = load_file(app)?;
+    if let Some(folders) = file
+        .get_mut(profile_id)
+        .and_then(|by_db| by_db.get_mut(database))
+    {
+        let now = Utc::now();
+        for folder in folders.iter_mut() {
+            let mut changed = false;
+            for t in folder.tables.iter_mut() {
+                if t == old_name {
+                    *t = new_name.to_string();
+                    changed = true;
+                }
+            }
+            if changed {
+                folder.updated_at = now;
+            }
+        }
+    }
+    save_file(app, &file)?;
+    Ok(())
+}
+
+/// Merge an imported folders tree into the store, upserting each folder by id
+/// within its (profile, database) bucket. Returns the number of folders
+/// processed.
+pub fn import_merge(app: &AppHandle, incoming: &FoldersFile) -> AppResult<usize> {
+    let mut file = load_file(app)?;
+    let mut count = 0;
+    for (profile_id, by_db) in incoming {
+        for (database, folders) in by_db {
+            let list = file
+                .entry(profile_id.clone())
+                .or_default()
+                .entry(database.clone())
+                .or_default();
+            for folder in folders {
+                if let Some(existing) = list.iter_mut().find(|f| f.id == folder.id) {
+                    *existing = folder.clone();
+                } else {
+                    list.push(folder.clone());
+                }
+                count += 1;
+            }
+        }
+    }
+    save_file(app, &file)?;
+    Ok(count)
 }

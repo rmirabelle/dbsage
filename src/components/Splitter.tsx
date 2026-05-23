@@ -29,7 +29,7 @@ export function Splitter() {
         window.addEventListener("mouseup", onUp);
       }}
       onDoubleClick={() => setSidebarWidth(256)}
-      className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent-500/40 transition-colors relative group"
+      className="w-1 shrink-0 cursor-col-resize bg-zinc-800/60 hover:bg-accent-500/40 transition-colors relative group"
       title="Drag to resize · double-click to reset"
     >
       <div className="absolute inset-y-0 -left-1 -right-1" />

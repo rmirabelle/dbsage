@@ -1,13 +1,26 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Database } from "@phosphor-icons/react";
+import { useUi, ZOOM_BOUNDS } from "../state/ui";
+
+/** Zoom the currently-focused pane (tree or tabs). */
+const zoomFocused = (delta: number) => {
+  const { focusedPane, bumpZoom } = useUi.getState();
+  bumpZoom(focusedPane, delta);
+};
+const resetFocusedZoom = () => {
+  const { focusedPane, resetZoom } = useUi.getState();
+  resetZoom(focusedPane);
+};
 
 interface Props {
   onAbout: () => void;
+  onExport: () => void;
+  onImport: () => void;
   updateAvailable?: boolean;
 }
 
-export function TitleBar({ onAbout, updateAvailable }: Props) {
+export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props) {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -38,9 +51,65 @@ export function TitleBar({ onAbout, updateAvailable }: Props) {
           className="flex items-center gap-2 pr-3 text-zinc-300 pointer-events-none"
         >
           <Database size={16} className="text-accent-400" />
-          <span className="text-[12px] font-medium tracking-wide">DB Sage</span>
+          <span className="text-[12px] font-bold tracking-wide text-accent-400">DB Sage</span>
         </div>
         <nav data-el="app-menu" className="flex items-center">
+          <TitleBarMenu label="File">
+            {(close) => (
+              <>
+                <button
+                  data-el="menu-import-state"
+                  onClick={() => {
+                    close();
+                    onImport();
+                  }}
+                  className={MENU_ITEM_CLASS}
+                >
+                  <span>Import state…</span>
+                </button>
+                <button
+                  data-el="menu-export-state"
+                  onClick={() => {
+                    close();
+                    onExport();
+                  }}
+                  className={MENU_ITEM_CLASS}
+                >
+                  <span>Export state…</span>
+                </button>
+              </>
+            )}
+          </TitleBarMenu>
+          <TitleBarMenu label="View">
+            {() => (
+              <>
+                <button
+                  data-el="menu-zoom-in"
+                  onClick={() => zoomFocused(ZOOM_BOUNDS.STEP)}
+                  className={MENU_ITEM_CLASS}
+                >
+                  <span>Zoom In</span>
+                  <span className="text-[10px] text-zinc-500">Ctrl +</span>
+                </button>
+                <button
+                  data-el="menu-zoom-out"
+                  onClick={() => zoomFocused(-ZOOM_BOUNDS.STEP)}
+                  className={MENU_ITEM_CLASS}
+                >
+                  <span>Zoom Out</span>
+                  <span className="text-[10px] text-zinc-500">Ctrl −</span>
+                </button>
+                <button
+                  data-el="menu-zoom-reset"
+                  onClick={() => resetFocusedZoom()}
+                  className={MENU_ITEM_CLASS}
+                >
+                  <span>Reset Zoom</span>
+                  <span className="text-[10px] text-zinc-500">Ctrl 0</span>
+                </button>
+              </>
+            )}
+          </TitleBarMenu>
           <TitleBarMenu label="Help" badge={updateAvailable}>
             {(close) => (
               <button

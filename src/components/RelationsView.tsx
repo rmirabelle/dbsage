@@ -212,7 +212,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
       data-el="relations-view"
       className="flex-1 flex flex-col min-h-0 bg-zinc-950"
     >
-      <div className="h-9 shrink-0 px-4 flex items-center gap-2 border-b border-zinc-800/60">
+      <div className="dbs-toolbar h-9 shrink-0 px-4 flex items-center gap-2 border-b border-zinc-800/60">
         <ShareNetwork size={15} className="text-violet-400" />
         <span className="text-[12px] text-zinc-300">
           Relationships <span className="text-zinc-500">— {database}</span>

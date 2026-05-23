@@ -92,3 +92,19 @@ pub fn get(app: &AppHandle, id: &str) -> AppResult<ConnectionProfile> {
         .find(|p| p.id == id)
         .ok_or_else(|| AppError::ProfileNotFound(id.to_string()))
 }
+
+/// Merge imported profiles into the store, upserting by id and preserving the
+/// incoming timestamps. Returns the number of profiles processed.
+pub fn import_merge(app: &AppHandle, incoming: Vec<ConnectionProfile>) -> AppResult<usize> {
+    let mut all = load_all(app)?;
+    let count = incoming.len();
+    for profile in incoming {
+        if let Some(existing) = all.iter_mut().find(|p| p.id == profile.id) {
+            *existing = profile;
+        } else {
+            all.push(profile);
+        }
+    }
+    save_all(app, &all)?;
+    Ok(count)
+}

@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ColumnDef,
   ColumnFilter,
   ColumnInfo,
   Folder,
+  ImportSummary,
   ProfileInput,
   ProfileView,
   Relation,
@@ -64,6 +66,32 @@ export const ipc = {
     value: string | null;
   }) => invoke<number>("update_cell", args),
 
+  tableExists: (profileId: string, database: string, table: string) =>
+    invoke<boolean>("table_exists", { profileId, database, table }),
+  createTable: (args: {
+    profileId: string;
+    database: string;
+    tableName: string;
+    sql: string;
+    overwrite: boolean;
+  }) => invoke<void>("create_table", args),
+  truncateTable: (profileId: string, database: string, table: string) =>
+    invoke<void>("truncate_table", { profileId, database, table }),
+  dropTable: (profileId: string, database: string, table: string) =>
+    invoke<void>("drop_table", { profileId, database, table }),
+  renameTable: (
+    profileId: string,
+    database: string,
+    oldName: string,
+    newName: string
+  ) => invoke<void>("rename_table", { profileId, database, oldName, newName }),
+  columnDefinitions: (profileId: string, database: string, table: string) =>
+    invoke<ColumnDef[]>("column_definitions", { profileId, database, table }),
+  tableAutoIncrement: (profileId: string, database: string, table: string) =>
+    invoke<number | null>("table_auto_increment", { profileId, database, table }),
+  runDdl: (profileId: string, database: string, sql: string) =>
+    invoke<void>("run_ddl", { profileId, database, sql }),
+
   listRelations: (profileId: string, database: string) =>
     invoke<Relation[]>("list_relations", { profileId, database }),
   saveRelation: (args: {
@@ -104,4 +132,9 @@ export const ipc = {
       table,
       folderId,
     }),
+
+  exportState: (path: string, passphrase: string) =>
+    invoke<void>("export_state", { path, passphrase }),
+  importState: (path: string, passphrase: string) =>
+    invoke<ImportSummary>("import_state", { path, passphrase }),
 };
