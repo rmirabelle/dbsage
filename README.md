@@ -2,22 +2,35 @@
 
 A sleek, modern Windows desktop client for MySQL — built with Tauri 2, React 19, and Rust.
 
-## Status
+## Features
 
-Early development. Working features:
+**Connections & navigation**
 
 - Multiple connection profiles (passwords stored in Windows Credential Manager via DPAPI)
-- Sidebar tree: connection → databases → folders → tables (with custom client-side folders for organizing tables)
-- Database view: multi-column tile grid of tables, multi-select + drag tables into folders
-- Rows view: paged virtualized grid (500 rows/page)
-  - Click any column header to sort (ASC/DESC) or filter (EQUALS / LIKE-as-contains)
-  - Click a cell to focus it; the Expanded panel pretty-prints JSON and other long values
-  - Double-click a cell to edit inline (PK-based UPDATE)
-  - Show/hide columns from the gutter button
-  - Drag-select multiple rows
-  - Resize columns, sticky row-number gutter, sticky header
-- Per-pane zoom (Ctrl+= / Ctrl+− / Ctrl+0 or Ctrl+wheel) and draggable sidebar splitter
-- Dark slate-tinted theme; OS-yellow folders; Phosphor solid icons
+- Sidebar tree: connection → databases → folders → tables, with custom client-side folders for organizing tables
+- Right-click context menus throughout: connections (rename / edit / new database / disconnect / delete), databases (drop), folders, and tables (edit / rename / truncate / delete)
+- Create and drop databases
+
+**Schema**
+
+- Table designer with a visual **Columns** editor (type, length/decimals, NOT NULL, key, default, auto-increment, unsigned/zerofill) and an **Indexes** editor (multi-column with ASC/DESC, type NORMAL/UNIQUE/FULLTEXT/SPATIAL, method) — generates the `CREATE TABLE` / `ALTER TABLE` and shows a live SQL preview
+- Create new tables or edit existing ones in place
+- Define virtual **relationships** (has-one / has-many) between tables
+
+**Browsing & editing rows**
+
+- Paged, virtualized grid (500 rows/page)
+- Sort and filter per column (equals / contains)
+- **JSON columns**: filter by property — `equals` (via `JSON_CONTAINS`) and `contains` (via `JSON_SEARCH`), shape-agnostic across objects and arrays of objects — including correlated `array[key=value].field` selectors; or **Show** an extracted property (or a comma-separated list) inline instead of the raw JSON
+- Inline cell editing (PK-based `UPDATE`)
+- Show/hide and resize columns; column widths and per-table setup (visibility + filters + JSON show) persist across sessions
+- Expanded panel: an editable, pretty-printed value next to a collapsible **JSON tree view**, with search/next/prev across both panes
+
+**Workspace**
+
+- Encrypted, passphrase-protected state export/import (connections, relationships, folders, and column setups)
+- In-app auto-updater (checks GitHub releases)
+- Per-pane zoom (Ctrl+= / Ctrl+− / Ctrl+0 or Ctrl+wheel), draggable splitters, dark slate-tinted theme, Phosphor icons
 
 ## Run from source
 
@@ -28,14 +41,18 @@ npm run tauri dev
 
 Requires Rust + Node + the Tauri 2 prerequisites for Windows (WebView2 already ships with Windows 11).
 
+To cut a release, bump the version in `src-tauri/Cargo.toml`, `package.json`, and `src-tauri/tauri.conf.json`, then run `.\publish.ps1`.
+
 ## Project layout
 
 ```
-src/             React 19 frontend (TypeScript, Tailwind 4)
+src/             React 19 frontend (TypeScript, Tailwind 4, Zustand)
 src-tauri/       Rust backend (Tauri 2, sqlx, keyring)
 src-tauri/src/
-  commands/      Tauri IPC commands (profiles, connect, query, folders)
-  store/         Persistence (profiles.json, folders.json, OS keyring)
+  commands/      Tauri IPC commands (profiles, connect, query, folders,
+                 relations, column_setups, state import/export)
+  store/         Persistence (profiles.json, folders.json, relations.json,
+                 column_setups.json, OS keyring)
   db/            MySQL connection pool + row→JSON serializer
 ```
 
