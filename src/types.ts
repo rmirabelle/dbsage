@@ -55,6 +55,15 @@ export interface ImportSummary {
   profiles: number;
   relations: number;
   folders: number;
+  columnSetups: number;
+}
+
+/** Per-table column configuration, persisted backend-side and included in
+ * state export/import. */
+export interface ColumnSetup {
+  hiddenColumns: string[];
+  filters: ColumnFilter[];
+  jsonDisplay: Record<string, string>;
 }
 
 export type CellValue = string | number | boolean | null;
@@ -88,6 +97,11 @@ export interface ColumnFilter {
   column: string;
   op: FilterOp;
   value: string;
+  /** JSON columns only: a dotted property path (e.g. "address.city"). When set,
+   * the filter targets that JSON property instead of the whole column —
+   * `equals` becomes a JSON_CONTAINS match, `like` a JSON_SEARCH match, both
+   * shape-agnostic (object or array of objects). */
+  jsonPath?: string;
 }
 
 export interface RowsTab extends BaseTab {
@@ -103,6 +117,10 @@ export interface RowsTab extends BaseTab {
   sort: SortSpec | null;
   filters: ColumnFilter[];
   hiddenColumns: string[];
+  /** JSON columns only: per-column dotted property path. When set, that
+   * column's cells display the extracted property (truncated) instead of the
+   * full JSON. Keyed by column name. */
+  jsonDisplay: Record<string, string>;
 }
 
 export interface Folder {
@@ -159,6 +177,38 @@ export interface ColumnDef {
   comment: string;
 }
 
+export type IndexDirection = "ASC" | "DESC";
+export type IndexType = "NORMAL" | "UNIQUE" | "FULLTEXT" | "SPATIAL";
+export type IndexMethod = "BTREE" | "HASH";
+
+/** One column participating in an index, with its sort direction. */
+export interface IndexColumnRef {
+  column: string;
+  direction: IndexDirection;
+}
+
+/** One index row in the table designer. */
+export interface IndexDraft {
+  id: string;
+  name: string;
+  columns: IndexColumnRef[];
+  indexType: IndexType;
+  method: IndexMethod;
+  comment: string;
+  /** The index's name as loaded (edit mode only); absent for newly-added
+   * indexes. Used to diff against the live edits when generating ALTER TABLE. */
+  originalName?: string;
+}
+
+/** Index metadata from the backend, used to seed the editor in edit mode. */
+export interface IndexDef {
+  name: string;
+  columns: IndexColumnRef[];
+  indexType: IndexType;
+  method: IndexMethod;
+  comment: string;
+}
+
 export interface CreateTableTab extends BaseTab {
   kind: "create-table";
   mode: "create" | "edit";
@@ -168,6 +218,10 @@ export interface CreateTableTab extends BaseTab {
   columns: ColumnDraft[];
   /** Edit mode: snapshot of the loaded columns, for diffing into ALTER clauses. */
   originalColumns: ColumnDraft[];
+  /** Secondary indexes (PRIMARY KEY is driven by per-column `key`). */
+  indexes: IndexDraft[];
+  /** Edit mode: snapshot of the loaded indexes, for diffing into ALTER clauses. */
+  originalIndexes: IndexDraft[];
   /** Edit mode: the table's next AUTO_INCREMENT value (raw input string). */
   autoIncrementValue: string;
   /** Edit mode: the loaded AUTO_INCREMENT, for change detection. Empty when the

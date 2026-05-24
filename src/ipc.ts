@@ -3,8 +3,10 @@ import type {
   ColumnDef,
   ColumnFilter,
   ColumnInfo,
+  ColumnSetup,
   Folder,
   ImportSummary,
+  IndexDef,
   ProfileInput,
   ProfileView,
   Relation,
@@ -36,6 +38,10 @@ export const ipc = {
 
   listDatabases: (profileId: string) =>
     invoke<string[]>("list_databases", { profileId }),
+  createDatabase: (profileId: string, name: string) =>
+    invoke<void>("create_database", { profileId, name }),
+  dropDatabase: (profileId: string, name: string) =>
+    invoke<void>("drop_database", { profileId, name }),
   listTables: (profileId: string, database: string) =>
     invoke<TableInfo[]>("list_tables", { profileId, database }),
   listColumns: (profileId: string, database: string, table: string) =>
@@ -87,6 +93,8 @@ export const ipc = {
   ) => invoke<void>("rename_table", { profileId, database, oldName, newName }),
   columnDefinitions: (profileId: string, database: string, table: string) =>
     invoke<ColumnDef[]>("column_definitions", { profileId, database, table }),
+  indexDefinitions: (profileId: string, database: string, table: string) =>
+    invoke<IndexDef[]>("index_definitions", { profileId, database, table }),
   tableAutoIncrement: (profileId: string, database: string, table: string) =>
     invoke<number | null>("table_auto_increment", { profileId, database, table }),
   runDdl: (profileId: string, database: string, sql: string) =>
@@ -132,6 +140,19 @@ export const ipc = {
       table,
       folderId,
     }),
+
+  getColumnSetup: (profileId: string, database: string, table: string) =>
+    invoke<ColumnSetup | null>("get_column_setup", {
+      profileId,
+      database,
+      table,
+    }),
+  saveColumnSetup: (
+    profileId: string,
+    database: string,
+    table: string,
+    setup: ColumnSetup
+  ) => invoke<void>("save_column_setup", { profileId, database, table, setup }),
 
   exportState: (path: string, passphrase: string) =>
     invoke<void>("export_state", { path, passphrase }),

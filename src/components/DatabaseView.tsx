@@ -9,9 +9,7 @@ import {
   MagnifyingGlass as Search,
   ShareNetwork,
   Table as Table2,
-  Eraser,
   Trash,
-  PencilSimple,
   TextT,
   X,
 } from "@phosphor-icons/react";
@@ -31,6 +29,7 @@ import {
 import { useStore } from "../state/store";
 import { notifyError } from "../state/notify";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
+import { TableContextMenu } from "./TableContextMenu";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import type { DatabaseTab, Folder, TableInfo } from "../types";
 
@@ -360,31 +359,6 @@ export function DatabaseView({ tab }: Props) {
   }, [emptyMenu]);
 
   /**
-   * The tile grid lays out in CSS columns and scrolls horizontally. Drive
-   * scrollLeft ourselves for any horizontal intent — a horizontal wheel/tilt
-   * (deltaX, e.g. MX Master), Shift+wheel, or a plain vertical wheel (there is
-   * no vertical scroll here) — rather than relying on WebView2's flaky native
-   * horizontal scrolling. Non-passive so preventDefault works.
-   */
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      if (el.scrollWidth <= el.clientWidth) return;
-      const hasVerticalOverflow = el.scrollHeight > el.clientHeight;
-      let dx = 0;
-      if (e.deltaX !== 0) dx = e.deltaX;
-      else if (e.deltaY !== 0 && (e.shiftKey || !hasVerticalOverflow)) dx = e.deltaY;
-      if (dx !== 0) {
-        el.scrollLeft += dx;
-        e.preventDefault();
-      }
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
-
-  /**
    * PointerSensor with a small activation distance keeps double-click working —
    * the drag only kicks in after the pointer travels > 5px.
    */
@@ -483,10 +457,11 @@ export function DatabaseView({ tab }: Props) {
             onClick={() =>
               openTableDesigner(tab.profileId, tab.profileName, tab.database)
             }
-            className="inline-flex items-center gap-1 px-2 py-1 rounded font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
+            style={{ fontSize: 13 }}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-emerald-400 text-emerald-950 hover:bg-emerald-300 transition-colors"
             title="Design a new table"
           >
-            <span className="text-[15px] leading-none">+</span> Table
+            <span className="text-[19px] leading-none">+</span> Table
           </button>
 
           <button
@@ -494,10 +469,11 @@ export function DatabaseView({ tab }: Props) {
             onClick={() =>
               openRelations(tab.profileId, tab.profileName, tab.database)
             }
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
+            style={{ fontSize: 13 }}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
             title="Open the relationships view for this database"
           >
-            <ShareNetwork size={13} /> Relationships
+            <ShareNetwork size={17} /> Relationships
             {relationCount > 0 && (
               <span className="rounded-full bg-violet-950/40 text-violet-50 px-1.5 text-[10px] font-semibold tabular-nums">
                 {relationCount}
@@ -513,9 +489,9 @@ export function DatabaseView({ tab }: Props) {
             title="Refresh"
           >
             {tab.loading ? (
-              <Loader2 size={13} className="animate-spin" />
+              <Loader2 size={17} className="animate-spin" />
             ) : (
-              <RefreshCw size={13} />
+              <RefreshCw size={17} />
             )}
           </button>
 
@@ -732,6 +708,10 @@ export function DatabaseView({ tab }: Props) {
           <EmptyAreaContextMenu
             x={emptyMenu.x}
             y={emptyMenu.y}
+            onNewTable={() => {
+              setEmptyMenu(null);
+              openTableDesigner(tab.profileId, tab.profileName, tab.database);
+            }}
             onNewFolder={() => {
               setEmptyMenu(null);
               setCreating(true);
@@ -946,7 +926,7 @@ function TableTile({
             ? "text-accent-300"
             : isAnyDragging
             ? "text-zinc-500"
-            : "text-zinc-500 group-hover:text-accent-400"
+            : "text-zinc-500 group-hover:text-emerald-400"
         )}
       />
       {renaming ? (
@@ -1047,21 +1027,21 @@ function FolderContextMenu({
       data-el="folder-context-menu"
       style={{ top: y, left: x }}
       onClick={(e) => e.stopPropagation()}
-      className="fixed z-50 min-w-[150px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 text-[11px] shadow-xl shadow-black/60"
+      className="dbs-context-menu fixed z-50 min-w-[150px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >
       <button
         className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 text-zinc-200"
         onClick={onRename}
       >
-        <PencilSimple size={14} className="text-accent-400 shrink-0" />
-        Rename…
+        <TextT size={14} className="text-accent-400 shrink-0" />
+        Rename Folder
       </button>
       <button
         className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 text-rose-400"
         onClick={onDelete}
       >
         <Trash size={14} className="shrink-0" />
-        Delete
+        Delete Folder
       </button>
     </div>,
     document.body
@@ -1071,10 +1051,12 @@ function FolderContextMenu({
 function EmptyAreaContextMenu({
   x,
   y,
+  onNewTable,
   onNewFolder,
 }: {
   x: number;
   y: number;
+  onNewTable: () => void;
   onNewFolder: () => void;
 }) {
   return createPortal(
@@ -1082,8 +1064,16 @@ function EmptyAreaContextMenu({
       data-el="empty-context-menu"
       style={{ top: y, left: x }}
       onClick={(e) => e.stopPropagation()}
-      className="fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 text-[11px] shadow-xl shadow-black/60"
+      className="dbs-context-menu fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >
+      <button
+        data-el="ctx-new-table"
+        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 text-zinc-200"
+        onClick={onNewTable}
+      >
+        <Table2 size={14} className="text-emerald-400 shrink-0" />
+        New Table
+      </button>
       <button
         data-el="ctx-new-folder"
         className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 text-zinc-200"
@@ -1091,68 +1081,6 @@ function EmptyAreaContextMenu({
       >
         <FolderPlus size={14} className="text-amber-300 shrink-0" />
         New Folder
-      </button>
-    </div>,
-    document.body
-  );
-}
-
-function TableContextMenu({
-  x,
-  y,
-  onTruncate,
-  onDelete,
-  onEdit,
-  onRename,
-}: {
-  x: number;
-  y: number;
-  onTruncate: () => void;
-  onDelete: () => void;
-  onEdit: () => void;
-  onRename: () => void;
-}) {
-  const itemClass =
-    "flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800";
-  return createPortal(
-    <div
-      data-el="table-context-menu"
-      style={{ top: y, left: x }}
-      onClick={(e) => e.stopPropagation()}
-      className="fixed z-50 min-w-[170px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 text-[11px] shadow-xl shadow-black/60"
-    >
-      <button
-        data-el="ctx-edit-table"
-        className={clsx(itemClass, "text-zinc-200")}
-        onClick={onEdit}
-      >
-        <PencilSimple size={14} className="text-accent-400 shrink-0" />
-        Edit Table
-      </button>
-      <button
-        data-el="ctx-rename-table"
-        className={clsx(itemClass, "text-zinc-200")}
-        onClick={onRename}
-      >
-        <TextT size={14} className="text-accent-400 shrink-0" />
-        Rename Table
-      </button>
-      <div className="my-1 border-t border-zinc-800" />
-      <button
-        data-el="ctx-truncate-table"
-        className={clsx(itemClass, "text-zinc-200")}
-        onClick={onTruncate}
-      >
-        <Eraser size={14} className="text-amber-400 shrink-0" />
-        Truncate Table
-      </button>
-      <button
-        data-el="ctx-delete-table"
-        className={clsx(itemClass, "text-rose-400")}
-        onClick={onDelete}
-      >
-        <Trash size={14} className="shrink-0" />
-        Delete Table
       </button>
     </div>,
     document.body

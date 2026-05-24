@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { IconContext } from "@phosphor-icons/react";
 import App from "./App";
+import "./lib/horizontalWheel";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

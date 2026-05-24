@@ -1,3 +1,4 @@
+pub mod column_setups;
 pub mod connect;
 pub mod folders;
 pub mod profiles;

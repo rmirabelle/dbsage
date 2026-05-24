@@ -75,6 +75,17 @@ input:focus, select:focus, textarea:focus {
 }
 
 /**
+ * Shared base font size for standard right-click context menus. Set on the menu
+ * container; item <button>s inherit it (the global `button { font-size: inherit }`
+ * rule means a Tailwind text-size utility on the button itself would be ignored).
+ * Add `dbs-context-menu` to every context-menu container instead of a one-off
+ * `text-[Npx]`. Pair it with size={14} Phosphor icons so icon and text match.
+ */
+.dbs-context-menu {
+  font-size: 14px;
+}
+
+/**
  * Replace the native <select> dropdown arrow (which Chromium crams flush against
  * the right border and won't reposition via padding) with our own chevron, inset
  * 0.5rem from the edge. Applies app-wide so every select is consistent.

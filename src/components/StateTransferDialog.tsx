@@ -85,10 +85,10 @@ function ExportBody({ onClose }: { onClose: () => void }) {
     <>
       <div className="px-4 py-4 space-y-3">
         <p className="text-[11px] leading-relaxed text-zinc-400">
-          Exports your connections (including passwords), relationships, and
-          table folders into a single encrypted file. You&apos;ll need the
-          passphrase below to import it again, so store it somewhere safe — it
-          cannot be recovered.
+          Exports your connections (including passwords), relationships, table
+          folders, and saved column setups into a single encrypted file.
+          You&apos;ll need the passphrase below to import it again, so store it
+          somewhere safe — it cannot be recovered.
         </p>
         <Field label="Passphrase">
           <input
@@ -166,7 +166,9 @@ function ImportBody({ onClose }: { onClose: () => void }) {
             <div className="mt-1 text-[11px] text-zinc-400">
               {summary.profiles} connection{summary.profiles === 1 ? "" : "s"},{" "}
               {summary.relations} relationship{summary.relations === 1 ? "" : "s"},{" "}
-              {summary.folders} folder{summary.folders === 1 ? "" : "s"} merged.
+              {summary.folders} folder{summary.folders === 1 ? "" : "s"}, and{" "}
+              {summary.columnSetups} column setup
+              {summary.columnSetups === 1 ? "" : "s"} merged.
             </div>
           </div>
         </div>

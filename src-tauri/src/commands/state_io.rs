@@ -1,6 +1,7 @@
 use crate::crypto::{self, EncryptedFile, APP_TAG, ENCRYPTED_FORMAT};
 use crate::error::{AppError, AppResult};
 use crate::store::{
+    column_setups::{self, ColumnSetupsFile},
     folders::{self, FoldersFile},
     profiles::{self, ConnectionProfile},
     relations::{self, RelationsFile},
@@ -32,6 +33,8 @@ struct StateBundle {
     relations: RelationsFile,
     #[serde(default)]
     folders: FoldersFile,
+    #[serde(default)]
+    column_setups: ColumnSetupsFile,
 }
 
 /// A connection profile plus its password (lifted out of the OS keyring so the
@@ -51,6 +54,7 @@ pub struct ImportSummary {
     pub profiles: usize,
     pub relations: usize,
     pub folders: usize,
+    pub column_setups: usize,
 }
 
 #[tauri::command]
@@ -75,6 +79,7 @@ pub async fn export_state(app: AppHandle, path: String, passphrase: String) -> A
         profiles,
         relations: relations::export_all(&app)?,
         folders: folders::export_all(&app)?,
+        column_setups: column_setups::export_all(&app)?,
     };
 
     let plaintext = serde_json::to_vec(&bundle)?;
@@ -128,6 +133,7 @@ pub async fn import_state(
         profiles: profiles::import_merge(&app, bare_profiles)?,
         relations: relations::import_merge(&app, &bundle.relations)?,
         folders: folders::import_merge(&app, &bundle.folders)?,
+        column_setups: column_setups::import_merge(&app, &bundle.column_setups)?,
     };
     Ok(summary)
 }

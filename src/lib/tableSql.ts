@@ -1,4 +1,4 @@
-import type { ColumnDef, ColumnDraft } from "../types";
+import type { ColumnDef, ColumnDraft, IndexDef, IndexDraft } from "../types";
 
 interface ParsedType {
   type: string;
@@ -53,6 +53,19 @@ export function columnDefToDraft(def: ColumnDef): ColumnDraft {
   };
 }
 
+/** Convert backend index metadata into an editor draft (edit mode seed). */
+export function indexDefToDraft(def: IndexDef): IndexDraft {
+  return {
+    id: crypto.randomUUID(),
+    name: def.name,
+    originalName: def.name,
+    columns: def.columns.map((c) => ({ ...c })),
+    indexType: def.indexType,
+    method: def.method,
+    comment: def.comment ?? "",
+  };
+}
+
 function quoteString(s: string): string {
   return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
@@ -96,9 +109,40 @@ export function columnSpec(col: ColumnDraft): string {
 
 const id = (name: string) => `\`${name.replace(/`/g, "``")}\``;
 
+/** Render one index definition body (no leading ADD/comma), or null when the
+ * index is incomplete (no name or no columns). USING and per-column direction
+ * are only emitted for B-tree/hash indexes — FULLTEXT/SPATIAL reject them. */
+export function indexDefinition(idx: IndexDraft): string | null {
+  const name = idx.name.trim();
+  const cols = idx.columns.filter((c) => c.column.trim());
+  if (!name || cols.length === 0) return null;
+
+  const directional = idx.indexType === "NORMAL" || idx.indexType === "UNIQUE";
+  const keyword =
+    idx.indexType === "UNIQUE"
+      ? "UNIQUE INDEX"
+      : idx.indexType === "FULLTEXT"
+        ? "FULLTEXT INDEX"
+        : idx.indexType === "SPATIAL"
+          ? "SPATIAL INDEX"
+          : "INDEX";
+
+  const colList = cols
+    .map((c) =>
+      directional ? `${id(c.column.trim())} ${c.direction}` : id(c.column.trim())
+    )
+    .join(", ");
+
+  let def = `${keyword} ${id(name)} (${colList})`;
+  if (directional) def += ` USING ${idx.method}`;
+  if (idx.comment.trim()) def += ` COMMENT ${quoteString(idx.comment.trim())}`;
+  return def;
+}
+
 export function buildCreateTableSql(
   tableName: string,
-  columns: ColumnDraft[]
+  columns: ColumnDraft[],
+  indexes: IndexDraft[] = []
 ): string {
   const defs: string[] = [];
   for (const col of columns) {
@@ -110,6 +154,11 @@ export function buildCreateTableSql(
     .filter((c) => c.key && c.name.trim())
     .map((c) => id(c.name.trim()));
   if (pk.length > 0) defs.push(`  PRIMARY KEY (${pk.join(", ")})`);
+
+  for (const idx of indexes) {
+    const def = indexDefinition(idx);
+    if (def) defs.push(`  ${def}`);
+  }
 
   const body = defs.length > 0 ? defs.join(",\n") : "  /* no columns yet */";
   return `CREATE TABLE ${id(tableName)} (\n${body}\n);`;
@@ -123,7 +172,9 @@ export function buildAlterTableSql(
   tableName: string,
   currentColumns: ColumnDraft[],
   originalAutoIncrement = "",
-  autoIncrement = ""
+  autoIncrement = "",
+  originalIndexes: IndexDraft[] = [],
+  currentIndexes: IndexDraft[] = []
 ): string {
   const clauses: string[] = [];
   const origByName = new Map(
@@ -174,6 +225,39 @@ export function buildAlterTableSql(
     if (origPk.length > 0) clauses.push("  DROP PRIMARY KEY");
     if (curPk.length > 0)
       clauses.push(`  ADD PRIMARY KEY (${curPk.map(id).join(", ")})`);
+  }
+
+  /* Secondary index diff: changed indexes are dropped and re-added (mirrors the
+     primary-key handling above). Comparison is by rendered definition. */
+  const keptIndexNames = new Set(
+    currentIndexes
+      .filter((i) => i.originalName)
+      .map((i) => i.originalName as string)
+  );
+  for (const oi of originalIndexes) {
+    const on = oi.originalName ?? oi.name;
+    if (!keptIndexNames.has(on)) clauses.push(`  DROP INDEX ${id(on)}`);
+  }
+  const origIndexByName = new Map(
+    originalIndexes.map((i) => [i.originalName ?? i.name, i])
+  );
+  for (const idx of currentIndexes) {
+    const def = indexDefinition(idx);
+    if (!idx.originalName) {
+      if (def) clauses.push(`  ADD ${def}`);
+      continue;
+    }
+    if (!def) {
+      /* An existing index emptied of columns/name → drop it. */
+      clauses.push(`  DROP INDEX ${id(idx.originalName)}`);
+      continue;
+    }
+    const orig = origIndexByName.get(idx.originalName);
+    const origDef = orig ? indexDefinition(orig) : null;
+    if (origDef !== def) {
+      clauses.push(`  DROP INDEX ${id(idx.originalName)}`);
+      clauses.push(`  ADD ${def}`);
+    }
   }
 
   /* AUTO_INCREMENT counter. */

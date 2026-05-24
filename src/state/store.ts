@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { ipc } from "../ipc";
-import { columnDefToDraft } from "../lib/tableSql";
+import {
+  columnDefToDraft,
+  indexDefToDraft,
+  buildCreateTableSql,
+  buildAlterTableSql,
+  droppedColumnNames,
+} from "../lib/tableSql";
+import { notifyError, notifySuccess, notifyInfo } from "./notify";
 import type {
   ColumnFilter,
   CreateTableTab,
@@ -14,6 +21,43 @@ import type {
   Tab,
   TableInfo,
 } from "../types";
+
+/** True when a table-designer tab has changes worth confirming before close. */
+export function isDesignerTabDirty(tab: CreateTableTab): boolean {
+  if (tab.mode === "edit") {
+    const alter = buildAlterTableSql(
+      tab.originalName,
+      tab.originalColumns,
+      tab.tableName,
+      tab.columns,
+      tab.originalAutoIncrementValue,
+      tab.autoIncrementValue,
+      tab.originalIndexes,
+      tab.indexes
+    );
+    /* buildAlterTableSql returns a `--` comment when nothing changed. */
+    return !alter.startsWith("--");
+  }
+  return (
+    tab.tableName.trim() !== "" ||
+    tab.columns.length > 0 ||
+    tab.indexes.length > 0
+  );
+}
+
+/** Persist a rows tab's column setup (visibility, filters, JSON "Show") to the
+ * backend store so reopening the table restores it. Best-effort. */
+function persistColumnSetup(tab: RowsTab) {
+  ipc
+    .saveColumnSetup(tab.profileId, tab.database, tab.table, {
+      hiddenColumns: tab.hiddenColumns,
+      filters: tab.filters,
+      jsonDisplay: tab.jsonDisplay,
+    })
+    .catch(() => {
+      /* persistence is best-effort */
+    });
+}
 
 interface TreeDbState {
   loading: boolean;
@@ -41,6 +85,8 @@ interface Store {
 
   tabs: Tab[];
   activeTabId: string | null;
+  /** Tab awaiting an unsaved-changes confirmation before it closes; null when none. */
+  pendingCloseTabId: string | null;
   /** Last table opened per `${profileId}::${database}`, for re-selecting in the DB view. */
   lastOpenedTables: Record<string, string>;
   /** Defined relations per `${profileId}::${database}`. */
@@ -51,6 +97,12 @@ interface Store {
   reloadAfterImport: () => Promise<void>;
   connectProfile: (profileId: string) => Promise<void>;
   disconnectProfile: (profileId: string) => Promise<void>;
+  /** Create a new database on the connection (connecting first if needed),
+   * then refresh the tree's database list and expand the profile. */
+  createDatabase: (profileId: string, name: string) => Promise<void>;
+  /** Permanently drop a database: removes it from the tree and closes any of
+   * its open tabs. */
+  dropDatabase: (profileId: string, database: string) => Promise<void>;
   toggleProfileExpanded: (profileId: string) => Promise<void>;
   toggleDbExpanded: (profileId: string, db: string) => Promise<void>;
   toggleFolderExpandedInTree: (profileId: string, db: string, folderId: string) => void;
@@ -102,7 +154,10 @@ interface Store {
   updateCreateTable: (
     tabId: string,
     patch: Partial<
-      Pick<CreateTableTab, "tableName" | "columns" | "autoIncrementValue">
+      Pick<
+        CreateTableTab,
+        "tableName" | "columns" | "indexes" | "autoIncrementValue"
+      >
     >
   ) => void;
   /** After a table is created: close the designer tab and open the DB view with
@@ -132,6 +187,13 @@ interface Store {
     id: string
   ) => Promise<void>;
   closeTab: (tabId: string) => void;
+  /** Close a tab, but first prompt for unsaved changes if it's a dirty designer tab. */
+  requestCloseTab: (tabId: string) => void;
+  setPendingCloseTabId: (tabId: string | null) => void;
+  /** Persist a table-designer tab (create or edit). Returns ok=false with an
+   * error message on validation failure, or ok=false silently when the user
+   * declines a destructive sub-confirmation. */
+  saveDesignerTab: (tabId: string) => Promise<{ ok: boolean; error?: string }>;
   setActiveTab: (tabId: string) => void;
   setTabPage: (tabId: string, page: number) => Promise<void>;
   setPageSize: (tabId: string, pageSize: number) => Promise<void>;
@@ -141,6 +203,8 @@ interface Store {
   setRowsSort: (tabId: string, sort: SortSpec | null) => Promise<void>;
   setRowsFilter: (tabId: string, column: string, filter: ColumnFilter | null) => Promise<void>;
   setHiddenColumns: (tabId: string, hidden: string[]) => void;
+  /** Set (or clear, with null) a JSON column's display property path. */
+  setJsonDisplay: (tabId: string, column: string, path: string | null) => void;
 
   updateCell: (
     tabId: string,
@@ -174,6 +238,7 @@ export const useStore = create<Store>((set, get) => ({
   expandedProfiles: new Set(),
   tabs: [],
   activeTabId: null,
+  pendingCloseTabId: null,
   lastOpenedTables: {},
   relations: {},
 
@@ -244,6 +309,56 @@ export const useStore = create<Store>((set, get) => ({
       }));
       throw e;
     }
+  },
+
+  createDatabase: async (profileId, name) => {
+    const conn = get().connections[profileId];
+    if (!conn?.connected) await get().connectProfile(profileId);
+    await ipc.createDatabase(profileId, name);
+    const databases = await ipc.listDatabases(profileId);
+    set((s) => {
+      const t = s.trees[profileId] ?? defaultTree();
+      const exp = new Set(s.expandedProfiles);
+      exp.add(profileId);
+      return {
+        trees: { ...s.trees, [profileId]: { ...t, databases } },
+        expandedProfiles: exp,
+      };
+    });
+    notifySuccess(`Database "${name}" created.`);
+  },
+
+  dropDatabase: async (profileId, database) => {
+    await ipc.dropDatabase(profileId, database);
+    set((s) => {
+      let trees = s.trees;
+      const t = s.trees[profileId];
+      if (t) {
+        const tablesByDb = { ...t.tablesByDb };
+        delete tablesByDb[database];
+        const expandedDbs = new Set(t.expandedDbs);
+        expandedDbs.delete(database);
+        trees = {
+          ...s.trees,
+          [profileId]: {
+            ...t,
+            databases: t.databases.filter((d) => d !== database),
+            tablesByDb,
+            expandedDbs,
+          },
+        };
+      }
+      /* Close every tab belonging to the dropped database. */
+      const tabs = s.tabs.filter(
+        (tab) => !(tab.profileId === profileId && tab.database === database)
+      );
+      let activeTabId = s.activeTabId;
+      if (!tabs.some((tab) => tab.id === activeTabId)) {
+        activeTabId = tabs[tabs.length - 1]?.id ?? null;
+      }
+      return { trees, tabs, activeTabId };
+    });
+    notifySuccess(`Database "${database}" dropped.`);
   },
 
   disconnectProfile: async (profileId) => {
@@ -481,6 +596,7 @@ export const useStore = create<Store>((set, get) => ({
       return;
     }
 
+    const saved = await ipc.getColumnSetup(profileId, database, table);
     const tab: RowsTab = {
       id: tabId,
       kind: "rows",
@@ -495,8 +611,9 @@ export const useStore = create<Store>((set, get) => ({
       loading: true,
       error: null,
       sort: null,
-      filters: [],
-      hiddenColumns: [],
+      filters: saved?.filters ?? [],
+      hiddenColumns: saved?.hiddenColumns ?? [],
+      jsonDisplay: saved?.jsonDisplay ?? {},
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     await loadTabPage(tabId, 1, set, get);
@@ -572,8 +689,109 @@ export const useStore = create<Store>((set, get) => ({
       if (s.activeTabId === tabId) {
         activeTabId = tabs[Math.min(idx, tabs.length - 1)]?.id ?? null;
       }
-      return { tabs, activeTabId };
+      const pendingCloseTabId =
+        s.pendingCloseTabId === tabId ? null : s.pendingCloseTabId;
+      return { tabs, activeTabId, pendingCloseTabId };
     });
+  },
+
+  requestCloseTab: (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (tab && tab.kind === "create-table" && isDesignerTabDirty(tab)) {
+      set({ pendingCloseTabId: tabId });
+      return;
+    }
+    get().closeTab(tabId);
+  },
+
+  setPendingCloseTabId: (tabId) => set({ pendingCloseTabId: tabId }),
+
+  saveDesignerTab: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "create-table") return { ok: false };
+    const name = tab.tableName.trim();
+    if (!name) return { ok: false, error: "Enter a table name." };
+    if (tab.columns.filter((c) => c.name.trim()).length === 0) {
+      return { ok: false, error: "Add at least one column with a name." };
+    }
+
+    if (tab.mode === "edit") {
+      const alterSql = buildAlterTableSql(
+        tab.originalName,
+        tab.originalColumns,
+        name,
+        tab.columns,
+        tab.originalAutoIncrementValue,
+        tab.autoIncrementValue,
+        tab.originalIndexes,
+        tab.indexes
+      );
+      if (alterSql.startsWith("--")) {
+        notifyInfo("No changes to apply.");
+        return { ok: true };
+      }
+      const dropped = droppedColumnNames(tab.originalColumns, tab.columns);
+      if (dropped.length > 0) {
+        const ok = window.confirm(
+          `This will permanently DROP ${dropped.length} column${
+            dropped.length === 1 ? "" : "s"
+          } and all of their data:\n\n${dropped.join(", ")}\n\n` +
+            `This cannot be undone. Continue?`
+        );
+        if (!ok) return { ok: false };
+      }
+      try {
+        await ipc.runDdl(tab.profileId, tab.database, alterSql);
+        notifySuccess(`Table "${tab.originalName}" updated.`);
+        /* Stay in the designer after saving: re-seed the tab from the now-saved
+           table so the dirty baseline resets, rather than closing the tab. */
+        await reloadDesignerTab(tab.id, name, set, get);
+        /* Keep an open DB view in sync (e.g. after a rename) without switching
+           away from the editor. */
+        const dbTabId = `db::${tab.profileId}::${tab.database}`;
+        if (get().tabs.some((t) => t.id === dbTabId)) {
+          await loadDatabaseTab(dbTabId, set, get);
+        }
+        return { ok: true };
+      } catch (e) {
+        notifyError(`Could not alter table: ${String(e)}`);
+        return { ok: false, error: String(e) };
+      }
+    }
+
+    const sqlText = buildCreateTableSql(name, tab.columns, tab.indexes);
+    try {
+      const exists = await ipc.tableExists(tab.profileId, tab.database, name);
+      if (exists) {
+        const ok = window.confirm(
+          `A table named "${name}" already exists in "${tab.database}".\n\n` +
+            `Saving will DROP the existing table and ALL of its data, then recreate it. ` +
+            `This cannot be undone.\n\nContinue?`
+        );
+        if (!ok) return { ok: false };
+      }
+      await ipc.createTable({
+        profileId: tab.profileId,
+        database: tab.database,
+        tableName: name,
+        sql: sqlText,
+        overwrite: exists,
+      });
+      notifySuccess(
+        `Table "${name}" ${exists ? "replaced" : "created"} in ${tab.database}.`
+      );
+      await get().finishTableCreation(
+        tab.id,
+        tab.profileId,
+        tab.profileName,
+        tab.database,
+        name
+      );
+      return { ok: true };
+    } catch (e) {
+      notifyError(`Could not save table: ${String(e)}`);
+      return { ok: false, error: String(e) };
+    }
   },
 
   openRelations: (profileId, profileName, database) => {
@@ -606,6 +824,8 @@ export const useStore = create<Store>((set, get) => ({
       originalName: "",
       columns: [],
       originalColumns: [],
+      indexes: [],
+      originalIndexes: [],
       autoIncrementValue: "",
       originalAutoIncrementValue: "",
     };
@@ -618,11 +838,13 @@ export const useStore = create<Store>((set, get) => ({
       set({ activeTabId: tabId });
       return;
     }
-    const [defs, autoInc] = await Promise.all([
+    const [defs, idxDefs, autoInc] = await Promise.all([
       ipc.columnDefinitions(profileId, database, table),
+      ipc.indexDefinitions(profileId, database, table),
       ipc.tableAutoIncrement(profileId, database, table),
     ]);
     const columns = defs.map(columnDefToDraft);
+    const indexes = idxDefs.map(indexDefToDraft);
     const ai = autoInc != null ? String(autoInc) : "";
     const tab: CreateTableTab = {
       id: tabId,
@@ -635,6 +857,11 @@ export const useStore = create<Store>((set, get) => ({
       originalName: table,
       columns,
       originalColumns: columns.map((c) => ({ ...c })),
+      indexes,
+      originalIndexes: indexes.map((i) => ({
+        ...i,
+        columns: i.columns.map((c) => ({ ...c })),
+      })),
       autoIncrementValue: ai,
       originalAutoIncrementValue: ai,
     };
@@ -748,6 +975,8 @@ export const useStore = create<Store>((set, get) => ({
         return { ...t, filters: next, page: 1, exactTotal: null };
       }),
     }));
+    const t = get().tabs.find((x) => x.id === tabId);
+    if (t && t.kind === "rows") persistColumnSetup(t);
     await loadTabPage(tabId, 1, set, get);
   },
 
@@ -757,6 +986,22 @@ export const useStore = create<Store>((set, get) => ({
         t.id === tabId && t.kind === "rows" ? { ...t, hiddenColumns: hidden } : t
       ),
     }));
+    const t = get().tabs.find((x) => x.id === tabId);
+    if (t && t.kind === "rows") persistColumnSetup(t);
+  },
+
+  setJsonDisplay: (tabId, column, path) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== tabId || t.kind !== "rows") return t;
+        const next = { ...t.jsonDisplay };
+        if (path && path.trim()) next[column] = path.trim();
+        else delete next[column];
+        return { ...t, jsonDisplay: next };
+      }),
+    }));
+    const t = get().tabs.find((x) => x.id === tabId);
+    if (t && t.kind === "rows") persistColumnSetup(t);
   },
 
   updateCell: async (tabId, rowIndex, column, newValue) => {
@@ -881,6 +1126,47 @@ async function loadDatabaseTab(tabId: string, set: SetFn, get: GetFn) {
       ),
     }));
   }
+}
+
+/** Re-seed an edit-mode designer tab from the (just-saved) table, resetting the
+ * dirty baseline so the tab can stay open and clean after a save. Picks up any
+ * server-side canonicalization (rename, generated index names, exact types). */
+async function reloadDesignerTab(
+  tabId: string,
+  tableName: string,
+  set: SetFn,
+  get: GetFn
+) {
+  const tab = get().tabs.find((t) => t.id === tabId);
+  if (!tab || tab.kind !== "create-table") return;
+  const [defs, idxDefs, autoInc] = await Promise.all([
+    ipc.columnDefinitions(tab.profileId, tab.database, tableName),
+    ipc.indexDefinitions(tab.profileId, tab.database, tableName),
+    ipc.tableAutoIncrement(tab.profileId, tab.database, tableName),
+  ]);
+  const columns = defs.map(columnDefToDraft);
+  const indexes = idxDefs.map(indexDefToDraft);
+  const ai = autoInc != null ? String(autoInc) : "";
+  set((s) => ({
+    tabs: s.tabs.map((t) =>
+      t.id === tabId && t.kind === "create-table"
+        ? {
+            ...t,
+            tableName,
+            originalName: tableName,
+            columns,
+            originalColumns: columns.map((c) => ({ ...c })),
+            indexes,
+            originalIndexes: indexes.map((i) => ({
+              ...i,
+              columns: i.columns.map((c) => ({ ...c })),
+            })),
+            autoIncrementValue: ai,
+            originalAutoIncrementValue: ai,
+          }
+        : t
+    ),
+  }));
 }
 
 async function loadTreeDb(profileId: string, db: string, set: SetFn, _get: GetFn) {

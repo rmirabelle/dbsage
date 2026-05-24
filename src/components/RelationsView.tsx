@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Trash, Plus, ShareNetwork } from "@phosphor-icons/react";
+import { Trash, Plus, ShareNetwork, X, FloppyDisk } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { ipc } from "../ipc";
 import { singularize, pluralize } from "../lib/inflector";
@@ -37,8 +37,18 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   const deleteRelationDef = useStore((s) => s.deleteRelation);
 
   const [form, setForm] = useState(BLANK);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [fromColumns, setFromColumns] = useState<string[]>([]);
   const [toColumns, setToColumns] = useState<string[]>([]);
+
+  const openAdd = () => {
+    setForm(BLANK);
+    setEditorOpen(true);
+  };
+  const closeEditor = () => {
+    setForm(BLANK);
+    setEditorOpen(false);
+  };
 
   const sortedTables = useMemo(() => [...tables].sort(), [tables]);
 
@@ -148,10 +158,24 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
       toColumn: r.toColumn,
       name: r.name,
     });
+    setEditorOpen(true);
   };
 
   const canSave =
     form.fromTable && form.fromColumn && form.toTable && form.toColumn;
+
+  /** When editing, the loaded relation; used to gate Save on an actual change. */
+  const editingOriginal = form.editingId
+    ? relations.find((r) => r.id === form.editingId) ?? null
+    : null;
+  const isDirty =
+    !editingOriginal ||
+    form.fromTable !== editingOriginal.fromTable ||
+    form.fromColumn !== editingOriginal.fromColumn ||
+    form.kind !== editingOriginal.kind ||
+    form.toTable !== editingOriginal.toTable ||
+    form.toColumn !== editingOriginal.toColumn ||
+    form.name.trim() !== editingOriginal.name.trim();
 
   const onSave = async () => {
     if (!canSave || saving) return;
@@ -169,7 +193,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         kind: form.kind,
         name: form.name.trim(),
       });
-      setForm(BLANK);
+      closeEditor();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -180,7 +204,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   const onDelete = async (id: string) => {
     try {
       await deleteRelationDef(profileId, database, id);
-      if (form.editingId === id) setForm(BLANK);
+      if (form.editingId === id) closeEditor();
     } catch (e) {
       setError(String(e));
     }
@@ -212,11 +236,15 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
       data-el="relations-view"
       className="flex-1 flex flex-col min-h-0 bg-zinc-950"
     >
-      <div className="dbs-toolbar h-9 shrink-0 px-4 flex items-center gap-2 border-b border-zinc-800/60">
-        <ShareNetwork size={15} className="text-violet-400" />
-        <span className="text-[12px] text-zinc-300">
-          Relationships <span className="text-zinc-500">— {database}</span>
-        </span>
+      <div className="dbs-toolbar h-9 shrink-0 pl-1 pr-4 flex items-center gap-1 border-b border-zinc-800/60">
+        <button
+          data-el="add-relationship-btn"
+          onClick={openAdd}
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
+          title="Add a relationship"
+        >
+          <Plus size={17} /> Relationship
+        </button>
         <span className="ml-auto text-[11px] text-zinc-500">
           {relations.length} defined
         </span>
@@ -229,7 +257,15 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
       )}
 
       <div className="flex-1 min-h-0 flex">
-        <div className="flex-1 min-h-0 overflow-auto px-4 py-4">
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="shrink-0 px-4 pt-4 pb-2 flex items-center gap-2">
+            <ShareNetwork size={18} className="text-violet-400" />
+            <h2 className="text-[16px] font-semibold text-zinc-100">
+              Relationships{" "}
+              <span className="font-normal text-zinc-500">— {database}</span>
+            </h2>
+          </div>
+          <div className="flex-1 min-h-0 overflow-auto px-4 pb-4">
           {relations.length === 0 ? (
             <div className="text-[12px] text-zinc-500 py-2">
               No relationships defined for this database yet.
@@ -287,8 +323,11 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
               })}
             </ul>
           )}
+          </div>
         </div>
 
+        {editorOpen && (
+          <>
         <div
           role="separator"
           aria-orientation="vertical"
@@ -299,10 +338,20 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         <div
           data-el="relations-editor"
           style={{ width: editorWidth }}
-          className="shrink-0 overflow-auto px-4 py-4"
+          className="shrink-0 overflow-auto px-4 py-4 bg-[#2c303c]"
         >
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
-            {form.editingId ? "Edit relationship" : "Add relationship"}
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              {form.editingId ? "Edit relationship" : "Add relationship"}
+            </span>
+            <button
+              data-el="rel-editor-close"
+              onClick={closeEditor}
+              className="text-zinc-500 hover:text-zinc-200"
+              aria-label="Close"
+            >
+              <X size={15} />
+            </button>
           </div>
           <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-[12px] text-zinc-400">
               <span className="text-right">From</span>
@@ -315,7 +364,6 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                   onChange={onFromTableChange}
                   className="flex-1"
                 />
-                <span className="text-zinc-600">.</span>
                 <SearchableSelect
                   dataEl="rel-from-column"
                   value={form.fromColumn}
@@ -348,7 +396,6 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                   onChange={onToTableChange}
                   className="flex-1"
                 />
-                <span className="text-zinc-600">.</span>
                 <SearchableSelect
                   dataEl="rel-to-column"
                   value={form.toColumn}
@@ -373,7 +420,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
             <div className="mt-3 flex items-center justify-end gap-2">
               {form.editingId && (
                 <button
-                  onClick={() => setForm(BLANK)}
+                  onClick={closeEditor}
                   className="px-3 py-1 rounded text-[11px] text-zinc-300 hover:bg-zinc-800"
                 >
                   Cancel edit
@@ -382,14 +429,16 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
               <button
                 data-el="rel-save-btn"
                 onClick={onSave}
-                disabled={!canSave || saving}
+                disabled={!canSave || saving || !isDirty}
                 className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
               >
-                <Plus size={13} />
-                {form.editingId ? "Save changes" : "Add relationship"}
+                {form.editingId ? <FloppyDisk size={13} /> : <Plus size={13} />}
+                {form.editingId ? "Save Relationship" : "Add relationship"}
               </button>
             </div>
         </div>
+          </>
+        )}
       </div>
     </div>
   );

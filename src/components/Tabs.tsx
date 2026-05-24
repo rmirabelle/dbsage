@@ -11,10 +11,13 @@ import {
   Database,
   ShareNetwork,
   ArrowsOutSimple,
+  PencilSimple,
   WarningCircle as AlertCircle,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
-import { useStore } from "../state/store";
+import { useStore, isDesignerTabDirty } from "../state/store";
+import { notifyError } from "../state/notify";
+import { CloseTabConfirmDialog } from "./CloseTabConfirmDialog";
 import { DataGrid } from "./DataGrid";
 import { DatabaseView } from "./DatabaseView";
 import { RelationsView } from "./RelationsView";
@@ -26,7 +29,7 @@ export function Tabs() {
   const tabs = useStore((s) => s.tabs);
   const activeTabId = useStore((s) => s.activeTabId);
   const setActiveTab = useStore((s) => s.setActiveTab);
-  const closeTab = useStore((s) => s.closeTab);
+  const requestCloseTab = useStore((s) => s.requestCloseTab);
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
 
@@ -40,6 +43,7 @@ export function Tabs() {
             let secondary: string;
             let Icon: typeof Database;
             let iconColor: string;
+            let dirty = false;
             if (tab.kind === "database") {
               primary = tab.database;
               secondary = tab.profileName;
@@ -54,12 +58,13 @@ export function Tabs() {
               primary = tab.tableName.trim() || "New table";
               secondary = `${tab.profileName} / ${tab.database}`;
               Icon = Table2;
-              iconColor = "text-emerald-400";
+              iconColor = "text-orange-400";
+              dirty = isDesignerTabDirty(tab);
             } else {
               primary = tab.table;
               secondary = `${tab.profileName} / ${tab.database}`;
               Icon = Table2;
-              iconColor = "text-orange-400";
+              iconColor = "text-emerald-400";
             }
             return (
               <div
@@ -81,7 +86,21 @@ export function Tabs() {
                   )}
                 />
                 <div className="min-w-0 flex flex-col leading-tight py-2.5">
-                  <span data-el="tab-title" className="text-[13px] font-semibold truncate mb-1">{primary}</span>
+                  <span
+                    data-el="tab-title"
+                    className="text-[13px] font-semibold mb-1 flex items-baseline min-w-0"
+                  >
+                    <span className="truncate">{primary}</span>
+                    {dirty && (
+                      <span
+                        data-el="tab-dirty"
+                        className="ml-0.5 shrink-0 text-red-500"
+                        title="Unsaved changes"
+                      >
+                        *
+                      </span>
+                    )}
+                  </span>
                   <span data-el="tab-subtitle" className="text-[10px] text-zinc-500 truncate">
                     {secondary}
                   </span>
@@ -90,7 +109,7 @@ export function Tabs() {
                   data-el="tab-close-btn"
                   onClick={(e) => {
                     e.stopPropagation();
-                    closeTab(tab.id);
+                    requestCloseTab(tab.id);
                   }}
                   className="ml-1 p-0.5 rounded text-zinc-500 hover:text-zinc-100 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition"
                   aria-label="Close tab"
@@ -107,6 +126,8 @@ export function Tabs() {
       <div className="flex-1 min-h-0 flex flex-col">
         {active ? <TabBody tab={active} /> : <EmptyState />}
       </div>
+
+      <CloseTabConfirmDialog />
     </div>
   );
 }
@@ -132,7 +153,9 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const setRowsSort = useStore((s) => s.setRowsSort);
   const setRowsFilter = useStore((s) => s.setRowsFilter);
   const setHiddenColumns = useStore((s) => s.setHiddenColumns);
+  const setJsonDisplay = useStore((s) => s.setJsonDisplay);
   const updateCell = useStore((s) => s.updateCell);
+  const openTableEditor = useStore((s) => s.openTableEditor);
 
   const [activeCell, setActiveCell] = useState<{
     rowIndex: number;
@@ -195,21 +218,42 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       <div
         data-el="rows-toolbar"
         data-toolbar="rows"
-        className="dbs-toolbar h-8 px-3 border-b border-zinc-800/60 flex items-center gap-2 text-[11px] text-zinc-400"
+        className="dbs-toolbar h-9 pl-1 pr-3 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
         <button
           data-el="expanded-toggle-btn"
           onClick={() => setExpanded((v) => !v)}
           className={clsx(
-            "inline-flex items-center gap-1.5 px-2 py-1 rounded transition-colors",
+            "inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors",
             expanded
-              ? "bg-accent-500/20 text-accent-200"
-              : "hover:bg-zinc-800 text-zinc-300"
+              ? "bg-accent-500 text-[#042f2e] hover:bg-accent-400"
+              : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
           )}
           title="Toggle the expanded-value panel"
         >
-          <ArrowsOutSimple size={13} />
+          <ArrowsOutSimple size={17} />
           Expanded
+        </button>
+
+        <button
+          data-el="edit-table-btn"
+          onClick={() =>
+            openTableEditor(
+              tab.profileId,
+              tab.profileName,
+              tab.database,
+              tab.table
+            ).catch((e) =>
+              notifyError(
+                `Could not open "${tab.table}" for editing: ${String(e)}`
+              )
+            )
+          }
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
+          title="Edit this table's structure"
+        >
+          <PencilSimple size={17} />
+          Edit Table
         </button>
       </div>
 
@@ -233,6 +277,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           sort={tab.sort}
           filters={tab.filters}
           hiddenColumns={tab.hiddenColumns}
+          jsonDisplay={tab.jsonDisplay}
           activeCell={activeCell}
           onActiveCellChange={setActiveCell}
           onSortChange={(sort) => setRowsSort(tab.id, sort)}
@@ -240,6 +285,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             setRowsFilter(tab.id, column, filter)
           }
           onHiddenColumnsChange={(hidden) => setHiddenColumns(tab.id, hidden)}
+          onJsonShow={(column, path) => setJsonDisplay(tab.id, column, path)}
           onCellEdit={(rowIndex, column, value) =>
             updateCell(tab.id, rowIndex, column, value)
           }

@@ -9,6 +9,7 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useUi } from "../state/ui";
+import { JsonTreeView } from "./JsonTreeView";
 import type { ColumnInfo } from "../types";
 
 interface Props {
@@ -61,6 +62,17 @@ export function ExpandedPanel({
   const isJsonColumn = isJsonType(column);
   const canEdit = editable && column != null && onSave != null;
   const dirty = canEdit && text !== initialText;
+
+  /** Parsed view of the (live) text for the tree column — `undefined` when the
+   * column isn't JSON or the current text isn't parseable. */
+  const treeData = useMemo(() => {
+    if (!isJsonColumn) return undefined;
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return undefined;
+    }
+  }, [text, isJsonColumn]);
 
   const matches = useMemo(() => findMatches(text, search), [text, search]);
   const matchCount = matches.length;
@@ -208,11 +220,30 @@ export function ExpandedPanel({
         )}
 
         <div className="ml-auto flex items-center gap-1">
+          <button
+            data-el="expanded-close-btn"
+            onClick={onClose}
+            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100"
+            aria-label="Close expanded panel"
+            title="Close (Esc)"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 flex">
+        <div
+          className={clsx(
+            "relative flex-1 min-h-0 min-w-0",
+            column && isJsonColumn && "border-r border-zinc-800"
+          )}
+        >
           {column && (
             <button
               data-el="expanded-copy-btn"
               onClick={onCopy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100"
+              className="absolute top-[7px] right-3.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-900/80 backdrop-blur-sm text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
               title="Copy to clipboard"
             >
               {copied ? (
@@ -228,48 +259,53 @@ export function ExpandedPanel({
               )}
             </button>
           )}
-          <button
-            data-el="expanded-close-btn"
-            onClick={onClose}
-            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100"
-            aria-label="Close expanded panel"
-            title="Close (Esc)"
+          <div
+            ref={backdropRef}
+            aria-hidden="true"
+            className={clsx(
+              "absolute inset-0 overflow-hidden text-transparent select-none pointer-events-none",
+              layerClass
+            )}
           >
-            <X size={13} />
-          </button>
+            {column ? highlighted : null}
+          </div>
+          <textarea
+            ref={textareaRef}
+            data-el="expanded-editor"
+            value={column ? text : ""}
+            spellCheck={false}
+            readOnly={!canEdit}
+            placeholder={column && isNull ? "NULL" : ""}
+            onChange={(e) => {
+              setText(e.target.value);
+              setSaved(false);
+            }}
+            onScroll={syncScroll}
+            className={clsx(
+              "absolute inset-0 h-full w-full resize-none overflow-auto border-0 bg-transparent outline-none",
+              layerClass,
+              column ? "text-zinc-200" : "text-zinc-600",
+              !canEdit && "cursor-default"
+            )}
+          />
         </div>
-      </div>
 
-      <div className="relative flex-1 min-h-0">
-        <div
-          ref={backdropRef}
-          aria-hidden="true"
-          className={clsx(
-            "absolute inset-0 overflow-hidden text-transparent select-none pointer-events-none",
-            layerClass
-          )}
-        >
-          {column ? highlighted : null}
-        </div>
-        <textarea
-          ref={textareaRef}
-          data-el="expanded-editor"
-          value={column ? text : ""}
-          spellCheck={false}
-          readOnly={!canEdit}
-          placeholder={column && isNull ? "NULL" : ""}
-          onChange={(e) => {
-            setText(e.target.value);
-            setSaved(false);
-          }}
-          onScroll={syncScroll}
-          className={clsx(
-            "absolute inset-0 h-full w-full resize-none overflow-auto border-0 bg-transparent outline-none",
-            layerClass,
-            column ? "text-zinc-200" : "text-zinc-600",
-            !canEdit && "cursor-default"
-          )}
-        />
+        {column && isJsonColumn && (
+          <div className="flex-1 min-h-0 min-w-0 bg-[#2c303c]">
+            {treeData !== undefined ? (
+              <JsonTreeView
+                key={`${column?.name ?? ""}:${rowOrdinal ?? ""}`}
+                data={treeData}
+                search={search}
+                activeIndex={activeIndex}
+              />
+            ) : (
+              <div className="px-3 py-2 text-[11px] text-zinc-600 font-mono">
+                {text.trim() ? "Not valid JSON" : ""}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div

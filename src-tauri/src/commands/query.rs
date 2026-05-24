@@ -61,6 +61,10 @@ pub struct ColumnFilter {
     pub column: String,
     pub op: FilterOp,
     pub value: String,
+    /// JSON columns only: dotted property path (e.g. "address.city"). When set,
+    /// the filter targets that JSON property instead of the whole column.
+    #[serde(default)]
+    pub json_path: Option<String>,
 }
 
 /// Auto-wrap `value` with `%` for "contains" semantics, unless the user has
@@ -71,6 +75,151 @@ fn prepare_like_value(value: &str) -> String {
     } else {
         format!("%{value}%")
     }
+}
+
+/// Infer a JSON value from raw filter text: a bare integer/float becomes a JSON
+/// number, `true`/`false`/`null` become those literals, and everything else is
+/// a string. Wrapping in double quotes (e.g. `"33"`) forces a string.
+fn infer_json_value(raw: &str) -> Value {
+    let v = raw.trim();
+    if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
+        return Value::String(v[1..v.len() - 1].to_string());
+    }
+    if v.eq_ignore_ascii_case("true") {
+        return Value::Bool(true);
+    }
+    if v.eq_ignore_ascii_case("false") {
+        return Value::Bool(false);
+    }
+    if v.eq_ignore_ascii_case("null") {
+        return Value::Null;
+    }
+    if let Ok(n) = v.parse::<i64>() {
+        return Value::Number(n.into());
+    }
+    if let Ok(f) = v.parse::<f64>() {
+        if let Some(num) = serde_json::Number::from_f64(f) {
+            return Value::Number(num);
+        }
+    }
+    Value::String(v.to_string())
+}
+
+/// One path segment with an optional `[key=value]` array selector.
+struct PathSeg {
+    key: String,
+    pred: Option<(String, String)>,
+}
+
+/// Parse a property path into segments. Splits on `.` but not inside `[…]` (so
+/// selector values may contain dots), and parses a trailing `[key=value]`
+/// selector. e.g. `answers[q=eArrest.02].v`.
+fn parse_json_path(path: &str) -> Vec<PathSeg> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut buf = String::new();
+    let mut depth: i32 = 0;
+    for ch in path.chars() {
+        match ch {
+            '[' => {
+                depth += 1;
+                buf.push(ch);
+            }
+            ']' => {
+                depth = (depth - 1).max(0);
+                buf.push(ch);
+            }
+            '.' if depth == 0 => {
+                if !buf.trim().is_empty() {
+                    tokens.push(buf.trim().to_string());
+                }
+                buf.clear();
+            }
+            _ => buf.push(ch),
+        }
+    }
+    if !buf.trim().is_empty() {
+        tokens.push(buf.trim().to_string());
+    }
+    tokens
+        .iter()
+        .map(|tok| {
+            if let Some(open) = tok.find('[') {
+                if tok.ends_with(']') {
+                    let key = tok[..open].trim().to_string();
+                    let inner = &tok[open + 1..tok.len() - 1];
+                    if let Some(eq) = inner.find('=') {
+                        return PathSeg {
+                            key,
+                            pred: Some((
+                                inner[..eq].trim().to_string(),
+                                inner[eq + 1..].trim().to_string(),
+                            )),
+                        };
+                    }
+                    return PathSeg { key, pred: None };
+                }
+            }
+            PathSeg {
+                key: tok.to_string(),
+                pred: None,
+            }
+        })
+        .collect()
+}
+
+/// Recursively build the nested candidate value. A selector merges its key/value
+/// into the same element object as the continuing path, so a correlated filter
+/// like `answers[q=eArrest.02].v = 3001001` becomes
+/// `{"answers":{"q":"eArrest.02","v":3001001}}` — matching an element that has
+/// *both*.
+fn build_candidate(segs: &[PathSeg], leaf: Value) -> Value {
+    let Some(seg) = segs.first() else {
+        return leaf;
+    };
+    let rest_val = build_candidate(&segs[1..], leaf);
+    let mapped = if let Some((pk, pv)) = &seg.pred {
+        let mut obj = serde_json::Map::new();
+        obj.insert(pk.clone(), infer_json_value(pv));
+        if let Value::Object(rest_obj) = rest_val {
+            for (k, v) in rest_obj {
+                obj.insert(k, v);
+            }
+        }
+        Value::Object(obj)
+    } else {
+        rest_val
+    };
+    if seg.key.is_empty() {
+        return mapped;
+    }
+    let mut o = serde_json::Map::new();
+    o.insert(seg.key.clone(), mapped);
+    Value::Object(o)
+}
+
+/// Build a candidate JSON object for `JSON_CONTAINS` from a property path and a
+/// value — e.g. ("address.city", "NYC") → `{"address":{"city":"NYC"}}`.
+fn json_candidate(path: &str, value: &str) -> String {
+    let segs = parse_json_path(path);
+    if segs.is_empty() {
+        return infer_json_value(value).to_string();
+    }
+    build_candidate(&segs, infer_json_value(value)).to_string()
+}
+
+/// Build a recursive `JSON_SEARCH` path for a property — e.g. "address.city" →
+/// `$**."address"."city"`, matching the key at any depth. `[k=v]` selectors are
+/// dropped here (JSON_SEARCH is a fuzzy text match and can't correlate).
+fn json_search_path(path: &str) -> String {
+    let mut p = String::from("$**");
+    for seg in parse_json_path(path) {
+        if seg.key.is_empty() {
+            continue;
+        }
+        let escaped = seg.key.replace('\\', "\\\\").replace('"', "\\\"");
+        p.push_str(&format!(".\"{escaped}\""));
+    }
+    p
 }
 
 /// Build the `WHERE …` clause and ordered bind values for the given filters.
@@ -90,12 +239,27 @@ fn build_where(
                 )));
             }
             let ident = quote_ident(&f.column);
-            match f.op {
-                FilterOp::Equals => {
+            let json_path = f
+                .json_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            match (json_path, &f.op) {
+                (Some(path), FilterOp::Equals) => {
+                    where_clauses.push(format!("JSON_CONTAINS({ident}, CAST(? AS JSON))"));
+                    bindings.push(json_candidate(path, &f.value));
+                }
+                (Some(path), FilterOp::Like) => {
+                    where_clauses
+                        .push(format!("JSON_SEARCH({ident}, 'one', ?, NULL, ?) IS NOT NULL"));
+                    bindings.push(prepare_like_value(&f.value));
+                    bindings.push(json_search_path(path));
+                }
+                (None, FilterOp::Equals) => {
                     where_clauses.push(format!("{ident} = ?"));
                     bindings.push(f.value.clone());
                 }
-                FilterOp::Like => {
+                (None, FilterOp::Like) => {
                     where_clauses.push(format!("{ident} LIKE ?"));
                     bindings.push(prepare_like_value(&f.value));
                 }
@@ -357,6 +521,36 @@ pub async fn create_table(
     Ok(())
 }
 
+/// Create a new (empty) database/schema on the server.
+#[tauri::command]
+pub async fn create_database(
+    state: State<'_, AppState>,
+    profile_id: String,
+    name: String,
+) -> AppResult<()> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+    (&mut *conn)
+        .execute(format!("CREATE DATABASE {}", quote_ident(&name)).as_str())
+        .await?;
+    Ok(())
+}
+
+/// Permanently drop a database/schema and everything it contains.
+#[tauri::command]
+pub async fn drop_database(
+    state: State<'_, AppState>,
+    profile_id: String,
+    name: String,
+) -> AppResult<()> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+    (&mut *conn)
+        .execute(format!("DROP DATABASE {}", quote_ident(&name)).as_str())
+        .await?;
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ColumnDef {
@@ -421,6 +615,97 @@ pub async fn table_auto_increment(
     .fetch_optional(&pool)
     .await?;
     Ok(row.and_then(|r| r.try_get::<Option<u64>, _>(0).ok().flatten()))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexColumn {
+    pub column: String,
+    /// "ASC" or "DESC".
+    pub direction: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexDef {
+    pub name: String,
+    pub columns: Vec<IndexColumn>,
+    /// "NORMAL" | "UNIQUE" | "FULLTEXT" | "SPATIAL".
+    pub index_type: String,
+    /// "BTREE" | "HASH".
+    pub method: String,
+    pub comment: String,
+}
+
+/// Secondary indexes for an existing table, used to seed the designer in edit
+/// mode. PRIMARY is excluded — it's driven by the per-column key flag.
+#[tauri::command]
+pub async fn index_definitions(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<Vec<IndexDef>> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let rows = sqlx::query(
+        "SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME, COLLATION, INDEX_TYPE, INDEX_COMMENT \
+         FROM INFORMATION_SCHEMA.STATISTICS \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME <> 'PRIMARY' \
+         ORDER BY INDEX_NAME, SEQ_IN_INDEX",
+    )
+    .bind(&database)
+    .bind(&table)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut out: Vec<IndexDef> = Vec::new();
+    for r in &rows {
+        let name = get_string(r, 0);
+        /* NON_UNIQUE is an integer column; its exact width varies by server, so
+           try the likely sqlx mappings before giving up (default: non-unique). */
+        let non_unique = r
+            .try_get::<i64, _>(1)
+            .or_else(|_| r.try_get::<i32, _>(1).map(i64::from))
+            .or_else(|_| r.try_get::<u64, _>(1).map(|v| v as i64))
+            .or_else(|_| r.try_get::<u32, _>(1).map(i64::from))
+            .unwrap_or(1);
+        let column = get_string(r, 2);
+        let collation = r.try_get::<Option<String>, _>(3).ok().flatten();
+        let raw_type = get_string(r, 4).to_uppercase();
+        let comment = get_string(r, 5);
+
+        let direction = if collation.as_deref() == Some("D") {
+            "DESC"
+        } else {
+            "ASC"
+        }
+        .to_string();
+
+        let index_type = if raw_type == "FULLTEXT" {
+            "FULLTEXT"
+        } else if raw_type == "SPATIAL" {
+            "SPATIAL"
+        } else if non_unique == 0 {
+            "UNIQUE"
+        } else {
+            "NORMAL"
+        }
+        .to_string();
+
+        let method = if raw_type == "HASH" { "HASH" } else { "BTREE" }.to_string();
+
+        match out.iter_mut().find(|i| i.name == name) {
+            Some(existing) => existing.columns.push(IndexColumn { column, direction }),
+            None => out.push(IndexDef {
+                name,
+                columns: vec![IndexColumn { column, direction }],
+                index_type,
+                method,
+                comment,
+            }),
+        }
+    }
+    Ok(out)
 }
 
 /// Run a single DDL statement (e.g. ALTER TABLE) in the context of `database`.
