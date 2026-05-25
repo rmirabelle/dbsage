@@ -9,6 +9,7 @@ import type {
   IndexDef,
   ProfileInput,
   ProfileView,
+  QueryResult,
   Relation,
   RowsResult,
   SortSpec,
@@ -62,6 +63,17 @@ export const ipc = {
     table: string;
     filters: ColumnFilter[];
   }) => invoke<number>("count_rows", args),
+
+  executeQuery: (args: {
+    profileId: string;
+    database: string;
+    sql: string;
+    token: string;
+    maxRows: number | null;
+  }) => invoke<QueryResult>("execute_query", args),
+
+  cancelQuery: (profileId: string, token: string) =>
+    invoke<void>("cancel_query", { profileId, token }),
 
   updateCell: (args: {
     profileId: string;

@@ -61,6 +61,16 @@ pub fn row_to_json(row: &MySqlRow) -> Value {
     Value::Object(obj)
 }
 
+/// Derive display columns (name, SQL type name) from an arbitrary result row.
+/// Used by the ad-hoc query runner, which has no INFORMATION_SCHEMA metadata to
+/// describe the columns of a free-form result set.
+pub fn result_columns(row: &MySqlRow) -> Vec<(String, String)> {
+    row.columns()
+        .iter()
+        .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
+        .collect()
+}
+
 fn decode_column(row: &MySqlRow, i: usize, ty: &str) -> Value {
     match ty {
         // MySQL BOOLEAN is an alias for TINYINT(1) — keep the integer shape.

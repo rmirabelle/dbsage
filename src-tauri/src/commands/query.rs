@@ -1,9 +1,11 @@
-use crate::db::mysql::{get_string, quote_ident, row_to_json};
+use crate::db::mysql::{get_string, quote_ident, result_columns, row_to_json};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
+use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{Executor, MySqlPool, Row};
+use sqlx::mysql::MySqlRow;
+use sqlx::{Either, Executor, MySqlPool, Row};
 use std::collections::HashSet;
 use tauri::{AppHandle, State};
 
@@ -32,6 +34,22 @@ pub struct RowsResult {
     pub total: Option<u64>,
     pub limit: u32,
     pub offset: u32,
+}
+
+/// Result of an ad-hoc query. For result-set statements (SELECT/SHOW/etc.)
+/// `columns`/`rows` carry the data and `rows_affected` is None. For statements
+/// with no result set (INSERT/UPDATE/DELETE/DDL) `rows_affected` is set and
+/// `rows` is empty.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryResult {
+    pub columns: Vec<ColumnInfo>,
+    pub rows: Vec<Value>,
+    pub rows_affected: Option<u64>,
+    /// Server-side execution time (statement run only, excludes row decoding), ms.
+    pub elapsed_ms: u64,
+    /// True when the result set was capped at `max_rows` and more rows existed.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -723,6 +741,131 @@ pub async fn run_ddl(
         .execute(format!("USE {}", quote_ident(&database)).as_str())
         .await?;
     (&mut *conn).execute(sql.as_str()).await?;
+    Ok(())
+}
+
+/// Run an arbitrary, user-typed SQL statement in the context of `database` and
+/// return its result set (or affected-row count). Uses the simple query protocol
+/// so `USE`/DDL and statements unsupported by the prepared protocol all work.
+///
+/// `token` (the query tab's id) registers the underlying connection id while the
+/// query runs, so `cancel_query` can interrupt it with `KILL QUERY`.
+#[tauri::command]
+pub async fn execute_query(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    sql: String,
+    token: String,
+    // Cap on rows to collect; None means fetch everything (the user opted out).
+    max_rows: Option<u32>,
+) -> AppResult<QueryResult> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+
+    /* Capture the connection's thread id up front so a Stop request can target
+       exactly this query with KILL QUERY. */
+    let conn_id: u32 = {
+        let row = (&mut *conn)
+            .fetch_one("SELECT CONNECTION_ID()")
+            .await?;
+        row.try_get::<u64, _>(0).unwrap_or(0) as u32
+    };
+    state
+        .running_queries
+        .write()
+        .await
+        .insert(token.clone(), conn_id);
+
+    let outcome: AppResult<QueryResult> = async {
+        let started = std::time::Instant::now();
+        if !database.trim().is_empty() {
+            (&mut *conn)
+                .execute(format!("USE {}", quote_ident(&database)).as_str())
+                .await?;
+        }
+
+        let mut rows: Vec<MySqlRow> = Vec::new();
+        let mut affected: u64 = 0;
+        let mut had_result_set = false;
+        let mut truncated = false;
+        {
+            let mut stream = (&mut *conn).fetch_many(sql.as_str());
+            while let Some(item) = stream.try_next().await? {
+                match item {
+                    Either::Left(res) => affected += res.rows_affected(),
+                    Either::Right(row) => {
+                        had_result_set = true;
+                        /* Stop once we've collected the cap. Seeing one more row
+                           past the cap means the result had more — flag it and
+                           bail without buffering the rest. */
+                        if let Some(cap) = max_rows {
+                            if rows.len() as u32 >= cap {
+                                truncated = true;
+                                break;
+                            }
+                        }
+                        rows.push(row);
+                    }
+                }
+            }
+        }
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        let columns: Vec<ColumnInfo> = rows
+            .first()
+            .map(|r| {
+                result_columns(r)
+                    .into_iter()
+                    .map(|(name, data_type)| ColumnInfo {
+                        name,
+                        data_type,
+                        nullable: true,
+                        key: String::new(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let json_rows: Vec<Value> = rows.iter().map(row_to_json).collect();
+
+        Ok(QueryResult {
+            columns,
+            rows: json_rows,
+            rows_affected: if had_result_set { None } else { Some(affected) },
+            elapsed_ms,
+            truncated,
+        })
+    }
+    .await;
+
+    state.running_queries.write().await.remove(&token);
+
+    /* When truncated, we stopped reading mid-result, so the connection still has
+       unsent rows queued. Detach it from the pool (dropping it closes the socket,
+       which tells the server to stop) so a dirty connection isn't reused. */
+    if matches!(&outcome, Ok(r) if r.truncated) {
+        let _ = conn.detach();
+    }
+    outcome
+}
+
+/// Interrupt the query running under `token` (if any) by issuing `KILL QUERY`
+/// on a separate pooled connection. No-op when nothing is registered.
+#[tauri::command]
+pub async fn cancel_query(
+    state: State<'_, AppState>,
+    profile_id: String,
+    token: String,
+) -> AppResult<()> {
+    let conn_id = state.running_queries.read().await.get(&token).copied();
+    let Some(conn_id) = conn_id else {
+        return Ok(());
+    };
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+    (&mut *conn)
+        .execute(format!("KILL QUERY {conn_id}").as_str())
+        .await?;
     Ok(())
 }
 

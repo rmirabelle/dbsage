@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
 import {
   X,
   CircleNotch as Loader2,
@@ -12,6 +12,7 @@ import {
   ShareNetwork,
   ArrowsOutSimple,
   PencilSimple,
+  Code,
   WarningCircle as AlertCircle,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
@@ -20,6 +21,7 @@ import { notifyError } from "../state/notify";
 import { CloseTabConfirmDialog } from "./CloseTabConfirmDialog";
 import { DataGrid } from "./DataGrid";
 import { DatabaseView } from "./DatabaseView";
+import { QueryView } from "./QueryView";
 import { RelationsView } from "./RelationsView";
 import { TableDesignerView } from "./TableDesignerView";
 import { ExpandedPanel } from "./ExpandedPanel";
@@ -40,8 +42,9 @@ export function Tabs() {
         <div className="flex-1 flex items-stretch overflow-x-auto">
         {tabs.map((tab) => {
             let primary: string;
+            let prefix: string | null = null;
             let secondary: string;
-            let Icon: typeof Database;
+            let Icon: ComponentType<{ size?: number; className?: string }>;
             let iconColor: string;
             let dirty = false;
             if (tab.kind === "database") {
@@ -54,10 +57,21 @@ export function Tabs() {
               secondary = `${tab.profileName} / ${tab.database}`;
               Icon = ShareNetwork;
               iconColor = "text-violet-400";
-            } else if (tab.kind === "create-table") {
-              primary = tab.tableName.trim() || "New table";
+            } else if (tab.kind === "query") {
+              primary = "Query";
               secondary = `${tab.profileName} / ${tab.database}`;
-              Icon = Table2;
+              Icon = Code;
+              iconColor = "text-emerald-400";
+            } else if (tab.kind === "create-table") {
+              const editing = tab.mode === "edit";
+              if (editing) {
+                prefix = "Edit Table";
+                primary = tab.tableName.trim() || tab.originalName;
+              } else {
+                primary = tab.tableName.trim() || "New table";
+              }
+              secondary = `${tab.profileName} / ${tab.database}`;
+              Icon = editing ? TableEditIcon : Table2;
               iconColor = "text-orange-400";
               dirty = isDesignerTabDirty(tab);
             } else {
@@ -90,6 +104,11 @@ export function Tabs() {
                     data-el="tab-title"
                     className="text-[13px] font-semibold mb-1 flex items-baseline min-w-0"
                   >
+                    {prefix && (
+                      <span className="text-[10px] text-zinc-500 font-normal uppercase mr-1 shrink-0">
+                        {prefix}
+                      </span>
+                    )}
                     <span className="truncate">{primary}</span>
                     {dirty && (
                       <span
@@ -138,6 +157,9 @@ function TabBody({ tab }: { tab: Tab }) {
   }
   if (tab.kind === "relations") {
     return <RelationsView tab={tab} />;
+  }
+  if (tab.kind === "query") {
+    return <QueryView tab={tab} />;
   }
   if (tab.kind === "create-table") {
     return <TableDesignerView tab={tab} />;
@@ -279,6 +301,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           hiddenColumns={tab.hiddenColumns}
           jsonDisplay={tab.jsonDisplay}
           activeCell={activeCell}
+          clearActiveCellOnRowSelect
           onActiveCellChange={setActiveCell}
           onSortChange={(sort) => setRowsSort(tab.id, sort)}
           onFilterChange={(column, filter) =>
@@ -553,6 +576,30 @@ function PageSizeDropup({
         </div>
       )}
     </div>
+  );
+}
+
+/** "Edit table" glyph: the table icon with a small pencil badge at its corner.
+ * Distinguishes an edit-table tab from a new-table tab (plain Table icon). */
+function TableEditIcon({
+  size = 24,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <span
+      className={clsx("relative inline-flex shrink-0", className)}
+      style={{ width: size, height: size }}
+    >
+      <Table2 size={size} />
+      <PencilSimple
+        size={Math.round(size * 0.6)}
+        weight="fill"
+        className="absolute -bottom-0.5 -right-0.5"
+      />
+    </span>
   );
 }
 

@@ -160,6 +160,13 @@ export function ColumnHeaderMenu({
               value={showPath}
               placeholder="key · or a, b, c for several"
               onChange={(e) => onShowChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  onShowChange(showPath);
+                  onClose();
+                }
+              }}
               className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded-r px-2 py-1 text-[12.5px] font-mono text-zinc-100 outline-none focus:border-accent-500"
             />
           </div>

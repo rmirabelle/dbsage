@@ -19,6 +19,9 @@ interface Props {
   editable: boolean;
   onSave?: (value: string | null) => Promise<void>;
   onClose: () => void;
+  /** Read-only mode (query results): no Save button, and JSON shows the tree
+   * viewer only (no raw text pane). Copy + Search are still available. */
+  readOnly?: boolean;
 }
 
 export function ExpandedPanel({
@@ -28,6 +31,7 @@ export function ExpandedPanel({
   editable,
   onSave,
   onClose,
+  readOnly = false,
 }: Props) {
   const height = useUi((s) => s.expandedPanelHeight);
   const setHeight = useUi((s) => s.setExpandedPanelHeight);
@@ -60,6 +64,9 @@ export function ExpandedPanel({
 
   const isNull = value === null || value === undefined;
   const isJsonColumn = isJsonType(column);
+  /* Read-only JSON shows the tree only (no raw text pane). */
+  const treeOnly = readOnly && isJsonColumn;
+  const showRaw = !treeOnly;
   const canEdit = editable && column != null && onSave != null;
   const dirty = canEdit && text !== initialText;
 
@@ -156,6 +163,27 @@ export function ExpandedPanel({
   const layerClass =
     "px-3 py-2 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words";
 
+  const copyButton = (
+    <button
+      data-el="expanded-copy-btn"
+      onClick={onCopy}
+      className="absolute top-[7px] right-3.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-900/80 backdrop-blur-sm text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+      title="Copy to clipboard"
+    >
+      {copied ? (
+        <>
+          <Check size={13} className="text-emerald-400" />
+          <span>Copied</span>
+        </>
+      ) : (
+        <>
+          <Copy size={13} />
+          <span>Copy</span>
+        </>
+      )}
+    </button>
+  );
+
   return (
     <div
       data-el="expanded-panel"
@@ -233,65 +261,49 @@ export function ExpandedPanel({
       </div>
 
       <div className="flex-1 min-h-0 flex">
-        <div
-          className={clsx(
-            "relative flex-1 min-h-0 min-w-0",
-            column && isJsonColumn && "border-r border-zinc-800"
-          )}
-        >
-          {column && (
-            <button
-              data-el="expanded-copy-btn"
-              onClick={onCopy}
-              className="absolute top-[7px] right-3.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-900/80 backdrop-blur-sm text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-              title="Copy to clipboard"
-            >
-              {copied ? (
-                <>
-                  <Check size={13} className="text-emerald-400" />
-                  <span>Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy size={13} />
-                  <span>Copy</span>
-                </>
-              )}
-            </button>
-          )}
+        {showRaw && (
           <div
-            ref={backdropRef}
-            aria-hidden="true"
             className={clsx(
-              "absolute inset-0 overflow-hidden text-transparent select-none pointer-events-none",
-              layerClass
+              "relative flex-1 min-h-0 min-w-0",
+              column && isJsonColumn && "border-r border-zinc-800"
             )}
           >
-            {column ? highlighted : null}
+            {column && copyButton}
+            <div
+              ref={backdropRef}
+              aria-hidden="true"
+              className={clsx(
+                "absolute inset-0 overflow-hidden text-transparent select-none pointer-events-none",
+                layerClass
+              )}
+            >
+              {column ? highlighted : null}
+            </div>
+            <textarea
+              ref={textareaRef}
+              data-el="expanded-editor"
+              value={column ? text : ""}
+              spellCheck={false}
+              readOnly={!canEdit}
+              placeholder={column && isNull ? "NULL" : ""}
+              onChange={(e) => {
+                setText(e.target.value);
+                setSaved(false);
+              }}
+              onScroll={syncScroll}
+              className={clsx(
+                "absolute inset-0 h-full w-full resize-none overflow-auto border-0 bg-transparent outline-none",
+                layerClass,
+                column ? "text-zinc-200" : "text-zinc-600",
+                !canEdit && "cursor-default"
+              )}
+            />
           </div>
-          <textarea
-            ref={textareaRef}
-            data-el="expanded-editor"
-            value={column ? text : ""}
-            spellCheck={false}
-            readOnly={!canEdit}
-            placeholder={column && isNull ? "NULL" : ""}
-            onChange={(e) => {
-              setText(e.target.value);
-              setSaved(false);
-            }}
-            onScroll={syncScroll}
-            className={clsx(
-              "absolute inset-0 h-full w-full resize-none overflow-auto border-0 bg-transparent outline-none",
-              layerClass,
-              column ? "text-zinc-200" : "text-zinc-600",
-              !canEdit && "cursor-default"
-            )}
-          />
-        </div>
+        )}
 
         {column && isJsonColumn && (
-          <div className="flex-1 min-h-0 min-w-0 bg-[#2c303c]">
+          <div className="relative flex-1 min-h-0 min-w-0 bg-[#2c303c]">
+            {!showRaw && copyButton}
             {treeData !== undefined ? (
               <JsonTreeView
                 key={`${column?.name ?? ""}:${rowOrdinal ?? ""}`}
@@ -378,29 +390,31 @@ export function ExpandedPanel({
             </span>
           ))}
 
-        <div className="ml-auto flex items-center gap-2">
-          {saved && (
-            <span
-              data-el="expanded-save-status"
-              className="inline-flex items-center gap-1 text-[11px] text-emerald-400"
+        {!readOnly && (
+          <div className="ml-auto flex items-center gap-2">
+            {saved && (
+              <span
+                data-el="expanded-save-status"
+                className="inline-flex items-center gap-1 text-[11px] text-emerald-400"
+              >
+                <Check size={13} weight="bold" /> Saved
+              </span>
+            )}
+            <button
+              data-el="expanded-save-btn"
+              onClick={handleSave}
+              disabled={!dirty || saving}
+              title={
+                !editable
+                  ? "Editing requires a primary key on this table"
+                  : undefined
+              }
+              className="px-3 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
             >
-              <Check size={13} weight="bold" /> Saved
-            </span>
-          )}
-          <button
-            data-el="expanded-save-btn"
-            onClick={handleSave}
-            disabled={!dirty || saving}
-            title={
-              !editable
-                ? "Editing requires a primary key on this table"
-                : undefined
-            }
-            className="px-3 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

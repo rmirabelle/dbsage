@@ -14,6 +14,7 @@ import type {
   DatabaseTab,
   Folder,
   ProfileView,
+  QueryTab,
   Relation,
   RelationsTab,
   RowsTab,
@@ -21,6 +22,10 @@ import type {
   Tab,
   TableInfo,
 } from "../types";
+
+/** Default row cap for a new query pane — a safety net against fetching a huge
+ * result set into memory. The user can raise it or choose "No limit" per tab. */
+const DEFAULT_QUERY_MAX_ROWS = 1000;
 
 /** True when a table-designer tab has changes worth confirming before close. */
 export function isDesignerTabDirty(tab: CreateTableTab): boolean {
@@ -143,6 +148,19 @@ interface Store {
     newName: string
   ) => Promise<void>;
   openRelations: (profileId: string, profileName: string, database: string) => void;
+  /** Open a new, empty SQL query pane scoped to a connection + database. */
+  openQuery: (profileId: string, profileName: string, database: string) => void;
+  setQuerySql: (tabId: string, sql: string) => void;
+  /** Set the query pane's row cap (null = no limit). */
+  setQueryMaxRows: (tabId: string, maxRows: number | null) => void;
+  /** Switch a query pane to another connection (connecting if needed) and
+   * default its database to a valid one. */
+  setQueryConnection: (tabId: string, profileId: string) => Promise<void>;
+  setQueryDatabase: (tabId: string, database: string) => void;
+  /** Run the query pane's SQL against its connection + database. */
+  executeQuery: (tabId: string) => Promise<void>;
+  /** Request cancellation of a running query (KILL QUERY server-side). */
+  stopQuery: (tabId: string) => Promise<void>;
   openTableDesigner: (profileId: string, profileName: string, database: string) => void;
   /** Open the designer in edit mode, pre-loaded with an existing table's columns. */
   openTableEditor: (
@@ -809,6 +827,139 @@ export const useStore = create<Store>((set, get) => ({
       database,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+  },
+
+  openQuery: (profileId, profileName, database) => {
+    const tabId = `query::${profileId}::${database}::${Date.now()}`;
+    const tab: QueryTab = {
+      id: tabId,
+      kind: "query",
+      profileId,
+      profileName,
+      database,
+      sql: "",
+      maxRows: DEFAULT_QUERY_MAX_ROWS,
+      result: null,
+      loading: false,
+      error: null,
+      stopping: false,
+    };
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+  },
+
+  setQuerySql: (tabId, sql) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query" ? { ...t, sql } : t
+      ),
+    }));
+  },
+
+  setQueryMaxRows: (tabId, maxRows) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query" ? { ...t, maxRows } : t
+      ),
+    }));
+  },
+
+  setQueryConnection: async (tabId, profileId) => {
+    const profile = get().profiles.find((p) => p.id === profileId);
+    if (!profile) return;
+    if (!get().connections[profileId]?.connected) {
+      try {
+        await get().connectProfile(profileId);
+      } catch {
+        /* connection error already surfaced on the connection state */
+        return;
+      }
+    }
+    const dbs = get().trees[profileId]?.databases ?? [];
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query"
+          ? {
+              ...t,
+              profileId,
+              profileName: profile.name,
+              database: dbs.includes(t.database) ? t.database : dbs[0] ?? "",
+            }
+          : t
+      ),
+    }));
+  },
+
+  setQueryDatabase: (tabId, database) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query" ? { ...t, database } : t
+      ),
+    }));
+  },
+
+  executeQuery: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "query" || tab.loading) return;
+    if (!tab.sql.trim()) return;
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query"
+          ? { ...t, loading: true, error: null, stopping: false }
+          : t
+      ),
+    }));
+    try {
+      const result = await ipc.executeQuery({
+        profileId: tab.profileId,
+        database: tab.database,
+        sql: tab.sql,
+        token: tabId,
+        maxRows: tab.maxRows,
+      });
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "query"
+            ? { ...t, loading: false, error: null, result }
+            : t
+        ),
+      }));
+      if (result.rowsAffected != null) {
+        notifySuccess(
+          `${result.rowsAffected} row${
+            result.rowsAffected === 1 ? "" : "s"
+          } affected.`
+        );
+      }
+    } catch (e) {
+      const msg = String(e);
+      const current = get().tabs.find((t) => t.id === tabId);
+      const wasStopped =
+        (current?.kind === "query" && current.stopping) || /interrupted/i.test(msg);
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "query"
+            ? { ...t, loading: false, stopping: false, error: wasStopped ? null : msg }
+            : t
+        ),
+      }));
+      if (wasStopped) notifyInfo("Query stopped.");
+      else notifyError(`Query failed: ${msg}`);
+    }
+  },
+
+  stopQuery: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "query" || !tab.loading) return;
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query" ? { ...t, stopping: true } : t
+      ),
+    }));
+    try {
+      await ipc.cancelQuery(tab.profileId, tabId);
+    } catch (e) {
+      notifyError(`Could not stop query: ${String(e)}`);
+    }
   },
 
   openTableDesigner: (profileId, profileName, database) => {

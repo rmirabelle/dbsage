@@ -77,6 +77,19 @@ export interface RowsResult {
   offset: number;
 }
 
+/** Result of an ad-hoc query. For result-set statements (SELECT/SHOW/…),
+ * `columns`/`rows` carry the data and `rowsAffected` is null. For statements
+ * with no result set (INSERT/UPDATE/DELETE/DDL), `rowsAffected` is set. */
+export interface QueryResult {
+  columns: ColumnInfo[];
+  rows: RowRecord[];
+  rowsAffected: number | null;
+  /** Server-side execution time (statement run only), milliseconds. */
+  elapsedMs: number;
+  /** True when the result was capped at the requested max and more rows existed. */
+  truncated: boolean;
+}
+
 interface BaseTab {
   id: string;
   profileId: string;
@@ -143,6 +156,21 @@ export interface DatabaseTab extends BaseTab {
 
 export interface RelationsTab extends BaseTab {
   kind: "relations";
+}
+
+export interface QueryTab extends BaseTab {
+  kind: "query";
+  /** The SQL the user is editing. */
+  sql: string;
+  /** Max rows to fetch; null = no limit (user opted out of the safety cap). */
+  maxRows: number | null;
+  /** Last execution's result; null until the first run. */
+  result: QueryResult | null;
+  loading: boolean;
+  error: string | null;
+  /** True between a Stop request and the query settling, so the UI can show a
+   * "stopped" state rather than an error when the kill interrupts it. */
+  stopping: boolean;
 }
 
 /** One column row in the table designer. Numeric fields are kept as strings
@@ -229,4 +257,9 @@ export interface CreateTableTab extends BaseTab {
   originalAutoIncrementValue: string;
 }
 
-export type Tab = RowsTab | DatabaseTab | RelationsTab | CreateTableTab;
+export type Tab =
+  | RowsTab
+  | DatabaseTab
+  | RelationsTab
+  | CreateTableTab
+  | QueryTab;

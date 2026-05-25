@@ -33,6 +33,8 @@ pub fn run() {
             query::list_columns,
             query::fetch_rows,
             query::count_rows,
+            query::execute_query,
+            query::cancel_query,
             query::update_cell,
             query::table_exists,
             query::create_table,

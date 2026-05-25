@@ -9,6 +9,7 @@ import {
   MagnifyingGlass as Search,
   ShareNetwork,
   Table as Table2,
+  Code,
   Trash,
   TextT,
   X,
@@ -59,6 +60,7 @@ export function DatabaseView({ tab }: Props) {
   const deleteFolder = useStore((s) => s.deleteFolder);
   const setTablesFolder = useStore((s) => s.setTablesFolder);
   const openRelations = useStore((s) => s.openRelations);
+  const openQuery = useStore((s) => s.openQuery);
   const openTableDesigner = useStore((s) => s.openTableDesigner);
   const openTableEditor = useStore((s) => s.openTableEditor);
   const renameTable = useStore((s) => s.renameTable);
@@ -462,6 +464,18 @@ export function DatabaseView({ tab }: Props) {
             title="Design a new table"
           >
             <span className="text-[19px] leading-none">+</span> Table
+          </button>
+
+          <button
+            data-el="new-query-btn"
+            onClick={() =>
+              openQuery(tab.profileId, tab.profileName, tab.database)
+            }
+            style={{ fontSize: 13 }}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-emerald-600 text-emerald-50 hover:bg-emerald-500 transition-colors"
+            title="Open a SQL query pane"
+          >
+            <Code size={16} weight="bold" /> Query
           </button>
 
           <button
