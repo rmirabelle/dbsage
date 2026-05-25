@@ -25,6 +25,7 @@ import { QueryView } from "./QueryView";
 import { RelationsView } from "./RelationsView";
 import { TableDesignerView } from "./TableDesignerView";
 import { ExpandedPanel } from "./ExpandedPanel";
+import { CopyAsButton } from "./CopyAsButton";
 import type { RowsTab, Tab } from "../types";
 
 export function Tabs() {
@@ -184,6 +185,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     column: string;
   } | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
 
   /** Drop the active cell whenever the rows array identity changes (page / refresh / sort). */
   useEffect(() => {
@@ -277,6 +279,17 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           <PencilSimple size={17} />
           Edit Table
         </button>
+
+        {tab.data && selectedRows.length > 0 && (
+          <CopyAsButton
+            database={tab.database}
+            table={tab.table}
+            columns={tab.data.columns}
+            rows={selectedRows
+              .map((i) => tab.data!.rows[i])
+              .filter((r): r is NonNullable<typeof r> => r != null)}
+          />
+        )}
       </div>
 
 
@@ -303,6 +316,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           activeCell={activeCell}
           clearActiveCellOnRowSelect
           onActiveCellChange={setActiveCell}
+          onSelectionChange={setSelectedRows}
           onSortChange={(sort) => setRowsSort(tab.id, sort)}
           onFilterChange={(column, filter) =>
             setRowsFilter(tab.id, column, filter)

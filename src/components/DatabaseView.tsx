@@ -15,18 +15,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
-import {
-  pointerWithin,
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  useDraggable,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
+import { useDraggable, useDroppable, useDndMonitor } from "@dnd-kit/core";
 import { useStore } from "../state/store";
 import { notifyError } from "../state/notify";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
@@ -39,9 +28,9 @@ interface Props {
 }
 
 const MIN_TILE_PX = 220;
-const UP_DROP_ID = "__up__";
-const folderDropId = (id: string) => `folder:${id}`;
-const tableDragId = (name: string) => `table:${name}`;
+const UP_DROP_ID = "dbv-up";
+const folderDropId = (id: string) => `dbv-folder:${id}`;
+const tableDragId = (name: string) => `dbv-table:${name}`;
 
 interface ContextMenuState {
   folderId: string;
@@ -58,7 +47,6 @@ export function DatabaseView({ tab }: Props) {
   const createFolder = useStore((s) => s.createFolder);
   const renameFolder = useStore((s) => s.renameFolder);
   const deleteFolder = useStore((s) => s.deleteFolder);
-  const setTablesFolder = useStore((s) => s.setTablesFolder);
   const openRelations = useStore((s) => s.openRelations);
   const openQuery = useStore((s) => s.openQuery);
   const openTableDesigner = useStore((s) => s.openTableDesigner);
@@ -361,69 +349,40 @@ export function DatabaseView({ tab }: Props) {
   }, [emptyMenu]);
 
   /**
-   * PointerSensor with a small activation distance keeps double-click working —
-   * the drag only kicks in after the pointer travels > 5px.
+   * The DndContext now lives at the app root (so tables can be dragged to the
+   * tree). We just observe drags that belong to this DB view to keep the
+   * active-tile styling and the click-to-implicit-select behaviour; the actual
+   * folder/copy moves are routed by the app-level coordinator. Selecting an
+   * unselected tile on drag-start matches the previous behaviour.
    */
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
-  );
-
-  const handleDragStart = (e: DragStartEvent) => {
-    const t = e.active.data.current?.tableName as string | undefined;
-    if (!t) return;
-    setActiveTable(t);
-    if (!selectedTables.has(t)) {
-      const single = new Set([t]);
-      setSelectedTables(single);
-      lastSelectedRef.current = t;
-    }
-  };
-
-  const handleDragEnd = (e: DragEndEvent) => {
-    const tableName = e.active.data.current?.tableName as string | undefined;
-    const overId = e.over?.id;
-    setActiveTable(null);
-    if (!tableName || !overId) return;
-
-    const names = selectedTables.has(tableName)
-      ? Array.from(selectedTables)
-      : [tableName];
-
-    const dispatch = async () => {
-      try {
-        if (overId === UP_DROP_ID) {
-          const toMove = names.filter((n) => folderByTable.has(n));
-          if (toMove.length > 0) await setTablesFolder(tab.id, toMove, null);
-          return;
-        }
-        if (typeof overId === "string" && overId.startsWith("folder:")) {
-          const folderId = overId.slice("folder:".length);
-          const toMove = names.filter(
-            (n) => folderByTable.get(n) !== folderId
-          );
-          if (toMove.length > 0) await setTablesFolder(tab.id, toMove, folderId);
-        }
-      } catch (err) {
-        console.error("setTablesFolder failed", err);
-        alert(`Move failed: ${String(err)}`);
+  useDndMonitor({
+    onDragStart(e) {
+      const d = e.active.data.current as
+        | { source?: string; tabId?: string; grabbed?: string }
+        | undefined;
+      if (d?.source !== "dbview" || d.tabId !== tab.id || !d.grabbed) return;
+      setActiveTable(d.grabbed);
+      if (!selectedTables.has(d.grabbed)) {
+        setSelectedTables(new Set([d.grabbed]));
+        lastSelectedRef.current = d.grabbed;
       }
-    };
-    void dispatch();
-  };
+    },
+    onDragEnd() {
+      setActiveTable(null);
+    },
+    onDragCancel() {
+      setActiveTable(null);
+    },
+  });
 
   /** Drop target for removing a table from the current folder (the folder title's up button). */
   const { isOver: upIsOver, setNodeRef: setUpDropRef } = useDroppable({
     id: UP_DROP_ID,
+    data: { kind: "dbv-up" },
   });
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={pointerWithin}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragCancel={() => setActiveTable(null)}
-    >
+    <>
       <div data-el="database-view" className="flex-1 flex flex-col min-h-0">
         <div data-el="database-toolbar" className="dbs-toolbar pl-1.5 pr-3 py-1.5 border-b border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400">
           <div className="relative">
@@ -661,6 +620,14 @@ export function DatabaseView({ tab }: Props) {
                 <TableTile
                   key={t.name}
                   table={t}
+                  tabId={tab.id}
+                  profileId={tab.profileId}
+                  database={tab.database}
+                  moveNames={
+                    selectedTables.has(t.name)
+                      ? Array.from(selectedTables)
+                      : [t.name]
+                  }
                   isSelected={selectedTables.has(t.name)}
                   isAnyDragging={activeTable !== null}
                   isActiveDrag={activeTable === t.name}
@@ -779,18 +746,6 @@ export function DatabaseView({ tab }: Props) {
         )}
       </div>
 
-      {createPortal(
-        <DragOverlay dropAnimation={null}>
-          {activeTable ? (
-            <TableDragGhost
-              name={activeTable}
-              count={selectedTables.has(activeTable) ? selectedTables.size : 1}
-            />
-          ) : null}
-        </DragOverlay>,
-        document.body
-      )}
-
       {marqueeRect &&
         createPortal(
           <div
@@ -805,7 +760,7 @@ export function DatabaseView({ tab }: Props) {
           />,
           document.body
         )}
-    </DndContext>
+    </>
   );
 }
 
@@ -827,7 +782,10 @@ function FolderTile({
   onCommitRename: (name: string) => void;
   onCancelRename: () => void;
 }) {
-  const { isOver, setNodeRef } = useDroppable({ id: folderDropId(folder.id) });
+  const { isOver, setNodeRef } = useDroppable({
+    id: folderDropId(folder.id),
+    data: { kind: "dbv-folder", folderId: folder.id },
+  });
   return (
     <div
       ref={setNodeRef}
@@ -878,6 +836,10 @@ function NewFolderTile({
 
 function TableTile({
   table,
+  tabId,
+  profileId,
+  database,
+  moveNames,
   isSelected,
   isAnyDragging,
   isActiveDrag,
@@ -889,6 +851,10 @@ function TableTile({
   onCancelRename,
 }: {
   table: TableInfo;
+  tabId: string;
+  profileId: string;
+  database: string;
+  moveNames: string[];
   isSelected: boolean;
   isAnyDragging: boolean;
   isActiveDrag: boolean;
@@ -902,7 +868,14 @@ function TableTile({
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: tableDragId(table.name),
     disabled: renaming,
-    data: { tableName: table.name },
+    data: {
+      source: "dbview",
+      tabId,
+      profileId,
+      db: database,
+      grabbed: table.name,
+      names: moveNames,
+    },
   });
 
   return (
@@ -965,20 +938,6 @@ function TableTile({
             </span>
           )}
         </>
-      )}
-    </div>
-  );
-}
-
-function TableDragGhost({ name, count }: { name: string; count: number }) {
-  return (
-    <div className="inline-flex items-center gap-2 px-2.5 py-1.5 bg-zinc-900 border border-accent-500/60 rounded shadow-lg shadow-black/60">
-      <Table2 size={14} className="text-accent-400 shrink-0" />
-      <span className="text-[12px] text-zinc-100">{name}</span>
-      {count > 1 && (
-        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-accent-500/30 text-accent-100">
-          +{count - 1}
-        </span>
       )}
     </div>
   );

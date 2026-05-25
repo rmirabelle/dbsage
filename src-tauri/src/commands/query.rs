@@ -539,6 +539,59 @@ pub async fn create_table(
     Ok(())
 }
 
+/// Copy a table to another database on the same server. `CREATE TABLE ... LIKE`
+/// reproduces the full structure (columns, indexes, primary key); when
+/// `include_data` is set, the rows are copied too. The copy keeps the source
+/// table's name and is aborted (with a clear error) if that name is already
+/// taken in the target database, so nothing existing is ever overwritten.
+#[tauri::command]
+pub async fn copy_table(
+    state: State<'_, AppState>,
+    profile_id: String,
+    source_database: String,
+    source_table: String,
+    target_database: String,
+    include_data: bool,
+) -> AppResult<()> {
+    let pool = pool_for(&state, &profile_id).await?;
+
+    let exists = sqlx::query(
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+    )
+    .bind(&target_database)
+    .bind(&source_table)
+    .fetch_one(&pool)
+    .await?;
+    if exists.try_get::<i64, _>(0).unwrap_or(0) > 0 {
+        return Err(AppError::Other(format!(
+            "a table named \"{source_table}\" already exists in \"{target_database}\""
+        )));
+    }
+
+    let src = format!(
+        "{}.{}",
+        quote_ident(&source_database),
+        quote_ident(&source_table)
+    );
+    let dst = format!(
+        "{}.{}",
+        quote_ident(&target_database),
+        quote_ident(&source_table)
+    );
+
+    let mut conn = pool.acquire().await?;
+    (&mut *conn)
+        .execute(format!("CREATE TABLE {dst} LIKE {src}").as_str())
+        .await?;
+    if include_data {
+        (&mut *conn)
+            .execute(format!("INSERT INTO {dst} SELECT * FROM {src}").as_str())
+            .await?;
+    }
+    Ok(())
+}
+
 /// Create a new (empty) database/schema on the server.
 #[tauri::command]
 pub async fn create_database(

@@ -134,6 +134,23 @@ interface Store {
   ) => Promise<void>;
   setTableFolder: (tabId: string, table: string, folderId: string | null) => Promise<void>;
   setTablesFolder: (tabId: string, tables: string[], folderId: string | null) => Promise<void>;
+  /** Assign a table to a folder by raw identifiers (used by the tree's drag-drop,
+   * which has no open database tab to look up). */
+  assignTableFolder: (
+    profileId: string,
+    database: string,
+    table: string,
+    folderId: string | null
+  ) => Promise<void>;
+  /** Copy a table to another database on the same connection (structure, and
+   * optionally data). Used by dragging a table onto a different database. */
+  copyTableToDatabase: (
+    profileId: string,
+    sourceDatabase: string,
+    table: string,
+    targetDatabase: string,
+    includeData: boolean
+  ) => Promise<void>;
 
   openTable: (profileId: string, profileName: string, database: string, table: string) => Promise<void>;
   /** Empty a table (TRUNCATE) and refresh any open views of it. */
@@ -598,6 +615,41 @@ export const useStore = create<Store>((set, get) => ({
       await ipc.setTableFolder(tab.profileId, tab.database, name, folderId);
     }
     await refreshFoldersEverywhere(tab.profileId, tab.database, set, get);
+  },
+
+  assignTableFolder: async (profileId, database, table, folderId) => {
+    try {
+      await ipc.setTableFolder(profileId, database, table, folderId);
+      await refreshFoldersEverywhere(profileId, database, set, get);
+    } catch (e) {
+      notifyError(`Could not move "${table}": ${String(e)}`);
+    }
+  },
+
+  copyTableToDatabase: async (
+    profileId,
+    sourceDatabase,
+    table,
+    targetDatabase,
+    includeData
+  ) => {
+    try {
+      await ipc.copyTable({
+        profileId,
+        sourceDatabase,
+        sourceTable: table,
+        targetDatabase,
+        includeData,
+      });
+      await refreshFoldersEverywhere(profileId, targetDatabase, set, get);
+      notifySuccess(
+        `Copied "${table}" to "${targetDatabase}"${
+          includeData ? " with data" : " (structure only)"
+        }.`
+      );
+    } catch (e) {
+      notifyError(`Could not copy "${table}": ${String(e)}`);
+    }
   },
 
   openTable: async (profileId, profileName, database, table) => {

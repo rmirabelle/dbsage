@@ -14,6 +14,7 @@ import { notifyError } from "../state/notify";
 import { ipc } from "../ipc";
 import { DataGrid } from "./DataGrid";
 import { ExpandedPanel } from "./ExpandedPanel";
+import { ExportButton } from "./ExportButton";
 import { SqlEditor } from "./SqlEditor";
 import { compactDisplay, extractJsonCandidates } from "../lib/jsonPath";
 import { formatSql, type FormatStyle } from "../lib/formatSql";
@@ -41,6 +42,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
     rowIndex: number;
     column: string;
   } | null>(null);
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
 
   /* Focus the editor when this query pane becomes active (new tab, or switching
      to it) so the user can start typing immediately. */
@@ -370,6 +372,17 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           <ArrowsOutSimple size={17} />
           Expanded
         </button>
+
+        <ExportButton
+          database={tab.database}
+          columns={result?.columns ?? []}
+          rows={
+            selectedRows.length > 0
+              ? selectedRows.map((i) => viewRows[i]).filter((r): r is RowRecord => r != null)
+              : viewRows
+          }
+          disabled={!hasResultSet}
+        />
       </div>
 
       {tab.error && (
@@ -410,6 +423,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           activeCell={activeCell}
           clearActiveCellOnRowSelect
           onActiveCellChange={setActiveCell}
+          onSelectionChange={setSelectedRows}
           onSortChange={setSort}
           onFilterChange={(column, filter) =>
             setFilters((prev) => {

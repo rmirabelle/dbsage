@@ -1,5 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { createPortal } from "react-dom";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import {
   CaretRight as ChevronRight,
   Database,
@@ -12,6 +19,7 @@ import {
   TextT,
   Power,
   Trash,
+  Code,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useStore } from "../state/store";
@@ -25,6 +33,32 @@ import { NewDatabaseDialog } from "./NewDatabaseDialog";
 import { DropDatabaseDialog } from "./DropDatabaseDialog";
 import { ipc } from "../ipc";
 
+/**
+ * A single open right-click menu in the connection tree. Only one can be open at
+ * a time — opening any menu replaces this state, which closes whatever was open.
+ */
+type TreeMenu =
+  | { kind: "connection"; profileId: string; x: number; y: number }
+  | { kind: "db"; profileId: string; db: string; x: number; y: number }
+  | {
+      kind: "table";
+      profileId: string;
+      db: string;
+      table: string;
+      x: number;
+      y: number;
+    }
+  | {
+      kind: "folder";
+      profileId: string;
+      db: string;
+      folderId: string;
+      folderName: string;
+      tableCount: number;
+      x: number;
+      y: number;
+    };
+
 export function ConnectionTree() {
   const profiles = useStore((s) => s.profiles);
   const loadingProfiles = useStore((s) => s.loadingProfiles);
@@ -37,17 +71,32 @@ export function ConnectionTree() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProfileView | null>(null);
-  const [menu, setMenu] = useState<{
-    profileId: string;
-    x: number;
-    y: number;
-  } | null>(null);
+  const [treeMenu, setTreeMenu] = useState<TreeMenu | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [newDbProfile, setNewDbProfile] = useState<ProfileView | null>(null);
 
   useEffect(() => {
     loadProfiles();
   }, [loadProfiles]);
+
+  /* Close the open tree menu on any outside click, another right-click, or
+     Escape. Row right-clicks stopPropagation, so opening a menu doesn't trip
+     this; opening replaces treeMenu, which closes whatever was open. */
+  useEffect(() => {
+    if (!treeMenu) return;
+    const close = () => setTreeMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTreeMenu(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [treeMenu]);
 
   const commitRename = async (profile: ProfileView, rawName: string) => {
     setRenamingId(null);
@@ -122,7 +171,12 @@ export function ConnectionTree() {
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setMenu({ profileId: profile.id, x: e.clientX, y: e.clientY });
+                  setTreeMenu({
+                    kind: "connection",
+                    profileId: profile.id,
+                    x: e.clientX,
+                    y: e.clientY,
+                  });
                 }}
               >
                 <ChevronRight
@@ -163,32 +217,33 @@ export function ConnectionTree() {
                 )}
               </div>
 
-              {menu?.profileId === profile.id && (
-                <ConnectionContextMenu
-                  x={menu.x}
-                  y={menu.y}
-                  profile={profile}
-                  connected={!!conn?.connected}
-                  onClose={() => setMenu(null)}
-                  onRename={() => {
-                    setRenamingId(profile.id);
-                    setMenu(null);
-                  }}
-                  onEdit={() => {
-                    setEditing(profile);
-                    setDialogOpen(true);
-                    setMenu(null);
-                  }}
-                  onNewDatabase={() => {
-                    setNewDbProfile(profile);
-                    setMenu(null);
-                  }}
-                  onDisconnect={async () => {
-                    await disconnectProfile(profile.id);
-                    setMenu(null);
-                  }}
-                />
-              )}
+              {treeMenu?.kind === "connection" &&
+                treeMenu.profileId === profile.id && (
+                  <ConnectionContextMenu
+                    x={treeMenu.x}
+                    y={treeMenu.y}
+                    profile={profile}
+                    connected={!!conn?.connected}
+                    onClose={() => setTreeMenu(null)}
+                    onRename={() => {
+                      setRenamingId(profile.id);
+                      setTreeMenu(null);
+                    }}
+                    onEdit={() => {
+                      setEditing(profile);
+                      setDialogOpen(true);
+                      setTreeMenu(null);
+                    }}
+                    onNewDatabase={() => {
+                      setNewDbProfile(profile);
+                      setTreeMenu(null);
+                    }}
+                    onDisconnect={async () => {
+                      await disconnectProfile(profile.id);
+                      setTreeMenu(null);
+                    }}
+                  />
+                )}
 
               {conn?.error && expanded && (
                 <div className="px-7 py-1.5 text-rose-400 text-[11px] leading-snug break-words">
@@ -196,7 +251,13 @@ export function ConnectionTree() {
                 </div>
               )}
 
-              {expanded && conn?.connected && <DatabaseList profile={profile} />}
+              {expanded && conn?.connected && (
+                <DatabaseList
+                  profile={profile}
+                  treeMenu={treeMenu}
+                  setTreeMenu={setTreeMenu}
+                />
+              )}
             </div>
           );
         })}
@@ -359,22 +420,33 @@ function ProfileRenameInput({
   );
 }
 
-function DatabaseList({ profile }: { profile: ProfileView }) {
+function DatabaseList({
+  profile,
+  treeMenu,
+  setTreeMenu,
+}: {
+  profile: ProfileView;
+  treeMenu: TreeMenu | null;
+  setTreeMenu: (menu: TreeMenu | null) => void;
+}) {
   const tree = useStore((s) => s.trees[profile.id]);
   const toggleDbExpanded = useStore((s) => s.toggleDbExpanded);
   const toggleFolderExpandedInTree = useStore((s) => s.toggleFolderExpandedInTree);
   const openDatabase = useStore((s) => s.openDatabase);
+  const openQuery = useStore((s) => s.openQuery);
   const openTable = useStore((s) => s.openTable);
   const openTableEditor = useStore((s) => s.openTableEditor);
   const renameTable = useStore((s) => s.renameTable);
   const renameFolderInDb = useStore((s) => s.renameFolderInDb);
   const deleteFolderInDb = useStore((s) => s.deleteFolderInDb);
-  const [tableMenu, setTableMenu] = useState<{
-    db: string;
-    table: string;
-    x: number;
-    y: number;
-  } | null>(null);
+
+  /* The tree's open menu is a single shared state (in the parent). Narrow it to
+     this profile's menus so the existing per-type render code keeps working. */
+  const forThisProfile = treeMenu?.profileId === profile.id ? treeMenu : null;
+  const tableMenu = forThisProfile?.kind === "table" ? forThisProfile : null;
+  const dbMenu = forThisProfile?.kind === "db" ? forThisProfile : null;
+  const folderMenu = forThisProfile?.kind === "folder" ? forThisProfile : null;
+
   const [pendingTableAction, setPendingTableAction] = useState<{
     kind: TableAction;
     db: string;
@@ -384,20 +456,7 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
     db: string;
     table: string;
   } | null>(null);
-  const [dbMenu, setDbMenu] = useState<{
-    db: string;
-    x: number;
-    y: number;
-  } | null>(null);
   const [pendingDbDrop, setPendingDbDrop] = useState<string | null>(null);
-  const [folderMenu, setFolderMenu] = useState<{
-    db: string;
-    folderId: string;
-    folderName: string;
-    tableCount: number;
-    x: number;
-    y: number;
-  } | null>(null);
   const [renamingFolder, setRenamingFolder] = useState<{
     db: string;
     folderId: string;
@@ -413,28 +472,6 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
     if (!tab || tab.kind !== "database" || tab.profileId !== profile.id) return null;
     return tab.database;
   });
-
-  useEffect(() => {
-    if (!tableMenu) return;
-    const close = () => setTableMenu(null);
-    window.addEventListener("click", close);
-    window.addEventListener("contextmenu", close);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("contextmenu", close);
-    };
-  }, [tableMenu]);
-
-  useEffect(() => {
-    if (!dbMenu) return;
-    const close = () => setDbMenu(null);
-    window.addEventListener("click", close);
-    window.addEventListener("contextmenu", close);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("contextmenu", close);
-    };
-  }, [dbMenu]);
 
   if (!tree) return null;
   if (tree.databases.length === 0) {
@@ -476,24 +513,27 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
       );
     }
     return (
-      <div
+      <DraggableTableRow
         key={t.name}
-        data-el="table-row"
-        onDoubleClick={() => openTable(profile.id, profile.name, db, t.name)}
+        profileId={profile.id}
+        db={db}
+        table={t.name}
+        paddingClass={paddingClass}
+        onSelect={() => openDatabase(profile.id, profile.name, db)}
+        onOpen={() => openTable(profile.id, profile.name, db, t.name)}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setTableMenu({ db, table: t.name, x: e.clientX, y: e.clientY });
+          setTreeMenu({
+            kind: "table",
+            profileId: profile.id,
+            db,
+            table: t.name,
+            x: e.clientX,
+            y: e.clientY,
+          });
         }}
-        className={clsx(
-          "flex items-center gap-2 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-400 hover:text-zinc-100",
-          paddingClass
-        )}
-        title="Double-click to open · right-click for actions"
-      >
-        <Table2 size={13} className="text-zinc-600 shrink-0" />
-        <span className="truncate">{t.name}</span>
-      </div>
+      />
     );
   };
 
@@ -531,18 +571,31 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
         const isActive = db === activeDbName;
         return (
           <div key={db}>
+            <TreeDroppable
+              id={`tree-db:${profile.id}:${db}`}
+              data={{ kind: "tree-db", profileId: profile.id, db }}
+            >
+              {({ setNodeRef, isOver }) => (
             <div
+              ref={setNodeRef}
               data-el="db-row"
               className={clsx(
                 "flex items-center gap-1 pl-6 pr-2 py-1.5 cursor-pointer hover:bg-zinc-900/70",
-                isActive && "bg-zinc-900/60"
+                isActive && "bg-zinc-900/60",
+                isOver && "ring-1 ring-inset ring-accent-400 bg-accent-500/10"
               )}
               onClick={() => openDatabase(profile.id, profile.name, db)}
               onDoubleClick={() => toggleDbExpanded(profile.id, db)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                setDbMenu({ db, x: e.clientX, y: e.clientY });
+                setTreeMenu({
+                  kind: "db",
+                  profileId: profile.id,
+                  db,
+                  x: e.clientX,
+                  y: e.clientY,
+                });
               }}
               title="Click to view tables · double-click or arrow to expand · right-click for actions"
             >
@@ -568,13 +621,15 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
               />
               <span
                 className={clsx(
-                  "truncate",
-                  isActive ? "text-zinc-100 font-semibold" : "text-zinc-300"
+                  "truncate font-bold",
+                  isActive ? "text-zinc-100" : "text-zinc-300"
                 )}
               >
                 {db}
               </span>
             </div>
+              )}
+            </TreeDroppable>
             {expanded && state && (
               <div>
                 {state.loading && (
@@ -601,7 +656,18 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                   const folderTables = tablesByFolderId.get(folder.id) ?? [];
                   return (
                     <div key={folder.id}>
+                      <TreeDroppable
+                        id={`tree-folder:${profile.id}:${folder.id}`}
+                        data={{
+                          kind: "tree-folder",
+                          profileId: profile.id,
+                          db,
+                          folderId: folder.id,
+                        }}
+                      >
+                        {({ setNodeRef, isOver }) => (
                       <div
+                        ref={setNodeRef}
                         data-el="folder-row"
                         onClick={() =>
                           toggleFolderExpandedInTree(profile.id, db, folder.id)
@@ -609,7 +675,9 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                         onContextMenu={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          setFolderMenu({
+                          setTreeMenu({
+                            kind: "folder",
+                            profileId: profile.id,
                             db,
                             folderId: folder.id,
                             folderName: folder.name,
@@ -618,7 +686,10 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                             y: e.clientY,
                           });
                         }}
-                        className="flex items-center gap-1 pl-11 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-300"
+                        className={clsx(
+                          "flex items-center gap-1 pl-11 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-300",
+                          isOver && "ring-1 ring-inset ring-accent-400 bg-accent-500/10"
+                        )}
                         title={`${folder.name} · ${folder.tables.length} table(s) · right-click for actions`}
                       >
                         <ChevronRight
@@ -657,6 +728,8 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
                           </>
                         )}
                       </div>
+                        )}
+                      </TreeDroppable>
                       {folderExpanded &&
                         folderTables.map((t) => renderTableRow(t, db, "pl-20"))}
                     </div>
@@ -674,14 +747,14 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
         <TreeFolderContextMenu
           x={folderMenu.x}
           y={folderMenu.y}
-          onClose={() => setFolderMenu(null)}
+          onClose={() => setTreeMenu(null)}
           onRename={() => {
             setRenamingFolder({ db: folderMenu.db, folderId: folderMenu.folderId });
-            setFolderMenu(null);
+            setTreeMenu(null);
           }}
           onDelete={() => {
             const { db, folderId, folderName, tableCount } = folderMenu;
-            setFolderMenu(null);
+            setTreeMenu(null);
             setPendingFolderDelete({ db, folderId, folderName, tableCount });
           }}
         />
@@ -708,14 +781,14 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
           y={tableMenu.y}
           onEdit={() => {
             const { db, table } = tableMenu;
-            setTableMenu(null);
+            setTreeMenu(null);
             openTableEditor(profile.id, profile.name, db, table).catch((e) =>
               notifyError(`Could not open "${table}" for editing: ${String(e)}`)
             );
           }}
           onRename={() => {
             setRenamingTable({ db: tableMenu.db, table: tableMenu.table });
-            setTableMenu(null);
+            setTreeMenu(null);
           }}
           onTruncate={() => {
             setPendingTableAction({
@@ -723,7 +796,7 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
               db: tableMenu.db,
               table: tableMenu.table,
             });
-            setTableMenu(null);
+            setTreeMenu(null);
           }}
           onDelete={() => {
             setPendingTableAction({
@@ -731,7 +804,7 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
               db: tableMenu.db,
               table: tableMenu.table,
             });
-            setTableMenu(null);
+            setTreeMenu(null);
           }}
         />
       )}
@@ -750,9 +823,13 @@ function DatabaseList({ profile }: { profile: ProfileView }) {
         <DbContextMenu
           x={dbMenu.x}
           y={dbMenu.y}
+          onNewQuery={() => {
+            openQuery(profile.id, profile.name, dbMenu.db);
+            setTreeMenu(null);
+          }}
           onDrop={() => {
             setPendingDbDrop(dbMenu.db);
-            setDbMenu(null);
+            setTreeMenu(null);
           }}
         />
       )}
@@ -815,10 +892,12 @@ function TreeRenameInput({
 function DbContextMenu({
   x,
   y,
+  onNewQuery,
   onDrop,
 }: {
   x: number;
   y: number;
+  onNewQuery: () => void;
   onDrop: () => void;
 }) {
   return createPortal(
@@ -829,6 +908,15 @@ function DbContextMenu({
       className="dbs-context-menu fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >
       <button
+        data-el="ctx-new-query"
+        className="flex w-full items-center gap-2.5 text-left px-3 py-1.5 hover:bg-zinc-800 text-zinc-200"
+        onClick={onNewQuery}
+      >
+        <Code size={14} className="text-accent-400 shrink-0" />
+        New Query
+      </button>
+      <div className="my-1 border-t border-zinc-800" />
+      <button
         data-el="ctx-drop-database"
         className="flex w-full items-center gap-2.5 text-left px-3 py-1.5 hover:bg-zinc-800 text-rose-400"
         onClick={onDrop}
@@ -838,6 +926,67 @@ function DbContextMenu({
       </button>
     </div>,
     document.body
+  );
+}
+
+/** Render-prop wrapper that turns its child into a drop target. */
+function TreeDroppable({
+  id,
+  data,
+  children,
+}: {
+  id: string;
+  data: Record<string, unknown>;
+  children: (p: {
+    setNodeRef: (el: HTMLElement | null) => void;
+    isOver: boolean;
+  }) => ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id, data });
+  return <>{children({ setNodeRef, isOver })}</>;
+}
+
+/** A table row in the tree, draggable onto a folder or another database. */
+function DraggableTableRow({
+  profileId,
+  db,
+  table,
+  paddingClass,
+  onSelect,
+  onOpen,
+  onContextMenu,
+}: {
+  profileId: string;
+  db: string;
+  table: string;
+  paddingClass: string;
+  onSelect: () => void;
+  onOpen: () => void;
+  onContextMenu: (e: ReactMouseEvent) => void;
+}) {
+  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
+    id: `tree-table:${profileId}:${db}:${table}`,
+    data: { source: "tree", profileId, db, table },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      data-el="table-row"
+      onClick={onSelect}
+      onDoubleClick={onOpen}
+      onContextMenu={onContextMenu}
+      className={clsx(
+        "flex items-center gap-2 pr-2 py-1 cursor-grab active:cursor-grabbing hover:bg-zinc-900/70 text-zinc-400 hover:text-zinc-100 focus:outline-none",
+        paddingClass,
+        isDragging && "opacity-50"
+      )}
+      title="Double-click to open · drag to a folder or another database · right-click for actions"
+    >
+      <Table2 size={13} className="text-zinc-600 shrink-0" />
+      <span className="truncate">{table}</span>
+    </div>
   );
 }
 

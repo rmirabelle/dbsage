@@ -16,6 +16,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { useStore, isDesignerTabDirty } from "../state/store";
 import { useUi } from "../state/ui";
 import { buildCreateTableSql, buildAlterTableSql } from "../lib/tableSql";
@@ -499,6 +500,8 @@ function ColumnsEditor({
                       value={col.comment}
                       onChange={(v) => onPatchColumn(col.id, { comment: v })}
                       className={commentClass}
+                      dataEl="col-comment"
+                      placeholder="comment"
                     />
                     <div className="flex items-center justify-end gap-0.5">
                       <button
@@ -900,51 +903,6 @@ function AdvancedPanel({
         />
       </label>
     </div>
-  );
-}
-
-function AutoGrowTextarea({
-  value,
-  onChange,
-  className,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  className?: string;
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const [focused, setFocused] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (focused) {
-      /* While editing, grow to fit the full comment. */
-      el.style.height = "auto";
-      const border = el.offsetHeight - el.clientHeight;
-      el.style.height = `${el.scrollHeight + border}px`;
-    } else {
-      /* Collapsed: a single line (the `min-h-8` class height), overflow clipped. */
-      el.style.height = "";
-    }
-  }, [value, focused]);
-
-  return (
-    <textarea
-      data-el="col-comment"
-      ref={ref}
-      rows={1}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      placeholder="comment"
-      className={clsx(
-        className,
-        "min-h-8 resize-none overflow-hidden",
-        !focused && "whitespace-nowrap text-ellipsis"
-      )}
-    />
   );
 }
 

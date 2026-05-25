@@ -7,6 +7,7 @@ import {
   FunnelSimpleX,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import type { ColumnFilter, SortDirection, SortSpec } from "../types";
 
 interface Props {
@@ -115,51 +116,53 @@ export function ColumnHeaderMenu({
       className="fixed z-50 rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[12px] text-zinc-200 select-none"
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="py-1">
-        <MenuItem
-          icon={<ArrowUp size={15} />}
-          active={sortedHere === "asc"}
-          onClick={() => {
-            onSort("asc");
-            onClose();
-          }}
-        >
-          Sort ascending
-        </MenuItem>
-        <MenuItem
-          icon={<ArrowDown size={15} />}
-          active={sortedHere === "desc"}
-          onClick={() => {
-            onSort("desc");
-            onClose();
-          }}
-        >
-          Sort descending
-        </MenuItem>
-        {sortedHere && (
+      {!isJson && (
+        <div className="py-1">
           <MenuItem
-            icon={<X size={15} />}
+            icon={<ArrowUp size={15} />}
+            active={sortedHere === "asc"}
             onClick={() => {
-              onSort(null);
+              onSort("asc");
               onClose();
             }}
           >
-            Clear sort
+            Sort ascending
           </MenuItem>
-        )}
-      </div>
+          <MenuItem
+            icon={<ArrowDown size={15} />}
+            active={sortedHere === "desc"}
+            onClick={() => {
+              onSort("desc");
+              onClose();
+            }}
+          >
+            Sort descending
+          </MenuItem>
+          {sortedHere && (
+            <MenuItem
+              icon={<X size={15} />}
+              onClick={() => {
+                onSort(null);
+                onClose();
+              }}
+            >
+              Clear sort
+            </MenuItem>
+          )}
+        </div>
+      )}
 
       {isJson && (
-        <div className="px-3 pt-1 pb-2 space-y-1">
+        <div className="px-3 pt-3 pb-2 space-y-1">
           <div className="flex items-stretch">
             <span className="flex items-center justify-center w-[88px] shrink-0 px-3 text-[11px] uppercase tracking-[0.12em] bg-zinc-900 border border-r-0 rounded-l whitespace-nowrap text-zinc-400 border-zinc-700">
               Show
             </span>
-            <input
-              data-el="json-show-input"
+            <AutoGrowTextarea
+              dataEl="json-show-input"
               value={showPath}
               placeholder="key · or a, b, c for several"
-              onChange={(e) => onShowChange(e.target.value)}
+              onChange={onShowChange}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -167,7 +170,7 @@ export function ColumnHeaderMenu({
                   onClose();
                 }
               }}
-              className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded-r px-2 py-1 text-[12.5px] font-mono text-zinc-100 outline-none focus:border-accent-500"
+              className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded-r px-2 py-[7px] text-[12.5px] font-mono text-zinc-100 outline-none focus:border-accent-500"
             />
           </div>
           <p className="text-[11px] leading-snug text-zinc-500">

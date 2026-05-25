@@ -11,7 +11,7 @@ import type {
 } from "../types";
 import { ColumnHeaderMenu } from "./ColumnHeaderMenu";
 import { ColumnsVisibilityMenu } from "./ColumnsVisibilityMenu";
-import { extractJsonDisplay } from "../lib/jsonPath";
+import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
 
 interface Props {
   columns: ColumnInfo[];
@@ -30,6 +30,8 @@ interface Props {
   onCellEdit: (rowIndex: number, column: string, value: string | null) => Promise<void>;
   /** When true, selecting a row clears the active (highlighted) cell. */
   clearActiveCellOnRowSelect?: boolean;
+  /** Reports the currently selected row indices (ascending) on every change. */
+  onSelectionChange?: (indices: number[]) => void;
 }
 
 const ROW_HEIGHT = 26;
@@ -58,6 +60,7 @@ export function DataGrid({
   onJsonShow,
   onCellEdit,
   clearActiveCellOnRowSelect = false,
+  onSelectionChange,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [widths, setWidths] = useState<number[]>([]);
@@ -111,6 +114,14 @@ export function DataGrid({
     window.addEventListener("mouseup", onUp);
     return () => window.removeEventListener("mouseup", onUp);
   }, []);
+
+  /* Report selection to the parent. Held in a ref so an inline callback prop
+     doesn't retrigger the effect on every render. */
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
+  useEffect(() => {
+    onSelectionChangeRef.current?.([...selectedRows].sort((a, b) => a - b));
+  }, [selectedRows]);
 
   const extendSelection = (from: number, to: number, additive = false) => {
     const [lo, hi] = from < to ? [from, to] : [to, from];
@@ -533,7 +544,9 @@ function Cell({
 
   /* When a JSON column has an active "Show" path, display the extracted
      property (truncated) in place of the raw JSON. Editing still uses the raw
-     value (CellEditor above, before this transform). */
+     value (CellEditor above, before this transform). A multi-path "Show" is
+     rendered as labeled parts so each path label can be styled like a subtitle. */
+  const showParts = jsonPath ? extractJsonShowParts(value, jsonPath) : null;
   const { display, tone } = renderCell(
     jsonPath ? extractJsonDisplay(value, jsonPath) : value
   );
@@ -558,14 +571,28 @@ function Cell({
       title={
         editable
           ? `Double-click to edit${column.key === "PRI" ? " (primary key)" : ""}`
+          : showParts
+          ? display
           : typeof value === "string"
           ? value
           : display
       }
     >
-      <span className={clsx("truncate", tone)}>
-        {column.key === "PRI" ? <strong className="text-zinc-100">{display}</strong> : display}
-      </span>
+      {showParts ? (
+        <span className="truncate text-zinc-200">
+          {showParts.map((part, i) => (
+            <span key={part.label}>
+              {i > 0 && <span className="text-zinc-600">, </span>}
+              <span className="text-[10px] text-zinc-500">{part.label}: </span>
+              {part.value}
+            </span>
+          ))}
+        </span>
+      ) : (
+        <span className={clsx("truncate", tone)}>
+          {column.key === "PRI" ? <strong className="text-zinc-100">{display}</strong> : display}
+        </span>
+      )}
     </div>
   );
 }

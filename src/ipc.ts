@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CellValue,
   ColumnDef,
   ColumnFilter,
   ColumnInfo,
@@ -93,6 +94,13 @@ export const ipc = {
     sql: string;
     overwrite: boolean;
   }) => invoke<void>("create_table", args),
+  copyTable: (args: {
+    profileId: string;
+    sourceDatabase: string;
+    sourceTable: string;
+    targetDatabase: string;
+    includeData: boolean;
+  }) => invoke<void>("copy_table", args),
   truncateTable: (profileId: string, database: string, table: string) =>
     invoke<void>("truncate_table", { profileId, database, table }),
   dropTable: (profileId: string, database: string, table: string) =>
@@ -170,4 +178,11 @@ export const ipc = {
     invoke<void>("export_state", { path, passphrase }),
   importState: (path: string, passphrase: string) =>
     invoke<ImportSummary>("import_state", { path, passphrase }),
+
+  exportQuery: (args: {
+    path: string;
+    format: "csv" | "json" | "xlsx";
+    columns: string[];
+    rows: CellValue[][];
+  }) => invoke<void>("export_query", args),
 };

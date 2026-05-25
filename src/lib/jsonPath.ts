@@ -118,22 +118,47 @@ export function compactDisplay(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/**
- * Resolve a SHOW spec — a single property path or a comma-separated list — against
- * a JSON cell value. A single path keeps its native type (so numbers/bools still
- * get typed coloring); multiple paths are extracted and joined with " · ".
- */
-export function extractJsonDisplay(value: unknown, show: string): unknown {
-  const paths = show
+function splitShow(show: string): string[] {
+  return show
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** One labeled segment of a multi-path SHOW spec, for styled grid rendering. */
+export interface JsonShowPart {
+  label: string;
+  value: string;
+}
+
+/**
+ * Break a multi-path SHOW spec into labeled `{ label, value }` parts so the grid
+ * can style the path labels differently from their values. Returns null for a
+ * single (or empty) path, where the native typed value is shown without a label.
+ */
+export function extractJsonShowParts(value: unknown, show: string): JsonShowPart[] | null {
+  const paths = splitShow(show);
+  if (paths.length <= 1) return null;
+  return paths.map((p) => ({
+    label: p,
+    value: compactDisplay(extractJsonForDisplay(value, p)),
+  }));
+}
+
+/**
+ * Resolve a SHOW spec — a single property path or a comma-separated list — against
+ * a JSON cell value. A single path keeps its native type (so numbers/bools still
+ * get typed coloring); multiple paths are labeled with their path and joined as
+ * `path: value, path: value` (used for tooltips and width estimation).
+ */
+export function extractJsonDisplay(value: unknown, show: string): unknown {
+  const paths = splitShow(show);
   if (paths.length <= 1) {
     return extractJsonForDisplay(value, paths[0] ?? show);
   }
   return paths
-    .map((p) => compactDisplay(extractJsonForDisplay(value, p)))
-    .join(" · ");
+    .map((p) => `${p}: ${compactDisplay(extractJsonForDisplay(value, p))}`)
+    .join(", ");
 }
 
 /**

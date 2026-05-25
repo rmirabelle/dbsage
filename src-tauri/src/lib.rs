@@ -7,7 +7,7 @@ mod store;
 mod updater;
 
 use commands::{
-    column_setups, connect, folders, profiles, query, relations, state_io,
+    column_setups, connect, export, folders, profiles, query, relations, state_io,
 };
 use state::AppState;
 
@@ -38,6 +38,7 @@ pub fn run() {
             query::update_cell,
             query::table_exists,
             query::create_table,
+            query::copy_table,
             query::truncate_table,
             query::drop_table,
             query::rename_table,
@@ -57,6 +58,7 @@ pub fn run() {
             relations::delete_relation,
             state_io::export_state,
             state_io::import_state,
+            export::export_query,
             updater::check_for_update,
             updater::download_and_run_installer,
             updater::get_app_version,

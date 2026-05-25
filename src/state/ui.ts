@@ -2,6 +2,16 @@ import { create } from "zustand";
 
 export type PaneId = "tree" | "tabs";
 
+/** Transient menu shown after dropping table(s) onto a different database. */
+export interface TableCopyPrompt {
+  profileId: string;
+  sourceDb: string;
+  tables: string[];
+  targetDb: string;
+  x: number;
+  y: number;
+}
+
 interface UiState {
   sidebarWidth: number;
   treeZoom: number;
@@ -10,6 +20,7 @@ interface UiState {
   expandedPanelHeight: number;
   relationsEditorWidth: number;
   sqlPaneHeight: number;
+  tableCopyPrompt: TableCopyPrompt | null;
 
   setSidebarWidth: (px: number) => void;
   setZoom: (pane: PaneId, factor: number) => void;
@@ -19,6 +30,8 @@ interface UiState {
   setExpandedPanelHeight: (px: number) => void;
   setRelationsEditorWidth: (px: number) => void;
   setSqlPaneHeight: (px: number) => void;
+  openTableCopyPrompt: (prompt: TableCopyPrompt) => void;
+  closeTableCopyPrompt: () => void;
 }
 
 const KEY = "dbsage.ui.v1";
@@ -93,6 +106,7 @@ export const useUi = create<UiState>((set, get) => ({
     RELATIONS_EDITOR_MAX
   ),
   sqlPaneHeight: clamp(persisted.sqlPaneHeight ?? 200, SQL_PANE_MIN, SQL_PANE_MAX),
+  tableCopyPrompt: null,
 
   setSidebarWidth: (px) => {
     set({ sidebarWidth: clamp(Math.round(px), SIDEBAR_MIN, SIDEBAR_MAX) });
@@ -116,6 +130,9 @@ export const useUi = create<UiState>((set, get) => ({
   },
 
   setFocusedPane: (pane) => set({ focusedPane: pane }),
+
+  openTableCopyPrompt: (prompt) => set({ tableCopyPrompt: prompt }),
+  closeTableCopyPrompt: () => set({ tableCopyPrompt: null }),
 
   setExpandedPanelHeight: (px) => {
     set({ expandedPanelHeight: clamp(Math.round(px), PANEL_MIN, PANEL_MAX) });
