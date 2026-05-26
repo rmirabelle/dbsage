@@ -1260,3 +1260,50 @@ pub async fn update_cell(
     }
     Ok(affected)
 }
+
+/// INSERT a new row. `values` carries only the columns the caller supplied
+/// (omitted columns fall back to their DB default / auto-increment). A value of
+/// `None` inserts SQL NULL.
+#[tauri::command]
+pub async fn insert_row(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    values: Vec<PkValue>,
+) -> AppResult<u64> {
+    if values.is_empty() {
+        return Err(AppError::Other(
+            "no values provided to insert".into(),
+        ));
+    }
+
+    let pool = pool_for(&state, &profile_id).await?;
+    let columns = fetch_columns(&pool, &database, &table).await?;
+    let column_set: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    for v in &values {
+        if !column_set.contains(v.column.as_str()) {
+            return Err(AppError::Other(format!("unknown column: {}", v.column)));
+        }
+    }
+
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    let cols = values
+        .iter()
+        .map(|v| quote_ident(&v.column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!("INSERT INTO {qualified} ({cols}) VALUES ({placeholders})");
+
+    let mut q = sqlx::query(&sql);
+    for v in &values {
+        q = match &v.value {
+            Some(val) => q.bind(val.clone()),
+            None => q.bind(Option::<String>::None),
+        };
+    }
+
+    let result = q.execute(&pool).await?;
+    Ok(result.rows_affected())
+}

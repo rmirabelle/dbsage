@@ -15,7 +15,7 @@ A sleek, modern Windows desktop client for MySQL — built with Tauri 2, React 1
 
 - Table designer with a visual **Columns** editor (type, length/decimals, NOT NULL, key, default, auto-increment, unsigned/zerofill) and an **Indexes** editor (multi-column with ASC/DESC, type NORMAL/UNIQUE/FULLTEXT/SPATIAL, method) — generates the `CREATE TABLE` / `ALTER TABLE` and shows a live SQL preview
 - Create new tables or edit existing ones in place
-- Define virtual **relationships** (has-one / has-many) between tables
+- **Relations**: define custom, arbitrary, one-way, HAS ONE or HAS MANY relations between any two tables that contain related data. Relations are completely independent of MySQL indexes or foreign keys
 
 **Browsing & editing rows**
 
@@ -28,7 +28,7 @@ A sleek, modern Windows desktop client for MySQL — built with Tauri 2, React 1
 
 **Workspace**
 
-- Encrypted, passphrase-protected state export/import (connections, relationships, folders, and column setups)
+- Encrypted, passphrase-protected state export/import (connections, relations, folders, and column setups)
 - In-app auto-updater (checks GitHub releases)
 - Per-pane zoom (Ctrl+= / Ctrl+− / Ctrl+0 or Ctrl+wheel), draggable splitters, dark slate-tinted theme, Phosphor icons
 

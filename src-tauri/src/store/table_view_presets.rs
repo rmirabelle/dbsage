@@ -82,6 +82,24 @@ pub fn delete(app: &AppHandle, key: &str, name: &str) -> AppResult<()> {
     save_file(app, &file)
 }
 
+/// Table names (within the given profile + database) that have at least one
+/// saved preset. One file read, filtered by the `profile::database::` prefix.
+pub fn tables_with_presets(
+    app: &AppHandle,
+    profile_id: &str,
+    database: &str,
+) -> AppResult<Vec<String>> {
+    let prefix = format!("{profile_id}::{database}::");
+    Ok(load_file(app)?
+        .iter()
+        .filter_map(|(key, value)| {
+            let table = key.strip_prefix(&prefix)?;
+            let has = value.as_array().map(|a| !a.is_empty()).unwrap_or(false);
+            has.then(|| table.to_string())
+        })
+        .collect())
+}
+
 pub fn export_all(app: &AppHandle) -> AppResult<PresetsFile> {
     load_file(app)
 }

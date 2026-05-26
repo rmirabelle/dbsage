@@ -75,7 +75,7 @@ export interface StateSelection {
 /** The selectable state categories, in display order, with friendly labels. */
 export const STATE_CATEGORIES: { key: keyof StateSelection; label: string }[] = [
   { key: "profiles", label: "Connections" },
-  { key: "relations", label: "Relationships" },
+  { key: "relations", label: "Relations" },
   { key: "folders", label: "Table folders" },
   { key: "columnSetups", label: "Column setups" },
   { key: "tableViewPresets", label: "Table view presets" },
@@ -183,6 +183,9 @@ export interface RowsTab extends BaseTab {
   /** Name of the currently-applied preset, shown on the Views button. Null when
    * no named view is active (defaults or ad-hoc changes). */
   activePreset: string | null;
+  /** The selected cell, persisted so switching tabs doesn't lose the user's
+   * place. Cleared when the row set actually changes (page/sort/filter). */
+  activeCell: { rowIndex: number; column: string } | null;
 }
 
 export interface Folder {

@@ -88,6 +88,13 @@ export const ipc = {
     value: string | null;
   }) => invoke<number>("update_cell", args),
 
+  insertRow: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    values: { column: string; value: string | null }[];
+  }) => invoke<number>("insert_row", args),
+
   tableExists: (profileId: string, database: string, table: string) =>
     invoke<boolean>("table_exists", { profileId, database, table }),
   createTable: (args: {
@@ -189,6 +196,8 @@ export const ipc = {
     }),
   listTablePresets: (profileId: string, database: string, table: string) =>
     invoke<TableViewPreset[]>("list_table_presets", { profileId, database, table }),
+  tablesWithPresets: (profileId: string, database: string) =>
+    invoke<string[]>("tables_with_presets", { profileId, database }),
   saveTablePreset: (
     profileId: string,
     database: string,

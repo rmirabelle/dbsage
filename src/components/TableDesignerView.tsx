@@ -408,7 +408,7 @@ function ColumnsEditor({
             onClick={onAddColumn}
             className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
           >
-            <span className="text-[19px] leading-none">+</span> Add Column
+            <span className="relative -top-px text-[19px] leading-none">+</span> Add Column
           </button>
           <span className="ml-auto text-[11px] text-zinc-500">
             {columns.length} column{columns.length === 1 ? "" : "s"}
@@ -604,7 +604,7 @@ function IndexesEditor({
             onClick={onAddIndex}
             className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
           >
-            <span className="text-[19px] leading-none">+</span> Add Index
+            <span className="relative -top-px text-[19px] leading-none">+</span> Add Index
           </button>
           <span className="ml-auto text-[11px] text-zinc-500">
             {indexes.length} index{indexes.length === 1 ? "" : "es"}

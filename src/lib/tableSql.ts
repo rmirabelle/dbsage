@@ -53,6 +53,25 @@ export function columnDefToDraft(def: ColumnDef): ColumnDraft {
   };
 }
 
+/** The conventional first column for a brand-new table:
+ * `id INT NOT NULL PRIMARY KEY AUTO_INCREMENT`. */
+export function defaultIdColumn(): ColumnDraft {
+  return {
+    id: crypto.randomUUID(),
+    name: "id",
+    type: "INT",
+    length: "",
+    decimals: "",
+    notNull: true,
+    key: true,
+    comment: "",
+    autoIncrement: true,
+    defaultValue: "",
+    unsigned: false,
+    zerofill: false,
+  };
+}
+
 /** Convert backend index metadata into an editor draft (edit mode seed). */
 export function indexDefToDraft(def: IndexDef): IndexDraft {
   return {

@@ -10,6 +10,10 @@ interface Props {
   dataEl?: string;
   className?: string;
   onChange: (value: string) => void;
+  /** Each time this changes to a truthy value, the input is focused. Lets a
+   * parent imperatively focus the field (e.g. when opening an editor) without
+   * a ref, even when the component stays mounted. */
+  focusSignal?: number;
 }
 
 /**
@@ -28,6 +32,7 @@ export function SearchableSelect({
   dataEl,
   className,
   onChange,
+  focusSignal,
 }: Props) {
   const [text, setText] = useState(value);
   const [searching, setSearching] = useState(false);
@@ -38,6 +43,10 @@ export function SearchableSelect({
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setText(value), [value]);
+
+  useEffect(() => {
+    if (focusSignal) inputRef.current?.focus();
+  }, [focusSignal]);
 
   const filtered = useMemo(() => {
     const q = text.trim().toLowerCase();

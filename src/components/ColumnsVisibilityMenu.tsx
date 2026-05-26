@@ -66,7 +66,7 @@ export function ColumnsVisibilityMenu({
       ref={ref}
       data-el="columns-menu"
       style={{ top, left, width: MENU_WIDTH, maxHeight: MENU_MAX_HEIGHT }}
-      className="fixed z-50 flex flex-col rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[11px] text-zinc-200 select-none overflow-hidden"
+      className="fixed z-[100] flex flex-col rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[11px] text-zinc-200 select-none overflow-hidden"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="px-3 py-1.5 border-b border-zinc-800 flex items-center justify-between gap-2">

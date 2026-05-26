@@ -18,9 +18,11 @@ import clsx from "clsx";
 import { useDraggable, useDroppable, useDndMonitor } from "@dnd-kit/core";
 import { useStore } from "../state/store";
 import { notifyError } from "../state/notify";
+import { ipc } from "../ipc";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
+import { ViewsIcon } from "./TableViewPresetMenu";
 import type { DatabaseTab, Folder, TableInfo } from "../types";
 
 interface Props {
@@ -64,6 +66,24 @@ export function DatabaseView({ tab }: Props) {
   useEffect(() => {
     loadRelations(tab.profileId, tab.database).catch(() => {});
   }, [tab.profileId, tab.database, loadRelations]);
+
+  /** Tables that have at least one saved view, marked with a views icon.
+   * Re-fetched when the table list reloads (e.g. on refresh). */
+  const [viewTables, setViewTables] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    ipc
+      .tablesWithPresets(tab.profileId, tab.database)
+      .then((names) => {
+        if (!cancelled) setViewTables(new Set(names));
+      })
+      .catch(() => {
+        if (!cancelled) setViewTables(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab.profileId, tab.database, tab.tables]);
 
   const currentFolder = useMemo(
     () =>
@@ -434,7 +454,7 @@ export function DatabaseView({ tab }: Props) {
             className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-emerald-400 text-emerald-950 hover:bg-emerald-300 transition-colors"
             title="Design a new table"
           >
-            <span className="text-[19px] leading-none">+</span> Table
+            <span className="relative -top-px text-[19px] leading-none">+</span> Table
           </button>
 
           <button
@@ -456,9 +476,9 @@ export function DatabaseView({ tab }: Props) {
             }
             style={{ fontSize: 13 }}
             className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
-            title="Open the relationships view for this database"
+            title="Open the relations view for this database"
           >
-            <ShareNetwork size={17} /> Relationships
+            <ShareNetwork size={17} /> Relations
             {relationCount > 0 && (
               <span className="rounded-full bg-violet-950/40 text-violet-50 px-1.5 text-[10px] font-semibold tabular-nums">
                 {relationCount}
@@ -634,6 +654,7 @@ export function DatabaseView({ tab }: Props) {
                   tabId={tab.id}
                   profileId={tab.profileId}
                   database={tab.database}
+                  hasViews={viewTables.has(t.name)}
                   moveNames={
                     selectedTables.has(t.name)
                       ? Array.from(selectedTables)
@@ -867,6 +888,7 @@ function TableTile({
   tabId,
   profileId,
   database,
+  hasViews,
   moveNames,
   isSelected,
   isAnyDragging,
@@ -882,6 +904,7 @@ function TableTile({
   tabId: string;
   profileId: string;
   database: string;
+  hasViews: boolean;
   moveNames: string[];
   isSelected: boolean;
   isAnyDragging: boolean;
@@ -952,13 +975,21 @@ function TableTile({
         />
       ) : (
         <>
-          <span
-            className={clsx(
-              "text-[12px] truncate flex-1",
-              isSelected ? "text-zinc-50 font-medium" : "text-zinc-200"
+          <span className="flex-1 min-w-0 flex items-center gap-1.5">
+            <span
+              className={clsx(
+                "text-[12px] truncate min-w-0",
+                isSelected ? "text-zinc-50 font-medium" : "text-zinc-200"
+              )}
+            >
+              {table.name}
+            </span>
+            {hasViews && (
+              <ViewsIcon
+                size={12}
+                className="shrink-0 text-emerald-400"
+              />
             )}
-          >
-            {table.name}
           </span>
           {table.estimatedRows != null && (
             <span className="text-[10px] font-mono text-zinc-500 shrink-0 ml-auto">

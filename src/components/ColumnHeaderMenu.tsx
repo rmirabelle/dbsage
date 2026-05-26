@@ -113,7 +113,7 @@ export function ColumnHeaderMenu({
       ref={ref}
       data-el="column-header-menu"
       style={{ top, left, width: MENU_WIDTH }}
-      className="fixed z-50 rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[12px] text-zinc-200 select-none"
+      className="fixed z-[100] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[12px] text-zinc-200 select-none"
       onClick={(e) => e.stopPropagation()}
     >
       {!isJson && (

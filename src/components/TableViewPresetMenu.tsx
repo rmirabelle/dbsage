@@ -5,7 +5,7 @@ import type { TableViewPreset } from "../types";
 
 /** Custom "table views" glyph: an eye framed by scan-corner brackets. Inherits
  * color via currentColor and scales to the given pixel size. */
-function ViewsIcon({ size = 16, className }: { size?: number; className?: string }) {
+export function ViewsIcon({ size = 16, className }: { size?: number; className?: string }) {
   return (
     <svg
       width={size}
@@ -90,11 +90,16 @@ export function TableViewPresetMenu({
       >
         <ViewsIcon size={16} className="shrink-0" />
         <span className="max-w-[160px] truncate">{activeName ?? "Views"}</span>
-        {!activeName && presets.length > 0 && (
-          <span className="rounded-full bg-zinc-700 text-zinc-200 px-1.5 text-[10px] font-semibold tabular-nums">
-            {presets.length}
-          </span>
-        )}
+        <span
+          className={clsx(
+            "rounded-full px-1.5 text-[10px] font-semibold tabular-nums",
+            activeName
+              ? "bg-emerald-950/40 text-emerald-50"
+              : "bg-zinc-700 text-zinc-200"
+          )}
+        >
+          {presets.length}
+        </span>
         <CaretDown size={12} className="-mr-1 opacity-70" />
       </button>
 
@@ -143,7 +148,9 @@ export function TableViewPresetMenu({
                     </span>
                   </button>
                   <button
-                    onClick={() => onDelete(p.name)}
+                    onClick={() => {
+                      if (confirm(`Delete the view "${p.name}"?`)) onDelete(p.name);
+                    }}
                     className="shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition"
                     title={`Delete "${p.name}"`}
                     aria-label={`Delete ${p.name}`}

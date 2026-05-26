@@ -18,6 +18,15 @@ pub async fn list_table_presets(
 }
 
 #[tauri::command]
+pub async fn tables_with_presets(
+    app: AppHandle,
+    profile_id: String,
+    database: String,
+) -> AppResult<Vec<String>> {
+    table_view_presets::tables_with_presets(&app, &profile_id, &database)
+}
+
+#[tauri::command]
 pub async fn save_table_preset(
     app: AppHandle,
     profile_id: String,

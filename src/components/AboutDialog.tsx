@@ -129,7 +129,8 @@ export function AboutDialog({ open, version, initialUpdateInfo, onClose }: Props
             <div className="text-[11px] text-zinc-500">Version {version || "—"}</div>
             <div className="mt-1 text-xs text-zinc-400">by Robert Mirabelle</div>
             <div className="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
-              A sleek MySQL desktop client.
+              A focused, opinionated, intelligent and robust MySQL client for
+              Windows.
             </div>
           </div>
         </div>

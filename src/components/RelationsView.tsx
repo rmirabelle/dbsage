@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { Trash, Plus, ShareNetwork, X, FloppyDisk } from "@phosphor-icons/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Trash,
+  Plus,
+  ShareNetwork,
+  X,
+  FloppyDisk,
+  MagnifyingGlass,
+} from "@phosphor-icons/react";
 import clsx from "clsx";
 import { ipc } from "../ipc";
 import { singularize, pluralize } from "../lib/inflector";
@@ -38,12 +45,22 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
 
   const [form, setForm] = useState(BLANK);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [addFocusSignal, setAddFocusSignal] = useState(0);
+  const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  /** Focus search on mount — covers both opening and re-focusing the tab, since
+   * switching to this tab remounts the view. */
+  useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
   const [fromColumns, setFromColumns] = useState<string[]>([]);
   const [toColumns, setToColumns] = useState<string[]>([]);
 
   const openAdd = () => {
     setForm(BLANK);
     setEditorOpen(true);
+    setAddFocusSignal((n) => n + 1);
   };
   const closeEditor = () => {
     setForm(BLANK);
@@ -64,6 +81,20 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         });
       }),
     [relations]
+  );
+
+  const query = search.trim().toLowerCase();
+  /** Filter by from/to table names only (not columns or accessor name). */
+  const visibleRelations = useMemo(
+    () =>
+      query
+        ? sortedRelations.filter(
+            (r) =>
+              r.fromTable.toLowerCase().includes(query) ||
+              r.toTable.toLowerCase().includes(query)
+          )
+        : sortedRelations,
+    [sortedRelations, query]
   );
 
   useEffect(() => {
@@ -237,16 +268,32 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
       className="flex-1 flex flex-col min-h-0 bg-zinc-950"
     >
       <div className="dbs-toolbar h-9 shrink-0 pl-1 pr-4 flex items-center gap-1 border-b border-zinc-800/60">
+        <div className="relative">
+          <MagnifyingGlass
+            size={13}
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none"
+          />
+          <input
+            ref={searchRef}
+            data-el="relation-search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by table…"
+            className="w-56 bg-zinc-950 border border-zinc-700 rounded pl-7 pr-2 py-1 text-zinc-200 outline-none focus:border-accent-500"
+          />
+        </div>
         <button
           data-el="add-relationship-btn"
           onClick={openAdd}
           className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
-          title="Add a relationship"
+          title="Add a relation"
         >
-          <Plus size={17} /> Relationship
+          <Plus size={17} /> Relation
         </button>
         <span className="ml-auto text-[11px] text-zinc-500">
-          {relations.length} defined
+          {query
+            ? `${visibleRelations.length} of ${relations.length}`
+            : `${relations.length} defined`}
         </span>
       </div>
 
@@ -261,18 +308,22 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           <div className="shrink-0 px-4 pt-4 pb-2 flex items-center gap-2">
             <ShareNetwork size={18} className="text-violet-400" />
             <h2 className="text-[16px] font-semibold text-zinc-100">
-              Relationships{" "}
+              Relations{" "}
               <span className="font-normal text-zinc-500">— {database}</span>
             </h2>
           </div>
           <div className="flex-1 min-h-0 overflow-auto px-4 pb-4">
           {relations.length === 0 ? (
             <div className="text-[12px] text-zinc-500 py-2">
-              No relationships defined for this database yet.
+              No relations defined for this database yet.
+            </div>
+          ) : visibleRelations.length === 0 ? (
+            <div className="text-[12px] text-zinc-500 py-2">
+              No relations match “{search.trim()}”.
             </div>
           ) : (
             <ul className="space-y-0.5">
-              {sortedRelations.map((r) => {
+              {visibleRelations.map((r) => {
                 const subject = singularize(r.fromTable);
                 const object =
                   r.name.trim() ||
@@ -285,39 +336,44 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                     data-el="relation-row"
                     onClick={() => startEdit(r)}
                     className={clsx(
-                      "group flex items-center gap-2 rounded px-2 py-2 cursor-pointer",
+                      "group flex flex-col gap-0.5 rounded pl-4 pr-2 py-2 cursor-pointer",
                       form.editingId === r.id
                         ? "bg-accent-500/10"
                         : "hover:bg-zinc-800/60"
                     )}
                   >
-                    <span className="truncate text-[15px] text-zinc-100">
-                      {subject}
-                    </span>
-                    <span
-                      className={clsx(
-                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                        r.kind === "has_many"
-                          ? "bg-amber-500/15 text-amber-300"
-                          : "bg-accent-500/15 text-accent-300"
-                      )}
-                    >
-                      {r.kind === "has_many" ? "has many" : "has one"}
-                    </span>
-                    <span className="truncate text-[15px] text-zinc-100">
-                      {object}
-                    </span>
-                    <button
-                      data-el="relation-delete-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(r.id);
-                      }}
-                      className="ml-auto shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100"
-                      aria-label="Delete relationship"
-                    >
-                      <Trash size={13} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-[15px] text-zinc-100">
+                        {subject}
+                      </span>
+                      <span
+                        className={clsx(
+                          "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                          r.kind === "has_many"
+                            ? "bg-amber-500/15 text-amber-300"
+                            : "bg-accent-500/15 text-accent-300"
+                        )}
+                      >
+                        {r.kind === "has_many" ? "has many" : "has one"}
+                      </span>
+                      <span className="truncate text-[15px] text-zinc-100">
+                        {object}
+                      </span>
+                      <button
+                        data-el="relation-delete-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(r.id);
+                        }}
+                        className="ml-auto shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100"
+                        aria-label="Delete relation"
+                      >
+                        <Trash size={13} />
+                      </button>
+                    </div>
+                    <div className="text-[12px] text-zinc-500 truncate">
+                      {r.fromColumn} &rarr; {r.toColumn}
+                    </div>
                   </li>
                 );
               })}
@@ -342,7 +398,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         >
           <div className="mb-2 flex items-center justify-between">
             <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
-              {form.editingId ? "Edit relationship" : "Add relationship"}
+              {form.editingId ? "Edit relation" : "Add relation"}
             </span>
             <button
               data-el="rel-editor-close"
@@ -363,6 +419,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                   placeholder="table…"
                   onChange={onFromTableChange}
                   className="flex-1"
+                  focusSignal={addFocusSignal}
                 />
                 <SearchableSelect
                   dataEl="rel-from-column"
@@ -433,7 +490,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                 className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
               >
                 {form.editingId ? <FloppyDisk size={13} /> : <Plus size={13} />}
-                {form.editingId ? "Save Relationship" : "Add relationship"}
+                {form.editingId ? "Save Relation" : "Add relation"}
               </button>
             </div>
         </div>

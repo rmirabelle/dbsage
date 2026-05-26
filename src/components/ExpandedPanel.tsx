@@ -160,8 +160,10 @@ export function ExpandedPanel({
     }
   };
 
+  /* pt-7 reserves a top strip for the floating Copy button so long values start
+     below it instead of wrapping underneath. */
   const layerClass =
-    "px-3 py-2 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words";
+    "px-3 pt-7 pb-2 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words";
 
   const copyButton = (
     <button

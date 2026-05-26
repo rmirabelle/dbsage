@@ -10,6 +10,8 @@ import {
   PencilSimple,
   Table,
   Rows,
+  ShareNetwork,
+  Key,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type {
@@ -42,6 +44,8 @@ interface Props {
   onCellEdit: (rowIndex: number, column: string, value: string | null) => Promise<void>;
   /** When true, selecting a row clears the active (highlighted) cell. */
   clearActiveCellOnRowSelect?: boolean;
+  /** When true, cells are never editable (no double-click edit), regardless of PK. */
+  readOnly?: boolean;
   /** Reports the currently selected row indices (ascending) on every change. */
   onSelectionChange?: (indices: number[]) => void;
   /** Persisted manual column widths (px), keyed by column name. */
@@ -51,6 +55,9 @@ interface Props {
   /** When set, right-clicking a row's number gutter opens a "Copy As" menu that
    * copies the selected rows (or just the clicked row) targeting this table. */
   copyTarget?: { database: string; table: string };
+  /** Column names that participate in a relation — marked with the relation icon
+   * in their header to signal a peek can be launched from them. */
+  peekableColumns?: Set<string>;
 }
 
 const ROW_HEIGHT = 26;
@@ -86,10 +93,12 @@ export function DataGrid({
   onJsonShow,
   onCellEdit,
   clearActiveCellOnRowSelect = false,
+  readOnly = false,
   onSelectionChange,
   columnWidths,
   onColumnWidthsChange,
   copyTarget,
+  peekableColumns,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [widths, setWidths] = useState<number[]>([]);
@@ -114,6 +123,7 @@ export function DataGrid({
     () => columns.some((c) => c.key === "PRI"),
     [columns]
   );
+  const editable = hasPrimaryKey && !readOnly;
 
   const visibleColumns = useMemo(() => {
     if (hiddenColumns.length === 0) return columns;
@@ -262,7 +272,7 @@ export function DataGrid({
   };
 
   const beginEdit = (rowIndex: number, col: ColumnInfo) => {
-    if (!hasPrimaryKey) return;
+    if (!editable) return;
     if (col.key === "PRI") {
       const ok = confirm(
         `"${col.name}" is a primary-key column. Editing it can break foreign-key references and shifts the row's identity.\n\nContinue?`
@@ -304,11 +314,75 @@ export function DataGrid({
     overscan: 12,
   });
 
+  /* Scroll a column into view, accounting for the pinned 56px row-number
+     gutter that would otherwise cover the left columns. */
+  const scrollColumnIntoView = (colIndex: number) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const left = 56 + widths.slice(0, colIndex).reduce((a, b) => a + b, 0);
+    const right = left + (widths[colIndex] ?? MIN_COL_WIDTH);
+    if (left - 56 < el.scrollLeft) el.scrollLeft = left - 56;
+    else if (right > el.scrollLeft + el.clientWidth)
+      el.scrollLeft = right - el.clientWidth;
+  };
+
+  /* On mount, scroll a pre-existing active cell into view — restores the user's
+     place when a persisted selection is returned to (e.g. switching tabs). */
+  const didInitialScroll = useRef(false);
+  useEffect(() => {
+    if (didInitialScroll.current || !activeCell) return;
+    didInitialScroll.current = true;
+    const ci = visibleColumns.findIndex((c) => c.name === activeCell.column);
+    requestAnimationFrame(() => {
+      rowVirtualizer.scrollToIndex(activeCell.rowIndex, { align: "center" });
+      if (ci >= 0) scrollColumnIntoView(ci);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Arrow keys move the active cell by one (instead of scrolling the grid).
+     Works for both the rows view and query-results grid. */
+  const handleGridKeyDown = (e: React.KeyboardEvent) => {
+    if (editing) return;
+    if (
+      e.key !== "ArrowUp" &&
+      e.key !== "ArrowDown" &&
+      e.key !== "ArrowLeft" &&
+      e.key !== "ArrowRight"
+    )
+      return;
+    if (rows.length === 0 || visibleColumns.length === 0) return;
+    e.preventDefault();
+
+    if (!activeCell) {
+      onActiveCellChange({ rowIndex: 0, column: visibleColumns[0].name });
+      rowVirtualizer.scrollToIndex(0);
+      return;
+    }
+
+    let rowIndex = activeCell.rowIndex;
+    let colIndex = Math.max(
+      0,
+      visibleColumns.findIndex((c) => c.name === activeCell.column)
+    );
+    if (e.key === "ArrowDown") rowIndex = Math.min(rowIndex + 1, rows.length - 1);
+    else if (e.key === "ArrowUp") rowIndex = Math.max(rowIndex - 1, 0);
+    else if (e.key === "ArrowRight")
+      colIndex = Math.min(colIndex + 1, visibleColumns.length - 1);
+    else if (e.key === "ArrowLeft") colIndex = Math.max(colIndex - 1, 0);
+
+    onActiveCellChange({ rowIndex, column: visibleColumns[colIndex].name });
+    rowVirtualizer.scrollToIndex(rowIndex);
+    scrollColumnIntoView(colIndex);
+  };
+
   return (
     <div
       ref={scrollRef}
       data-el="data-grid"
-      className="flex-1 overflow-auto bg-zinc-950 select-none"
+      tabIndex={0}
+      onKeyDown={handleGridKeyDown}
+      className="flex-1 overflow-auto bg-zinc-950 select-none focus:outline-none"
       style={{ contain: "strict" }}
     >
       <div style={{ width: totalWidth, minWidth: "100%" }}>
@@ -329,6 +403,7 @@ export function DataGrid({
           sort={sort}
           filterByColumn={filterByColumn}
           jsonDisplay={jsonDisplay}
+          peekableColumns={peekableColumns}
           hasHiddenColumns={hiddenColumns.length > 0}
           onColumnClick={(column, rect) =>
             setMenu((prev) =>
@@ -411,7 +486,7 @@ export function DataGrid({
                         value={row[col.name]}
                         jsonPath={jsonDisplay[col.name]}
                         width={widths[ci] ?? MIN_COL_WIDTH}
-                        editable={hasPrimaryKey}
+                        editable={editable}
                         isEditing={isEditingThis}
                         saving={isEditingThis && saving}
                         isActive={isActiveCell}
@@ -538,6 +613,7 @@ function HeaderRow({
   sort,
   filterByColumn,
   jsonDisplay,
+  peekableColumns,
   hasHiddenColumns,
   onColumnClick,
   onColumnsButtonClick,
@@ -549,6 +625,7 @@ function HeaderRow({
   sort: SortSpec | null;
   filterByColumn: Map<string, ColumnFilter>;
   jsonDisplay: Record<string, string>;
+  peekableColumns?: Set<string>;
   hasHiddenColumns: boolean;
   onColumnClick: (column: string, rect: DOMRect) => void;
   onColumnsButtonClick: (rect: DOMRect) => void;
@@ -581,6 +658,7 @@ function HeaderRow({
         const isSorted = sort?.column === col.name;
         const isFiltered =
           filterByColumn.has(col.name) || !!jsonDisplay[col.name];
+        const isPeekable = peekableColumns?.has(col.name) ?? false;
         return (
           <div
             key={col.name}
@@ -592,7 +670,7 @@ function HeaderRow({
             )}
             title={`${col.name} · ${col.dataType}${
               col.key === "PRI" ? " · PK" : ""
-            }\nClick to sort or filter`}
+            }${isPeekable ? " · has a relation" : ""}\nClick to sort or filter`}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest("[data-resize-handle]"))
                 return;
@@ -607,9 +685,12 @@ function HeaderRow({
               )}
             >
               {col.key === "PRI" && (
-                <span className="text-accent-400 text-[10px]">★</span>
+                <Key size={12} weight="fill" className="text-emerald-400 shrink-0" />
               )}
               <span className="truncate flex-1">{col.name}</span>
+              {isPeekable && (
+                <ShareNetwork size={12} className="text-violet-400 shrink-0" />
+              )}
               {isFiltered && (
                 <Funnel size={12} className="text-amber-400 shrink-0" />
               )}
@@ -734,6 +815,7 @@ function Cell({
     <div
       style={{ width }}
       data-el="grid-cell"
+      data-active-cell={isActive ? "true" : undefined}
       onClick={(e) => {
         e.stopPropagation();
         onActivate();

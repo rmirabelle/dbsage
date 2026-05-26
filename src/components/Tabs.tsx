@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   X,
   CircleNotch as Loader2,
@@ -17,7 +25,7 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useStore, isDesignerTabDirty } from "../state/store";
-import { notifyError } from "../state/notify";
+import { notifyError, notifySuccess } from "../state/notify";
 import { CloseTabConfirmDialog } from "./CloseTabConfirmDialog";
 import { DataGrid } from "./DataGrid";
 import { DatabaseView } from "./DatabaseView";
@@ -26,7 +34,32 @@ import { RelationsView } from "./RelationsView";
 import { TableDesignerView } from "./TableDesignerView";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { TableViewPresetMenu } from "./TableViewPresetMenu";
-import type { RowsTab, Tab } from "../types";
+import { RelatedPeek, type PeekTarget } from "./RelatedPeek";
+import { InsertRowDialog } from "./InsertRowDialog";
+import type { Relation, RowsTab, Tab } from "../types";
+import {
+  relationTargets,
+  peekableColumnsFor,
+  relatedLabel,
+  cellToFilterValue,
+  type RelationTarget,
+} from "../lib/relations";
+
+const EMPTY_RELATIONS: Relation[] = [];
+
+/** An open peek window: its target plus an initial position. `sourceTable`/
+ * `sourceColumn` is the grid cell it was launched from (the main table or a
+ * parent peek's table), so selecting another cell there can update this
+ * window's value (one window reused per relation). Array order is the stacking
+ * order (last = top-most). */
+interface PeekInstance {
+  id: string;
+  sourceTable: string;
+  sourceColumn: string;
+  target: PeekTarget;
+  x: number;
+  y: number;
+}
 
 export function Tabs() {
   const tabs = useStore((s) => s.tabs);
@@ -54,7 +87,7 @@ export function Tabs() {
               Icon = Database;
               iconColor = "text-accent-400";
             } else if (tab.kind === "relations") {
-              primary = "Relationships";
+              primary = "Relations";
               secondary = `${tab.profileName} / ${tab.database}`;
               Icon = ShareNetwork;
               iconColor = "text-violet-400";
@@ -183,27 +216,56 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const deleteTablePreset = useStore((s) => s.deleteTablePreset);
   const clearTableView = useStore((s) => s.clearTableView);
   const updateCell = useStore((s) => s.updateCell);
+  const insertRow = useStore((s) => s.insertRow);
   const openTableEditor = useStore((s) => s.openTableEditor);
+  const openTable = useStore((s) => s.openTable);
+  const loadRelations = useStore((s) => s.loadRelations);
+  const setRowsActiveCell = useStore((s) => s.setRowsActiveCell);
+  const relations =
+    useStore((s) => s.relations[`${tab.profileId}::${tab.database}`]) ??
+    EMPTY_RELATIONS;
 
-  const [activeCell, setActiveCell] = useState<{
-    rowIndex: number;
-    column: string;
-  } | null>(null);
+  /** Selected cell lives in the store so it survives tab switches. */
+  const activeCell = tab.activeCell;
+  const setActiveCell = (cell: { rowIndex: number; column: string } | null) =>
+    setRowsActiveCell(tab.id, cell);
   const [expanded, setExpanded] = useState(true);
+  const [insertOpen, setInsertOpen] = useState(false);
+  const [peeks, setPeeks] = useState<PeekInstance[]>([]);
+  const [picker, setPicker] = useState<{
+    x: number;
+    y: number;
+    matches: { table: string; column: string }[];
+  } | null>(null);
 
-  /** Drop the active cell whenever the rows array identity changes (page / refresh / sort). */
   useEffect(() => {
-    setActiveCell(null);
-  }, [tab.data?.rows]);
+    loadRelations(tab.profileId, tab.database).catch(() => {});
+  }, [tab.profileId, tab.database, loadRelations]);
 
+  /** Drop the active cell when the row set actually changes (page / refresh /
+   * sort / filter), but NOT on remount — so switching tabs keeps the selection.
+   * A ref tracks the rows identity seen on the previous render. */
+  const seenRowsRef = useRef(tab.data?.rows);
   useEffect(() => {
-    if (!expanded) return;
+    if (seenRowsRef.current !== tab.data?.rows) {
+      seenRowsRef.current = tab.data?.rows;
+      setRowsActiveCell(tab.id, null);
+    }
+  }, [tab.data?.rows, tab.id, setRowsActiveCell]);
+
+  /** Esc closes the top-most peek first, then collapses the expanded panel. */
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setExpanded(false);
+      if (e.key !== "Escape") return;
+      if (peeks.length > 0) {
+        setPeeks((prev) => prev.slice(0, -1));
+        return;
+      }
+      if (expanded) setExpanded(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [expanded]);
+  }, [expanded, peeks.length]);
 
   const estimateTotal = tab.data?.total ?? null;
   const displayTotal = tab.exactTotal ?? estimateTotal;
@@ -241,6 +303,184 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     requestAnimationFrame(() => setActiveCell(cell));
   };
 
+  const peekValue = cellToFilterValue(activeValue);
+  const relMatches = useMemo(
+    () =>
+      activeColumn
+        ? relationTargets(relations, tab.table, activeColumn.name)
+        : [],
+    [relations, tab.table, activeColumn]
+  );
+  const canPeek = !!activeCell && peekValue != null && relMatches.length > 0;
+  const peekableColumns = useMemo(
+    () => peekableColumnsFor(relations, tab.table),
+    [relations, tab.table]
+  );
+  const relatedTitle = !activeCell
+    ? "Select a cell to peek into a related table"
+    : peekValue == null
+    ? "This cell is NULL — nothing to match on"
+    : relMatches.length === 0
+    ? `No relation defined on ${tab.table}.${activeColumn?.name ?? ""}`
+    : `Peek into ${relMatches.map((m) => m.table).join(", ")}`;
+  const relatedBtnLabel = relatedLabel(relMatches);
+
+  /** Clamp a desired top-left (screen px) so the window opens inside the pane. */
+  const placeInPane = (x: number, y: number) => {
+    const pane = document
+      .querySelector('[data-el="main-pane"]')
+      ?.getBoundingClientRect();
+    const left = pane?.left ?? 16;
+    const top = pane?.top ?? 60;
+    const right = pane?.right ?? window.innerWidth;
+    const bottom = pane?.bottom ?? window.innerHeight;
+    return {
+      x: Math.min(Math.max(x, left), Math.max(left, right - 200)),
+      y: Math.min(Math.max(y, top), Math.max(top, bottom - 160)),
+    };
+  };
+
+  /** Open (or reuse) a peek window for a relation. Reused per
+   * source-table + source-column + target, so re-launching the same relation
+   * updates the existing window instead of stacking a duplicate. */
+  const addPeek = (args: {
+    sourceTable: string;
+    sourceColumn: string;
+    value: string;
+    target: RelationTarget;
+    x: number;
+    y: number;
+  }) => {
+    const placed = placeInPane(args.x, args.y);
+    setPeeks((prev) => {
+      const idx = prev.findIndex(
+        (p) =>
+          p.sourceTable === args.sourceTable &&
+          p.sourceColumn === args.sourceColumn &&
+          p.target.table === args.target.table &&
+          p.target.column === args.target.column
+      );
+      if (idx >= 0) {
+        const next = prev.slice();
+        const [item] = next.splice(idx, 1);
+        next.push({ ...item, target: { ...item.target, value: args.value } });
+        return next;
+      }
+      return [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          sourceTable: args.sourceTable,
+          sourceColumn: args.sourceColumn,
+          target: { ...args.target, value: args.value },
+          x: placed.x,
+          y: placed.y,
+        },
+      ];
+    });
+  };
+
+  /** Launch a peek from the main grid's active cell (opens just below it). */
+  const openPeek = (t: RelationTarget) => {
+    if (peekValue == null || !activeColumn) return;
+    const pane = document
+      .querySelector('[data-el="main-pane"]')
+      ?.getBoundingClientRect();
+    const cell = document
+      .querySelector('[data-el="main-pane"] [data-active-cell]')
+      ?.getBoundingClientRect();
+    addPeek({
+      sourceTable: tab.table,
+      sourceColumn: activeColumn.name,
+      value: peekValue,
+      target: t,
+      x: (pane?.left ?? 16) + 16 + peeks.length * 26,
+      y: cell ? cell.bottom + 4 : (pane?.top ?? 60) + 12,
+    });
+  };
+
+  /** Launch a child peek from within a peek window (offset from its parent). */
+  const openPeekFromPeek = (
+    target: RelationTarget,
+    ctx: {
+      sourceTable: string;
+      sourceColumn: string;
+      value: string;
+      anchorX: number;
+      anchorY: number;
+    }
+  ) =>
+    addPeek({
+      sourceTable: ctx.sourceTable,
+      sourceColumn: ctx.sourceColumn,
+      value: ctx.value,
+      target,
+      x: ctx.anchorX + 28,
+      y: ctx.anchorY + 28,
+    });
+
+  const closePeek = (id: string) =>
+    setPeeks((prev) => prev.filter((p) => p.id !== id));
+
+  /** Raise a peek to the top by moving it to the end of the array. */
+  const bringPeekToFront = (id: string) =>
+    setPeeks((prev) => {
+      const idx = prev.findIndex((p) => p.id === id);
+      if (idx < 0 || idx === prev.length - 1) return prev;
+      const next = prev.slice();
+      const [item] = next.splice(idx, 1);
+      next.push(item);
+      return next;
+    });
+
+  const onRelatedClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (relMatches.length === 1) {
+      openPeek(relMatches[0]);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPicker({ x: rect.left, y: rect.bottom + 4, matches: relMatches });
+  };
+
+  /** Update any open peek launched from (sourceTable, sourceColumn) to a new
+   * value — drives live-follow as the selected cell changes, in the main grid
+   * and within peeks alike. */
+  const syncPeekValues = useCallback(
+    (sourceTable: string, sourceColumn: string, value: string) =>
+      setPeeks((prev) => {
+        let changed = false;
+        const next = prev.map((p) => {
+          if (
+            p.sourceTable === sourceTable &&
+            p.sourceColumn === sourceColumn &&
+            p.target.value !== value
+          ) {
+            changed = true;
+            return { ...p, target: { ...p.target, value } };
+          }
+          return p;
+        });
+        return changed ? next : prev;
+      }),
+    []
+  );
+
+  /* Live-reuse from the main grid's active cell. */
+  useEffect(() => {
+    if (!activeColumn || peekValue == null) return;
+    syncPeekValues(tab.table, activeColumn.name, peekValue);
+  }, [activeColumn?.name, peekValue, tab.table, syncPeekValues]);
+
+  const openAsTab = async (t: PeekTarget) => {
+    const targetTabId = `rows::${tab.profileId}::${tab.database}::${t.table}`;
+    await openTable(tab.profileId, tab.profileName, tab.database, t.table);
+    await setRowsFilter(targetTabId, t.column, {
+      column: t.column,
+      op: "equals",
+      value: t.value,
+    });
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div
@@ -269,6 +509,15 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           Edit Table
         </button>
 
+        <button
+          data-el="add-row-btn"
+          onClick={() => setInsertOpen(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
+          title="Insert a new row"
+        >
+          <span className="relative -top-px text-[16px] leading-none">+</span> Row
+        </button>
+
         <TableViewPresetMenu
           presets={tab.presets}
           activeName={tab.activePreset}
@@ -277,6 +526,22 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onDelete={(name) => deleteTablePreset(tab.id, name)}
           onClear={() => clearTableView(tab.id)}
         />
+
+        <button
+          data-el="related-btn"
+          disabled={!canPeek}
+          onClick={onRelatedClick}
+          className={clsx(
+            "inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors",
+            canPeek
+              ? "bg-violet-500 text-violet-950 hover:bg-violet-400"
+              : "bg-zinc-800 text-zinc-600 cursor-not-allowed"
+          )}
+          title={relatedTitle}
+        >
+          <ShareNetwork size={17} />
+          {relatedBtnLabel}
+        </button>
 
         <button
           data-el="expanded-toggle-btn"
@@ -317,6 +582,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           jsonDisplay={tab.jsonDisplay}
           columnWidths={tab.columnWidths}
           copyTarget={{ database: tab.database, table: tab.table }}
+          peekableColumns={peekableColumns}
           activeCell={activeCell}
           clearActiveCellOnRowSelect
           onActiveCellChange={setActiveCell}
@@ -345,6 +611,74 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onClose={() => setExpanded(false)}
         />
       )}
+
+      {insertOpen && (
+        <InsertRowDialog
+          profileId={tab.profileId}
+          database={tab.database}
+          table={tab.table}
+          onSubmit={async (values) => {
+            await insertRow(tab.id, values);
+            notifySuccess(`Inserted a row into "${tab.table}"`);
+          }}
+          onClose={() => setInsertOpen(false)}
+        />
+      )}
+
+      {peeks.map((p, i) => (
+        <RelatedPeek
+          key={p.id}
+          profileId={tab.profileId}
+          database={tab.database}
+          target={p.target}
+          initialX={p.x}
+          initialY={p.y}
+          zIndex={50 + i}
+          onFocus={() => bringPeekToFront(p.id)}
+          onOpenPeek={openPeekFromPeek}
+          onActiveValueChange={(column, value) =>
+            syncPeekValues(p.target.table, column, value)
+          }
+          onOpenAsTab={() => {
+            closePeek(p.id);
+            openAsTab(p.target);
+          }}
+          onClose={() => closePeek(p.id)}
+        />
+      ))}
+
+      {picker &&
+        createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onMouseDown={() => setPicker(null)}
+            />
+            <div
+              data-el="related-picker"
+              style={{ top: picker.y, left: picker.x }}
+              className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
+            >
+              <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                Peek into
+              </div>
+              {picker.matches.map((m) => (
+                <button
+                  key={`${m.table}::${m.column}`}
+                  onClick={() => {
+                    setPicker(null);
+                    openPeek(m);
+                  }}
+                  className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[12px] hover:bg-zinc-800 whitespace-nowrap"
+                >
+                  <span className="font-medium text-zinc-100">{m.table}</span>
+                  <span className="font-mono text-zinc-500">.{m.column}</span>
+                </button>
+              ))}
+            </div>
+          </>,
+          document.body
+        )}
 
       <div data-el="rows-pager" className="h-8 px-3 border-t border-zinc-800/60 flex items-center gap-2 text-[11px] text-zinc-400 bg-zinc-950">
         <button

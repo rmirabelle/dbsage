@@ -5,6 +5,7 @@ import { ipc } from "../ipc";
 import {
   columnDefToDraft,
   indexDefToDraft,
+  defaultIdColumn,
   buildCreateTableSql,
   buildAlterTableSql,
   droppedColumnNames,
@@ -269,6 +270,10 @@ interface Store {
   setHiddenColumns: (tabId: string, hidden: string[]) => void;
   /** Set (or clear, with null) a JSON column's display property path. */
   setJsonDisplay: (tabId: string, column: string, path: string | null) => void;
+  setRowsActiveCell: (
+    tabId: string,
+    cell: { rowIndex: number; column: string } | null
+  ) => void;
   /** Persist manual column-width overrides (px, keyed by column name). */
   setColumnWidths: (tabId: string, widths: Record<string, number>) => void;
   /** Save the rows tab's current view (columns, widths, sort, filters, show) as
@@ -287,6 +292,10 @@ interface Store {
     rowIndex: number,
     column: string,
     newValue: string | null
+  ) => Promise<void>;
+  insertRow: (
+    tabId: string,
+    values: { column: string; value: string | null }[]
   ) => Promise<void>;
 }
 
@@ -732,6 +741,7 @@ export const useStore = create<Store>((set, get) => ({
       columnWidths: saved?.columnWidths ?? {},
       presets,
       activePreset: null,
+      activeCell: null,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     await loadTabPage(tabId, 1, set, get);
@@ -1124,7 +1134,7 @@ export const useStore = create<Store>((set, get) => ({
       originalName: "",
       tableComment: "",
       originalTableComment: "",
-      columns: [],
+      columns: [defaultIdColumn()],
       originalColumns: [],
       indexes: [],
       originalIndexes: [],
@@ -1366,6 +1376,14 @@ export const useStore = create<Store>((set, get) => ({
     if (t && t.kind === "rows") persistColumnSetup(t);
   },
 
+  setRowsActiveCell: (tabId, cell) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows" ? { ...t, activeCell: cell } : t
+      ),
+    }));
+  },
+
   setJsonDisplay: (tabId, column, path) => {
     set((s) => ({
       tabs: s.tabs.map((t) => {
@@ -1517,6 +1535,24 @@ export const useStore = create<Store>((set, get) => ({
       column,
       value: newValue,
     });
+    await loadTabPage(tabId, tab.page, set, get);
+  },
+
+  insertRow: async (tabId, values) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows") return;
+    await ipc.insertRow({
+      profileId: tab.profileId,
+      database: tab.database,
+      table: tab.table,
+      values,
+    });
+    /* Row count changed — drop the exact count and reload the current page. */
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: null } : t
+      ),
+    }));
     await loadTabPage(tabId, tab.page, set, get);
   },
 }));
