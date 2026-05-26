@@ -5,6 +5,8 @@ import {
   MagicWand,
   CaretDown,
   ArrowsOutSimple,
+  Database,
+  PlugsConnected,
   CircleNotch as Loader2,
   WarningCircle as AlertCircle,
 } from "@phosphor-icons/react";
@@ -13,6 +15,7 @@ import { useStore } from "../state/store";
 import { notifyError } from "../state/notify";
 import { ipc } from "../ipc";
 import { DataGrid } from "./DataGrid";
+import { StyledSelect } from "./StyledSelect";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { ExportButton } from "./ExportButton";
 import { SqlEditor } from "./SqlEditor";
@@ -78,7 +81,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   const [editorHeight, setEditorHeight] = useState(180);
 
   /* Expanded-value panel (read-only) for the active result cell. */
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   useEffect(() => {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
@@ -87,6 +90,14 @@ export function QueryView({ tab }: { tab: QueryTab }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [expanded]);
+
+  /* Re-render ~10×/s while a query runs so the round-trip timer ticks live. */
+  const [, setClock] = useState(0);
+  useEffect(() => {
+    if (!tab.loading || tab.runStartedAt == null) return;
+    const id = setInterval(() => setClock((c) => c + 1), 100);
+    return () => clearInterval(id);
+  }, [tab.loading, tab.runStartedAt]);
 
   const dbOptions = useMemo(() => {
     const opts = new Set(databases);
@@ -209,80 +220,83 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         data-toolbar="query"
         className="dbs-toolbar h-9 pl-1 pr-3 border-b border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400"
       >
-        <select
-          data-el="query-connection-select"
-          value={tab.profileId}
-          onChange={(e) => setQueryConnection(tab.id, e.target.value)}
-          title="Connection"
-          className="bg-zinc-900 border border-zinc-800 rounded pl-2 py-1 text-zinc-200 max-w-44 focus:border-accent-500"
-        >
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <div className="inline-flex items-center gap-1.5">
+          <PlugsConnected size={16} weight="fill" className="text-lime-400 shrink-0" />
+          <StyledSelect
+            dataEl="query-connection-select"
+            value={tab.profileId}
+            onChange={(v) => setQueryConnection(tab.id, v)}
+            title="Connection"
+            className="font-bold max-w-44"
+            options={profiles.map((p) => ({ value: p.id, label: p.name }))}
+          />
+        </div>
 
-        <select
-          data-el="query-database-select"
-          value={tab.database}
-          onChange={(e) => setQueryDatabase(tab.id, e.target.value)}
-          title="Database"
-          className="bg-zinc-900 border border-zinc-800 rounded pl-2 py-1 text-zinc-200 max-w-44 focus:border-accent-500"
-        >
-          {dbOptions.length === 0 && <option value="">(no database)</option>}
-          {dbOptions.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        <div className="inline-flex items-center gap-1.5">
+          <Database size={16} weight="fill" className="text-blue-400 shrink-0" />
+          <StyledSelect
+            dataEl="query-database-select"
+            value={tab.database}
+            onChange={(v) => setQueryDatabase(tab.id, v)}
+            title="Database"
+            className="font-bold max-w-44"
+            options={
+              dbOptions.length === 0
+                ? [{ value: "", label: "(no database)" }]
+                : dbOptions.map((d) => ({ value: d, label: d }))
+            }
+          />
+        </div>
 
-        <select
-          data-el="query-maxrows-select"
+        <StyledSelect
+          dataEl="query-maxrows-select"
           value={tab.maxRows == null ? "" : String(tab.maxRows)}
-          onChange={(e) =>
-            setQueryMaxRows(
-              tab.id,
-              e.target.value === "" ? null : Number(e.target.value)
-            )
-          }
+          onChange={(v) => setQueryMaxRows(tab.id, v === "" ? null : Number(v))}
           title="Maximum rows to fetch — a safety cap against huge result sets"
-          className="bg-zinc-900 border border-zinc-800 rounded pl-2 py-1 text-zinc-200 focus:border-accent-500"
-        >
-          <option value="100">100 rows</option>
-          <option value="1000">1,000 rows</option>
-          <option value="10000">10,000 rows</option>
-          <option value="">No limit</option>
-        </select>
+          options={[
+            { value: "100", label: "100 rows" },
+            { value: "1000", label: "1,000 rows" },
+            { value: "10000", label: "10,000 rows" },
+            { value: "", label: "No limit" },
+          ]}
+        />
 
-        <button
-          data-el="query-execute-btn"
-          onClick={() => executeQuery(tab.id)}
-          disabled={!canRun}
-          title="Execute (Ctrl+Enter)"
-          className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
-        >
-          {tab.loading ? (
-            <Loader2 size={16} className="animate-spin" />
-          ) : (
+        {tab.loading ? (
+          <button
+            data-el="query-stop-btn"
+            onClick={() => stopQuery(tab.id)}
+            disabled={tab.stopping}
+            title="Stop the running query"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-rose-500 text-rose-950 hover:bg-rose-400 disabled:opacity-60 disabled:hover:bg-rose-500 transition-colors"
+          >
+            {tab.stopping ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Stop size={16} weight="fill" />
+            )}
+            {tab.stopping ? "Stopping…" : "Stop"}
+          </button>
+        ) : (
+          <button
+            data-el="query-execute-btn"
+            onClick={() => executeQuery(tab.id)}
+            disabled={!canRun}
+            title="Execute (Ctrl+Enter)"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
+          >
             <Play size={16} weight="fill" />
-          )}
-          Execute
-        </button>
+            Execute
+          </button>
+        )}
 
-        <button
-          data-el="query-stop-btn"
-          onClick={() => stopQuery(tab.id)}
-          disabled={!tab.loading || tab.stopping}
-          title="Stop the running query"
-          className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-rose-500 text-rose-950 hover:bg-rose-400 disabled:opacity-30 disabled:hover:bg-rose-500 transition-colors"
-        >
-          <Stop size={16} weight="fill" />
-          Stop
-        </button>
+        {tab.loading && !tab.stopping && (
+          <span className="ml-2 inline-flex items-center gap-1.5">
+            <Loader2 size={13} className="animate-spin" />
+            Running…
+          </span>
+        )}
 
-        <div ref={formatMenuRef} className="relative inline-flex">
+        <div ref={formatMenuRef} className="relative inline-flex ml-auto">
           <button
             data-el="query-format-btn"
             onClick={() => runFormat(formatStyle)}
@@ -312,7 +326,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
                   key={style}
                   onClick={() => chooseFormat(style)}
                   className={clsx(
-                    "w-full text-left px-3 py-1.5 hover:bg-zinc-800 flex items-center justify-between gap-2",
+                    "w-full text-left px-3 py-1.5 hover:bg-zinc-950 flex items-center justify-between gap-2",
                     style === formatStyle ? "text-accent-300" : "text-zinc-200"
                   )}
                 >
@@ -325,13 +339,6 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             </div>
           )}
         </div>
-
-        {tab.loading && (
-          <span className="ml-auto inline-flex items-center gap-1.5">
-            <Loader2 size={13} className="animate-spin" />
-            {tab.stopping ? "Stopping…" : "Running…"}
-          </span>
-        )}
       </div>
 
       <div className="shrink-0" style={{ height: editorHeight }}>
@@ -357,22 +364,6 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         data-toolbar="query-results"
         className="dbs-toolbar h-9 pl-1 pr-3 border-b border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400"
       >
-        <button
-          data-el="expanded-toggle-btn"
-          onClick={() => setExpanded((v) => !v)}
-          disabled={!hasResultSet}
-          title="Toggle the expanded-value panel"
-          className={clsx(
-            "inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800",
-            expanded
-              ? "bg-accent-500 text-[#042f2e] hover:bg-accent-400"
-              : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
-          )}
-        >
-          <ArrowsOutSimple size={17} />
-          Expanded
-        </button>
-
         <ExportButton
           database={tab.database}
           columns={result?.columns ?? []}
@@ -383,6 +374,22 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           }
           disabled={!hasResultSet}
         />
+
+        <button
+          data-el="expanded-toggle-btn"
+          onClick={() => setExpanded((v) => !v)}
+          disabled={!hasResultSet}
+          title="Toggle the expanded-value panel"
+          className={clsx(
+            "ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800",
+            expanded
+              ? "bg-emerald-500 text-emerald-950 hover:bg-emerald-400"
+              : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+          )}
+        >
+          <ArrowsOutSimple size={17} />
+          Expanded
+        </button>
       </div>
 
       {tab.error && (
@@ -510,12 +517,26 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             )}
           </>
         )}
-        {result != null && !tab.loading && (
-          <span
-            className="ml-auto tabular-nums text-zinc-300"
-            title="Server-side execution time (statement run only)"
-          >
-            {formatMs(result.elapsedMs)}
+        {(tab.loading || result != null) && (
+          <span className="ml-auto inline-flex items-center gap-3 tabular-nums">
+            <span title="Server-side execution time (statement run only)">
+              <span className="text-zinc-500">Server</span>{" "}
+              <span className="text-zinc-300">
+                {formatMs(tab.loading ? tab.liveServerMs : result?.elapsedMs ?? 0)}
+              </span>
+            </span>
+            <span title="Round-trip time (request, server, and transfer back)">
+              <span className="text-zinc-500">Round trip</span>{" "}
+              <span className="text-zinc-300">
+                {formatMs(
+                  tab.loading
+                    ? tab.runStartedAt != null
+                      ? Date.now() - tab.runStartedAt
+                      : 0
+                    : tab.roundTripMs ?? 0
+                )}
+              </span>
+            </span>
           </span>
         )}
       </div>

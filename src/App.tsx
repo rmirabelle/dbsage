@@ -21,6 +21,7 @@ import {
   type TransferMode,
 } from "./components/StateTransferDialog";
 import { Toaster } from "./components/Toaster";
+import { SqlExportProgress } from "./components/SqlExportProgress";
 import { CopyTableMenu } from "./components/CopyTableMenu";
 import { checkForUpdate, getAppVersion, type UpdateInfo } from "./lib/updater";
 import { useUi } from "./state/ui";
@@ -226,6 +227,7 @@ export default function App() {
         />
       )}
       <Toaster />
+      <SqlExportProgress />
     </div>
   );
 }

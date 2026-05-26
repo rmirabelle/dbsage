@@ -7,7 +7,9 @@ use serde_json::Value;
 use sqlx::mysql::MySqlRow;
 use sqlx::{Either, Executor, MySqlPool, Row};
 use std::collections::HashSet;
-use tauri::{AppHandle, State};
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, State};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -688,6 +690,26 @@ pub async fn table_auto_increment(
     Ok(row.and_then(|r| r.try_get::<Option<u64>, _>(0).ok().flatten()))
 }
 
+/// The table's COMMENT (empty string when none), used to seed the designer.
+#[tauri::command]
+pub async fn table_comment(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<String> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let row = sqlx::query(
+        "SELECT TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+    )
+    .bind(&database)
+    .bind(&table)
+    .fetch_optional(&pool)
+    .await?;
+    Ok(row.map(|r| get_string(&r, 0)).unwrap_or_default())
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexColumn {
@@ -805,6 +827,7 @@ pub async fn run_ddl(
 /// query runs, so `cancel_query` can interrupt it with `KILL QUERY`.
 #[tauri::command]
 pub async fn execute_query(
+    app: AppHandle,
     state: State<'_, AppState>,
     profile_id: String,
     database: String,
@@ -830,8 +853,28 @@ pub async fn execute_query(
         .await
         .insert(token.clone(), conn_id);
 
+    let started = std::time::Instant::now();
+
+    /* Emit the server-side elapsed every 100ms so the UI can tick a live timer
+       while the statement runs. Aborted as soon as the query settles. */
+    let ticker = {
+        let app = app.clone();
+        let token = token.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let _ = app.emit(
+                    "query-progress",
+                    serde_json::json!({
+                        "token": token,
+                        "serverMs": started.elapsed().as_millis() as u64,
+                    }),
+                );
+            }
+        })
+    };
+
     let outcome: AppResult<QueryResult> = async {
-        let started = std::time::Instant::now();
         if !database.trim().is_empty() {
             (&mut *conn)
                 .execute(format!("USE {}", quote_ident(&database)).as_str())
@@ -891,6 +934,7 @@ pub async fn execute_query(
     }
     .await;
 
+    ticker.abort();
     state.running_queries.write().await.remove(&token);
 
     /* When truncated, we stopped reading mid-result, so the connection still has
@@ -972,6 +1016,172 @@ pub async fn drop_table(
     (&mut *conn)
         .execute(format!("DROP TABLE {qualified}").as_str())
         .await?;
+    Ok(())
+}
+
+/// Quote a value as a MySQL single-quoted string literal (backslash-escaped, to
+/// match the app's "Copy as INSERT" output).
+fn sql_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
+fn opt<'r, T>(row: &'r MySqlRow, i: usize) -> Option<T>
+where
+    T: sqlx::Decode<'r, sqlx::MySql> + sqlx::Type<sqlx::MySql>,
+{
+    row.try_get::<Option<T>, _>(i).ok().flatten()
+}
+
+/// Render one cell as a MySQL literal for an INSERT, by column type. NULL stays
+/// NULL; numerics are unquoted; binary becomes a `0x…` hex literal; everything
+/// else is a quoted string.
+fn sql_literal(row: &MySqlRow, i: usize, ty: &str) -> String {
+    let null = || "NULL".to_string();
+    match ty {
+        "BOOLEAN" | "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" => {
+            opt::<i64>(row, i).map(|n| n.to_string()).unwrap_or_else(null)
+        }
+        "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED" | "INT UNSIGNED"
+        | "BIGINT UNSIGNED" => opt::<u64>(row, i).map(|n| n.to_string()).unwrap_or_else(null),
+        "FLOAT" | "DOUBLE" => opt::<f64>(row, i).map(|n| n.to_string()).unwrap_or_else(null),
+        "DECIMAL" => opt::<bigdecimal::BigDecimal>(row, i)
+            .map(|d| d.to_string())
+            .unwrap_or_else(null),
+        "YEAR" => opt::<u16>(row, i).map(|y| y.to_string()).unwrap_or_else(null),
+        "DATE" => opt::<chrono::NaiveDate>(row, i)
+            .map(|d| sql_quote(&d.to_string()))
+            .unwrap_or_else(null),
+        "TIME" => opt::<chrono::NaiveTime>(row, i)
+            .map(|t| sql_quote(&t.to_string()))
+            .unwrap_or_else(null),
+        "DATETIME" | "TIMESTAMP" => opt::<chrono::NaiveDateTime>(row, i)
+            .map(|d| sql_quote(&d.format("%Y-%m-%d %H:%M:%S").to_string()))
+            .unwrap_or_else(null),
+        "JSON" => opt::<Value>(row, i)
+            .map(|v| sql_quote(&v.to_string()))
+            .unwrap_or_else(null),
+        "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "VARBINARY" | "BINARY" => {
+            opt::<Vec<u8>>(row, i)
+                .map(|b| {
+                    if b.is_empty() {
+                        "''".to_string()
+                    } else {
+                        let mut hex = String::with_capacity(2 + b.len() * 2);
+                        hex.push_str("0x");
+                        for byte in &b {
+                            hex.push_str(&format!("{byte:02x}"));
+                        }
+                        hex
+                    }
+                })
+                .unwrap_or_else(null)
+        }
+        _ => opt::<String>(row, i)
+            .map(|s| sql_quote(&s))
+            .unwrap_or_else(null),
+    }
+}
+
+/// Write a `.sql` script for a table: its `CREATE TABLE` statement and,
+/// optionally, `INSERT` statements that restore every row. When data is
+/// included, emits `table-sql-progress` ({ done, total }) so the UI can show a
+/// progress bar — medium and large tables take a while to serialize. Returns
+/// `false` (and writes nothing) when the user cancels mid-stream.
+#[tauri::command]
+pub async fn export_table_sql(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    path: String,
+    include_data: bool,
+) -> AppResult<bool> {
+    state.cancel_sql_export.store(false, Ordering::Relaxed);
+    let pool = pool_for(&state, &profile_id).await?;
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+
+    let create_row = sqlx::query(&format!("SHOW CREATE TABLE {qualified}"))
+        .fetch_one(&pool)
+        .await?;
+    /* SHOW CREATE TABLE returns (Table, "Create Table"); the DDL is column 1. */
+    let create_sql = get_string(&create_row, 1);
+
+    let mut out = String::new();
+    out.push_str(&format!("-- DB Sage export of `{database}`.`{table}`\n\n"));
+    out.push_str(&create_sql);
+    out.push_str(";\n");
+
+    if include_data {
+        let total: u64 = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {qualified}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0)
+            .max(0) as u64;
+        let _ = app.emit("table-sql-progress", serde_json::json!({ "done": 0, "total": total }));
+
+        /* Stream on a dedicated connection so a cancel can detach it (it still
+           has unsent rows queued) instead of returning a dirty conn to the pool. */
+        let mut conn = pool.acquire().await?;
+        let select_sql = format!("SELECT * FROM {qualified}");
+        let mut stream = sqlx::query(&select_sql).fetch(&mut *conn);
+        let mut columns: Vec<(String, String)> = Vec::new();
+        let mut insert_prefix = String::new();
+        let mut done: u64 = 0;
+        let mut last_emit: u64 = 0;
+        let mut cancelled = false;
+        while let Some(row) = stream.try_next().await? {
+            if state.cancel_sql_export.load(Ordering::Relaxed) {
+                cancelled = true;
+                break;
+            }
+            if columns.is_empty() {
+                columns = result_columns(&row);
+                let col_list = columns
+                    .iter()
+                    .map(|(name, _)| quote_ident(name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                insert_prefix =
+                    format!("INSERT INTO {} ({}) VALUES", quote_ident(&table), col_list);
+                out.push('\n');
+            }
+            let values = columns
+                .iter()
+                .enumerate()
+                .map(|(i, (_, ty))| sql_literal(&row, i, ty))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("{insert_prefix} ({values});\n"));
+            done += 1;
+            if done - last_emit >= 500 {
+                last_emit = done;
+                let _ = app
+                    .emit("table-sql-progress", serde_json::json!({ "done": done, "total": total }));
+            }
+        }
+        drop(stream);
+        if cancelled {
+            let _ = conn.detach();
+            return Ok(false);
+        }
+        let _ = app.emit(
+            "table-sql-progress",
+            serde_json::json!({ "done": done, "total": done.max(total) }),
+        );
+    }
+
+    let target = std::path::PathBuf::from(&path);
+    let tmp = target.with_extension("sql-tmp");
+    std::fs::write(&tmp, out.as_bytes())?;
+    std::fs::rename(&tmp, &target)?;
+    Ok(true)
+}
+
+/// Ask the in-progress SQL-script export to stop (best-effort, checked per row).
+#[tauri::command]
+pub async fn cancel_table_sql_export(state: State<'_, AppState>) -> AppResult<()> {
+    state.cancel_sql_export.store(true, Ordering::Relaxed);
     Ok(())
 }
 

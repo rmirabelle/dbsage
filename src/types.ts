@@ -51,12 +51,35 @@ export interface Relation {
   updatedAt: string;
 }
 
-export interface ImportSummary {
+/** Per-category item counts — used both for an import result and for previewing
+ * what an encrypted state file contains. */
+export interface StateCounts {
   profiles: number;
   relations: number;
   folders: number;
   columnSetups: number;
+  tableViewPresets: number;
 }
+
+export type ImportSummary = StateCounts;
+
+/** Which state categories an export or import should include. */
+export interface StateSelection {
+  profiles: boolean;
+  relations: boolean;
+  folders: boolean;
+  columnSetups: boolean;
+  tableViewPresets: boolean;
+}
+
+/** The selectable state categories, in display order, with friendly labels. */
+export const STATE_CATEGORIES: { key: keyof StateSelection; label: string }[] = [
+  { key: "profiles", label: "Connections" },
+  { key: "relations", label: "Relationships" },
+  { key: "folders", label: "Table folders" },
+  { key: "columnSetups", label: "Column setups" },
+  { key: "tableViewPresets", label: "Table view presets" },
+];
 
 /** Per-table column configuration, persisted backend-side and included in
  * state export/import. */
@@ -64,6 +87,25 @@ export interface ColumnSetup {
   hiddenColumns: string[];
   filters: ColumnFilter[];
   jsonDisplay: Record<string, string>;
+  /** Manual column-width overrides in pixels, keyed by column name. Absent in
+   * setups saved before width persistence existed. */
+  columnWidths?: Record<string, number>;
+}
+
+/** A full, reusable table-view snapshot: everything a named preset captures and
+ * restores. Like {@link ColumnSetup} but also carries the sort. */
+export interface TableViewSetup {
+  hiddenColumns: string[];
+  columnWidths: Record<string, number>;
+  sort: SortSpec | null;
+  filters: ColumnFilter[];
+  jsonDisplay: Record<string, string>;
+}
+
+/** A named, saved table-view preset (scoped to one table). */
+export interface TableViewPreset {
+  name: string;
+  setup: TableViewSetup;
 }
 
 export type CellValue = string | number | boolean | null;
@@ -134,6 +176,13 @@ export interface RowsTab extends BaseTab {
    * column's cells display the extracted property (truncated) instead of the
    * full JSON. Keyed by column name. */
   jsonDisplay: Record<string, string>;
+  /** Manual column-width overrides in pixels, keyed by column name. */
+  columnWidths: Record<string, number>;
+  /** Named view presets saved for this table. */
+  presets: TableViewPreset[];
+  /** Name of the currently-applied preset, shown on the Views button. Null when
+   * no named view is active (defaults or ad-hoc changes). */
+  activePreset: string | null;
 }
 
 export interface Folder {
@@ -171,6 +220,13 @@ export interface QueryTab extends BaseTab {
   /** True between a Stop request and the query settling, so the UI can show a
    * "stopped" state rather than an error when the kill interrupts it. */
   stopping: boolean;
+  /** Wall-clock start (Date.now) of the current run; null when idle. Drives the
+   * live round-trip timer. */
+  runStartedAt: number | null;
+  /** Live server-side elapsed (ms) from progress events during a run. */
+  liveServerMs: number;
+  /** Final wall-clock round-trip (ms) of the last completed run; null until one. */
+  roundTripMs: number | null;
 }
 
 /** One column row in the table designer. Numeric fields are kept as strings
@@ -243,6 +299,10 @@ export interface CreateTableTab extends BaseTab {
   tableName: string;
   /** Edit mode: the table's name when opened (ALTER target + rename detection). */
   originalName: string;
+  /** Table-level COMMENT. */
+  tableComment: string;
+  /** Edit mode: the table's comment when opened, for change detection. */
+  originalTableComment: string;
   columns: ColumnDraft[];
   /** Edit mode: snapshot of the loaded columns, for diffing into ALTER clauses. */
   originalColumns: ColumnDraft[];
@@ -255,6 +315,9 @@ export interface CreateTableTab extends BaseTab {
   /** Edit mode: the loaded AUTO_INCREMENT, for change detection. Empty when the
    * table has no auto-increment column. */
   originalAutoIncrementValue: string;
+  /** Create mode: folder the new table should join once created (when the
+   * designer was opened from inside a folder). */
+  targetFolderId?: string | null;
 }
 
 export type Tab =

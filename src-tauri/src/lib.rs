@@ -8,6 +8,7 @@ mod updater;
 
 use commands::{
     column_setups, connect, export, folders, profiles, query, relations, state_io,
+    table_view_presets,
 };
 use state::AppState;
 
@@ -45,6 +46,9 @@ pub fn run() {
             query::column_definitions,
             query::index_definitions,
             query::table_auto_increment,
+            query::table_comment,
+            query::export_table_sql,
+            query::cancel_table_sql_export,
             query::run_ddl,
             folders::list_folders,
             folders::create_folder,
@@ -53,11 +57,15 @@ pub fn run() {
             folders::set_table_folder,
             column_setups::get_column_setup,
             column_setups::save_column_setup,
+            table_view_presets::list_table_presets,
+            table_view_presets::save_table_preset,
+            table_view_presets::delete_table_preset,
             relations::list_relations,
             relations::save_relation,
             relations::delete_relation,
             state_io::export_state,
             state_io::import_state,
+            state_io::preview_state,
             export::export_query,
             updater::check_for_update,
             updater::download_and_run_installer,

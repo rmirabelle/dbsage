@@ -38,8 +38,9 @@ fn save_file(app: &AppHandle, file: &ColumnSetupsFile) -> AppResult<()> {
     Ok(())
 }
 
-/// True when a setup carries no visibility, filters, or JSON-show config — such
-/// entries are dropped rather than stored, so the file doesn't accumulate noise.
+/// True when a setup carries no visibility, filters, JSON-show, or width config
+/// — such entries are dropped rather than stored, so the file doesn't accumulate
+/// noise.
 fn is_empty_setup(setup: &Value) -> bool {
     let empty_arr =
         |v: Option<&Value>| v.and_then(Value::as_array).map_or(true, |a| a.is_empty());
@@ -50,6 +51,7 @@ fn is_empty_setup(setup: &Value) -> bool {
             empty_arr(o.get("hiddenColumns"))
                 && empty_arr(o.get("filters"))
                 && empty_obj(o.get("jsonDisplay"))
+                && empty_obj(o.get("columnWidths"))
         }
         None => true,
     }

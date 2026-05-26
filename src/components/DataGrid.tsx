@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowUp, ArrowDown, Columns, Funnel } from "@phosphor-icons/react";
+import {
+  ArrowUp,
+  ArrowDown,
+  Columns,
+  Funnel,
+  RowsPlusBottom,
+  PencilSimple,
+  Table,
+  Rows,
+} from "@phosphor-icons/react";
 import clsx from "clsx";
 import type {
   ColumnFilter,
@@ -12,6 +22,8 @@ import type {
 import { ColumnHeaderMenu } from "./ColumnHeaderMenu";
 import { ColumnsVisibilityMenu } from "./ColumnsVisibilityMenu";
 import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
+import { buildCopyText, COPY_AS_OPTIONS, type CopyAsFormat } from "../lib/copyAs";
+import { notifyError, notifySuccess } from "../state/notify";
 
 interface Props {
   columns: ColumnInfo[];
@@ -32,11 +44,25 @@ interface Props {
   clearActiveCellOnRowSelect?: boolean;
   /** Reports the currently selected row indices (ascending) on every change. */
   onSelectionChange?: (indices: number[]) => void;
+  /** Persisted manual column widths (px), keyed by column name. */
+  columnWidths?: Record<string, number>;
+  /** Reports the full name→width map after a resize completes, for persistence. */
+  onColumnWidthsChange?: (widths: Record<string, number>) => void;
+  /** When set, right-clicking a row's number gutter opens a "Copy As" menu that
+   * copies the selected rows (or just the clicked row) targeting this table. */
+  copyTarget?: { database: string; table: string };
 }
 
 const ROW_HEIGHT = 26;
 const MIN_COL_WIDTH = 80;
 const MAX_INITIAL_COL_WIDTH = 360;
+
+const COPY_AS_ICONS: Record<CopyAsFormat, typeof Table> = {
+  insert: RowsPlusBottom,
+  update: PencilSimple,
+  tsv: Table,
+  "tsv-header": Rows,
+};
 
 interface MenuAnchor {
   column: string;
@@ -61,10 +87,18 @@ export function DataGrid({
   onCellEdit,
   clearActiveCellOnRowSelect = false,
   onSelectionChange,
+  columnWidths,
+  onColumnWidthsChange,
+  copyTarget,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [widths, setWidths] = useState<number[]>([]);
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
+  const [rowMenu, setRowMenu] = useState<{
+    x: number;
+    y: number;
+    indices: number[];
+  } | null>(null);
   const [columnsMenu, setColumnsMenu] = useState<{ x: number; y: number } | null>(
     null
   );
@@ -93,12 +127,32 @@ export function DataGrid({
     [visibleColumns]
   );
 
-  /* Re-derive default widths only when the column set changes — NOT on every
-     page change — so manual column resizes survive pagination. */
+  /* Re-derive widths only when the column set changes — NOT on every page
+     change — so manual column resizes survive pagination. Persisted overrides
+     (keyed by column name) win over the content-derived defaults. */
   useEffect(() => {
-    setWidths(initialWidths(visibleColumns, rows));
+    const defaults = initialWidths(visibleColumns, rows);
+    setWidths(
+      visibleColumns.map((c, i) => columnWidths?.[c.name] ?? defaults[i])
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columnKey]);
+
+  /* Latest widths, read on resize-end to persist without stale closures. */
+  const widthsRef = useRef(widths);
+  widthsRef.current = widths;
+
+  /* On resize completion, report every visible column's width (merged over any
+     persisted widths for currently-hidden columns) so the setup survives. */
+  const handleResizeEnd = () => {
+    if (!onColumnWidthsChange) return;
+    const next = { ...(columnWidths ?? {}) };
+    visibleColumns.forEach((c, i) => {
+      const w = widthsRef.current[i];
+      if (w != null) next[c.name] = Math.round(w);
+    });
+    onColumnWidthsChange(next);
+  };
 
   /* Clear transient selection/edit state when the columns or page change. */
   useEffect(() => {
@@ -159,6 +213,52 @@ export function DataGrid({
   const handleRowMouseEnter = (index: number) => {
     if (!draggingRef.current || anchor === null) return;
     extendSelection(anchor, index);
+  };
+
+  /* Right-click a row's number gutter → Copy As menu. Operate on the whole
+     selection when the clicked row is part of it; otherwise select just that
+     row and operate on it. */
+  const handleRowContextMenu = (index: number, e: React.MouseEvent) => {
+    if (!copyTarget) return;
+    e.preventDefault();
+    e.stopPropagation();
+    let indices: number[];
+    if (selectedRows.has(index)) {
+      indices = [...selectedRows].sort((a, b) => a - b);
+    } else {
+      indices = [index];
+      setSelectedRows(new Set([index]));
+      setAnchor(index);
+    }
+    setRowMenu({ x: e.clientX, y: e.clientY, indices });
+  };
+
+  const copyRowsAs = async (
+    format: CopyAsFormat,
+    label: string,
+    indices: number[]
+  ) => {
+    setRowMenu(null);
+    if (!copyTarget) return;
+    const picked = indices
+      .map((i) => rows[i])
+      .filter((r): r is RowRecord => r != null);
+    if (picked.length === 0) return;
+    try {
+      const text = buildCopyText(
+        format,
+        copyTarget.database,
+        copyTarget.table,
+        columns,
+        picked
+      );
+      await navigator.clipboard.writeText(text);
+      notifySuccess(
+        `Copied ${picked.length} row${picked.length === 1 ? "" : "s"} as ${label}`
+      );
+    } catch {
+      notifyError("Could not copy to the clipboard");
+    }
   };
 
   const beginEdit = (rowIndex: number, col: ColumnInfo) => {
@@ -225,6 +325,7 @@ export function DataGrid({
               return next;
             })
           }
+          onResizeEnd={handleResizeEnd}
           sort={sort}
           filterByColumn={filterByColumn}
           jsonDisplay={jsonDisplay}
@@ -284,8 +385,11 @@ export function DataGrid({
                   }}
                 >
                   <div
+                    data-el="row-gutter"
+                    onContextMenu={(e) => handleRowContextMenu(vItem.index, e)}
                     className={clsx(
                       "sticky left-0 z-10 w-14 shrink-0 flex items-center justify-end pr-3 text-[10px] font-mono border-r border-zinc-900",
+                      copyTarget && "cursor-context-menu",
                       isSelected
                         ? "bg-[#26303f] text-accent-300 font-semibold"
                         : `${gutterStripe} text-zinc-600`
@@ -358,7 +462,71 @@ export function DataGrid({
           onClose={() => setColumnsMenu(null)}
         />
       )}
+
+      {rowMenu && (
+        <RowContextMenu
+          x={rowMenu.x}
+          y={rowMenu.y}
+          count={rowMenu.indices.length}
+          onPick={(format, label) => copyRowsAs(format, label, rowMenu.indices)}
+          onClose={() => setRowMenu(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function RowContextMenu({
+  x,
+  y,
+  count,
+  onPick,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  count: number;
+  onPick: (format: CopyAsFormat, label: string) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onDown = () => onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      data-el="row-context-menu"
+      style={{ top: y, left: x }}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
+    >
+      <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+        Copy {count} row{count === 1 ? "" : "s"} as
+      </div>
+      {COPY_AS_OPTIONS.map((opt) => {
+        const Icon = COPY_AS_ICONS[opt.format];
+        return (
+          <button
+            key={opt.format}
+            onClick={() => onPick(opt.format, opt.label)}
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 whitespace-nowrap"
+          >
+            <Icon size={14} className="text-zinc-400 shrink-0" />
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>,
+    document.body
   );
 }
 
@@ -366,6 +534,7 @@ function HeaderRow({
   columns,
   widths,
   onResizeColumn,
+  onResizeEnd,
   sort,
   filterByColumn,
   jsonDisplay,
@@ -376,6 +545,7 @@ function HeaderRow({
   columns: ColumnInfo[];
   widths: number[];
   onResizeColumn: (index: number, delta: number) => void;
+  onResizeEnd: () => void;
   sort: SortSpec | null;
   filterByColumn: Map<string, ColumnFilter>;
   jsonDisplay: Record<string, string>;
@@ -456,7 +626,10 @@ function HeaderRow({
             <div className="text-[10px] text-zinc-500 truncate font-mono">
               {col.dataType}
             </div>
-            <ResizeHandle onDelta={(delta) => onResizeColumn(i, delta)} />
+            <ResizeHandle
+              onDelta={(delta) => onResizeColumn(i, delta)}
+              onEnd={onResizeEnd}
+            />
           </div>
         );
       })}
@@ -464,7 +637,13 @@ function HeaderRow({
   );
 }
 
-function ResizeHandle({ onDelta }: { onDelta: (delta: number) => void }) {
+function ResizeHandle({
+  onDelta,
+  onEnd,
+}: {
+  onDelta: (delta: number) => void;
+  onEnd: () => void;
+}) {
   return (
     <div
       data-resize-handle
@@ -489,6 +668,7 @@ function ResizeHandle({ onDelta }: { onDelta: (delta: number) => void }) {
           document.removeEventListener("pointermove", onMove);
           document.removeEventListener("pointerup", cleanup);
           document.removeEventListener("pointercancel", cleanup);
+          onEnd();
         };
 
         document.addEventListener("pointermove", onMove);

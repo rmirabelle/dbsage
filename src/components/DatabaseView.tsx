@@ -51,6 +51,7 @@ export function DatabaseView({ tab }: Props) {
   const openQuery = useStore((s) => s.openQuery);
   const openTableDesigner = useStore((s) => s.openTableDesigner);
   const openTableEditor = useStore((s) => s.openTableEditor);
+  const exportTableSql = useStore((s) => s.exportTableSql);
   const renameTable = useStore((s) => s.renameTable);
   const loadRelations = useStore((s) => s.loadRelations);
   const relationCount = useStore(
@@ -108,6 +109,12 @@ export function DatabaseView({ tab }: Props) {
   const visibleCount = visibleFolders.length + visibleTables.length;
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  /** Focus the filter field whenever this DB view is shown (mount or DB switch). */
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, [tab.id]);
+
   const [creating, setCreating] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [activeTable, setActiveTable] = useState<string | null>(null);
@@ -416,7 +423,12 @@ export function DatabaseView({ tab }: Props) {
           <button
             data-el="new-table-btn"
             onClick={() =>
-              openTableDesigner(tab.profileId, tab.profileName, tab.database)
+              openTableDesigner(
+                tab.profileId,
+                tab.profileName,
+                tab.database,
+                currentFolder?.id ?? null
+              )
             }
             style={{ fontSize: 13 }}
             className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-emerald-400 text-emerald-950 hover:bg-emerald-300 transition-colors"
@@ -454,20 +466,6 @@ export function DatabaseView({ tab }: Props) {
             )}
           </button>
 
-          <button
-            data-el="database-refresh-btn"
-            onClick={() => refreshTab(tab.id)}
-            disabled={tab.loading}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800 disabled:opacity-30"
-            title="Refresh"
-          >
-            {tab.loading ? (
-              <Loader2 size={17} className="animate-spin" />
-            ) : (
-              <RefreshCw size={17} />
-            )}
-          </button>
-
           <span className="ml-auto">
             {tab.loading ? (
               <span className="inline-flex items-center gap-1.5">
@@ -487,6 +485,20 @@ export function DatabaseView({ tab }: Props) {
               </>
             )}
           </span>
+
+          <button
+            data-el="database-refresh-btn"
+            onClick={() => refreshTab(tab.id)}
+            disabled={tab.loading}
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800 disabled:opacity-30"
+            title="Refresh"
+          >
+            {tab.loading ? (
+              <Loader2 size={17} className="animate-spin" />
+            ) : (
+              <RefreshCw size={17} />
+            )}
+          </button>
         </div>
 
         {currentFolder && (
@@ -499,7 +511,7 @@ export function DatabaseView({ tab }: Props) {
               data-el="folder-up-btn"
               onClick={() => exitFolder(tab.id)}
               className={clsx(
-                "inline-flex items-center justify-center h-6 w-6 rounded transition-colors shrink-0",
+                "inline-flex items-center justify-center gap-1.5 h-6 px-2 rounded text-[12px] font-semibold transition-colors shrink-0",
                 upIsOver
                   ? "ring-1 ring-inset ring-accent-400 bg-accent-500/25 text-accent-100"
                   : "bg-amber-300 text-black hover:bg-amber-200"
@@ -507,6 +519,7 @@ export function DatabaseView({ tab }: Props) {
               title="Back to all tables · drop a table here to remove it from this folder"
             >
               <ArrowUp size={14} />
+              <span className="truncate">{tab.database}</span>
             </button>
             <span className="text-[14px] font-semibold text-amber-300 truncate">
               {currentFolder.name}
@@ -528,8 +541,6 @@ export function DatabaseView({ tab }: Props) {
             if (e.target === e.currentTarget) clearSelection();
           }}
           onContextMenu={(e) => {
-            /* Right-click empty space → New Folder (folders don't nest, so only at root). */
-            if (currentFolder) return;
             const t = e.target as HTMLElement;
             if (
               t.closest(
@@ -640,6 +651,12 @@ export function DatabaseView({ tab }: Props) {
                     e.stopPropagation();
                     setContextMenu(null);
                     setEmptyMenu(null);
+                    /* Right-click selects the table, unless it's already part of
+                       a multi-selection (then keep the whole selection). */
+                    if (!selectedTables.has(t.name)) {
+                      setSelectedTables(new Set([t.name]));
+                      lastSelectedRef.current = t.name;
+                    }
                     setTableMenu({ table: t.name, x: e.clientX, y: e.clientY });
                   }}
                   renaming={renamingTable === t.name}
@@ -689,9 +706,15 @@ export function DatabaseView({ tab }: Props) {
           <EmptyAreaContextMenu
             x={emptyMenu.x}
             y={emptyMenu.y}
+            showNewFolder={!currentFolder}
             onNewTable={() => {
               setEmptyMenu(null);
-              openTableDesigner(tab.profileId, tab.profileName, tab.database);
+              openTableDesigner(
+                tab.profileId,
+                tab.profileName,
+                tab.database,
+                currentFolder?.id ?? null
+              );
             }}
             onNewFolder={() => {
               setEmptyMenu(null);
@@ -722,6 +745,11 @@ export function DatabaseView({ tab }: Props) {
             onRename={() => {
               setRenamingTable(tableMenu.table);
               setTableMenu(null);
+            }}
+            onSaveSql={(includeData) => {
+              const table = tableMenu.table;
+              setTableMenu(null);
+              exportTableSql(tab.profileId, tab.database, table, includeData);
             }}
           />
         )}
@@ -1024,11 +1052,13 @@ function FolderContextMenu({
 function EmptyAreaContextMenu({
   x,
   y,
+  showNewFolder,
   onNewTable,
   onNewFolder,
 }: {
   x: number;
   y: number;
+  showNewFolder: boolean;
   onNewTable: () => void;
   onNewFolder: () => void;
 }) {
@@ -1047,14 +1077,16 @@ function EmptyAreaContextMenu({
         <Table2 size={14} className="text-emerald-400 shrink-0" />
         New Table
       </button>
-      <button
-        data-el="ctx-new-folder"
-        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 text-zinc-200"
-        onClick={onNewFolder}
-      >
-        <FolderPlus size={14} className="text-amber-300 shrink-0" />
-        New Folder
-      </button>
+      {showNewFolder && (
+        <button
+          data-el="ctx-new-folder"
+          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 text-zinc-200"
+          onClick={onNewFolder}
+        >
+          <FolderPlus size={14} className="text-amber-300 shrink-0" />
+          New Folder
+        </button>
+      )}
     </div>,
     document.body
   );

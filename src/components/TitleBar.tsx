@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Database } from "@phosphor-icons/react";
+import { Database, DownloadSimple } from "@phosphor-icons/react";
 import { useUi, ZOOM_BOUNDS } from "../state/ui";
 
 /** Zoom the currently-focused pane (tree or tabs). */
@@ -65,7 +65,7 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                   }}
                   className={MENU_ITEM_CLASS}
                 >
-                  <span>Import state…</span>
+                  <span>Import Settings…</span>
                 </button>
                 <button
                   data-el="menu-export-state"
@@ -75,7 +75,7 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                   }}
                   className={MENU_ITEM_CLASS}
                 >
-                  <span>Export state…</span>
+                  <span>Export Settings…</span>
                 </button>
               </>
             )}
@@ -110,7 +110,7 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
               </>
             )}
           </TitleBarMenu>
-          <TitleBarMenu label="Help" badge={updateAvailable}>
+          <TitleBarMenu label="Help">
             {(close) => (
               <button
                 data-el="menu-about"
@@ -121,14 +121,20 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                 className={MENU_ITEM_CLASS}
               >
                 <span>About DB Sage</span>
-                {updateAvailable && (
-                  <span className="text-[10px] text-accent-400">
-                    update available
-                  </span>
-                )}
               </button>
             )}
           </TitleBarMenu>
+          {updateAvailable && (
+            <button
+              data-el="titlebar-update-btn"
+              onClick={onAbout}
+              title="A new version is available"
+              className="ml-2 inline-flex items-center gap-1.5 h-6 px-2.5 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors"
+            >
+              <DownloadSimple size={14} weight="bold" />
+              Update available
+            </button>
+          )}
         </nav>
       </div>
 
@@ -167,11 +173,9 @@ const MENU_ITEM_CLASS =
 
 function TitleBarMenu({
   label,
-  badge,
   children,
 }: {
   label: string;
-  badge?: boolean;
   children: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -198,14 +202,11 @@ function TitleBarMenu({
       <button
         data-el={`menu-${label.toLowerCase()}`}
         onClick={() => setOpen((o) => !o)}
-        className={`relative h-9 px-3 text-[12px] transition hover:bg-zinc-800/80 hover:text-zinc-100 ${
+        className={`h-9 px-3 text-[12px] transition hover:bg-zinc-800/80 hover:text-zinc-100 ${
           open ? "bg-zinc-800/80 text-zinc-100" : "text-zinc-300"
         }`}
       >
         {label}
-        {badge && (
-          <span className="absolute right-1 top-2 h-1.5 w-1.5 rounded-full bg-accent-400" />
-        )}
       </button>
       {open && (
         <div

@@ -142,7 +142,8 @@ export function indexDefinition(idx: IndexDraft): string | null {
 export function buildCreateTableSql(
   tableName: string,
   columns: ColumnDraft[],
-  indexes: IndexDraft[] = []
+  indexes: IndexDraft[] = [],
+  comment = ""
 ): string {
   const defs: string[] = [];
   for (const col of columns) {
@@ -161,7 +162,8 @@ export function buildCreateTableSql(
   }
 
   const body = defs.length > 0 ? defs.join(",\n") : "  /* no columns yet */";
-  return `CREATE TABLE ${id(tableName)} (\n${body}\n);`;
+  const suffix = comment.trim() ? ` COMMENT=${quoteString(comment.trim())}` : "";
+  return `CREATE TABLE ${id(tableName)} (\n${body}\n)${suffix};`;
 }
 
 /** Diff the original (loaded) columns against the live edits into an ALTER TABLE
@@ -174,7 +176,9 @@ export function buildAlterTableSql(
   originalAutoIncrement = "",
   autoIncrement = "",
   originalIndexes: IndexDraft[] = [],
-  currentIndexes: IndexDraft[] = []
+  currentIndexes: IndexDraft[] = [],
+  originalComment = "",
+  comment = ""
 ): string {
   const clauses: string[] = [];
   const origByName = new Map(
@@ -264,6 +268,11 @@ export function buildAlterTableSql(
   const ai = autoIncrement.trim();
   if (ai !== originalAutoIncrement.trim() && /^\d+$/.test(ai)) {
     clauses.push(`  AUTO_INCREMENT = ${ai}`);
+  }
+
+  /* Table comment. */
+  if (comment.trim() !== originalComment.trim()) {
+    clauses.push(`  COMMENT = ${quoteString(comment.trim())}`);
   }
 
   /* Table rename. */

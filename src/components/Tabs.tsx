@@ -25,7 +25,7 @@ import { QueryView } from "./QueryView";
 import { RelationsView } from "./RelationsView";
 import { TableDesignerView } from "./TableDesignerView";
 import { ExpandedPanel } from "./ExpandedPanel";
-import { CopyAsButton } from "./CopyAsButton";
+import { TableViewPresetMenu } from "./TableViewPresetMenu";
 import type { RowsTab, Tab } from "../types";
 
 export function Tabs() {
@@ -177,6 +177,11 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const setRowsFilter = useStore((s) => s.setRowsFilter);
   const setHiddenColumns = useStore((s) => s.setHiddenColumns);
   const setJsonDisplay = useStore((s) => s.setJsonDisplay);
+  const setColumnWidths = useStore((s) => s.setColumnWidths);
+  const saveTablePreset = useStore((s) => s.saveTablePreset);
+  const applyTablePreset = useStore((s) => s.applyTablePreset);
+  const deleteTablePreset = useStore((s) => s.deleteTablePreset);
+  const clearTableView = useStore((s) => s.clearTableView);
   const updateCell = useStore((s) => s.updateCell);
   const openTableEditor = useStore((s) => s.openTableEditor);
 
@@ -184,8 +189,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     rowIndex: number;
     column: string;
   } | null>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [selectedRows, setSelectedRows] = useState<number[]>([]);
+  const [expanded, setExpanded] = useState(true);
 
   /** Drop the active cell whenever the rows array identity changes (page / refresh / sort). */
   useEffect(() => {
@@ -245,21 +249,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         className="dbs-toolbar h-9 pl-1 pr-3 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
         <button
-          data-el="expanded-toggle-btn"
-          onClick={() => setExpanded((v) => !v)}
-          className={clsx(
-            "inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors",
-            expanded
-              ? "bg-accent-500 text-[#042f2e] hover:bg-accent-400"
-              : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
-          )}
-          title="Toggle the expanded-value panel"
-        >
-          <ArrowsOutSimple size={17} />
-          Expanded
-        </button>
-
-        <button
           data-el="edit-table-btn"
           onClick={() =>
             openTableEditor(
@@ -280,16 +269,29 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           Edit Table
         </button>
 
-        {tab.data && selectedRows.length > 0 && (
-          <CopyAsButton
-            database={tab.database}
-            table={tab.table}
-            columns={tab.data.columns}
-            rows={selectedRows
-              .map((i) => tab.data!.rows[i])
-              .filter((r): r is NonNullable<typeof r> => r != null)}
-          />
-        )}
+        <TableViewPresetMenu
+          presets={tab.presets}
+          activeName={tab.activePreset}
+          onApply={(name) => applyTablePreset(tab.id, name)}
+          onSave={(name) => saveTablePreset(tab.id, name)}
+          onDelete={(name) => deleteTablePreset(tab.id, name)}
+          onClear={() => clearTableView(tab.id)}
+        />
+
+        <button
+          data-el="expanded-toggle-btn"
+          onClick={() => setExpanded((v) => !v)}
+          className={clsx(
+            "ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors",
+            expanded
+              ? "bg-emerald-500 text-emerald-950 hover:bg-emerald-400"
+              : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+          )}
+          title="Toggle the expanded-value panel"
+        >
+          <ArrowsOutSimple size={17} />
+          Expanded
+        </button>
       </div>
 
 
@@ -313,10 +315,12 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           filters={tab.filters}
           hiddenColumns={tab.hiddenColumns}
           jsonDisplay={tab.jsonDisplay}
+          columnWidths={tab.columnWidths}
+          copyTarget={{ database: tab.database, table: tab.table }}
           activeCell={activeCell}
           clearActiveCellOnRowSelect
           onActiveCellChange={setActiveCell}
-          onSelectionChange={setSelectedRows}
+          onColumnWidthsChange={(w) => setColumnWidths(tab.id, w)}
           onSortChange={(sort) => setRowsSort(tab.id, sort)}
           onFilterChange={(column, filter) =>
             setRowsFilter(tab.id, column, filter)

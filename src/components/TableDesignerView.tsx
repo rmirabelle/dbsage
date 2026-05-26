@@ -111,12 +111,15 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             tab.originalAutoIncrementValue,
             tab.autoIncrementValue,
             tab.originalIndexes,
-            tab.indexes
+            tab.indexes,
+            tab.originalTableComment,
+            tab.tableComment
           )
         : buildCreateTableSql(
             tab.tableName.trim() || "new_table",
             tab.columns,
-            tab.indexes
+            tab.indexes,
+            tab.tableComment
           ),
     [
       isEdit,
@@ -128,6 +131,8 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
       tab.autoIncrementValue,
       tab.originalIndexes,
       tab.indexes,
+      tab.originalTableComment,
+      tab.tableComment,
     ]
   );
 
@@ -218,7 +223,7 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
         )}
       </div>
       <div className="h-11 shrink-0 px-4 flex items-center gap-2">
-        <span className="text-[13px] text-zinc-400 shrink-0 mr-2">Name</span>
+        <span className="text-[13px] text-zinc-400 shrink-0 w-20">Name</span>
         <div className="flex items-stretch">
           <span className="flex items-center px-2 text-[13px] text-zinc-300 bg-zinc-900 border border-r-0 border-zinc-700 rounded-l whitespace-nowrap shrink-0">
             {tab.database}.
@@ -250,6 +255,18 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
           </div>
         )}
       </div>
+      <div className="shrink-0 px-4 pb-2 flex items-start gap-2">
+        <span className="text-[13px] text-zinc-400 shrink-0 w-20 mt-1.5">
+          Comment
+        </span>
+        <AutoGrowTextarea
+          dataEl="table-comment-input"
+          value={tab.tableComment}
+          onChange={(v) => updateCreateTable(tab.id, { tableComment: v })}
+          placeholder="table comment"
+          className="flex-1 max-w-2xl bg-zinc-950 border border-zinc-700 rounded px-2 py-[7px] text-[13px] text-zinc-100 outline-none focus:border-accent-500"
+        />
+      </div>
 
       <div
         data-el="designer-subtabs"
@@ -261,9 +278,9 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             data-el={`designer-subtab-${st.id}`}
             onClick={() => setActiveSubTab(st.id)}
             className={clsx(
-              "inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] rounded-t-md border border-b-0 transition-colors",
+              "inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold rounded-t-md border border-b-0 transition-colors",
               activeSubTab === st.id
-                ? "bg-zinc-800 border-zinc-700 text-zinc-100"
+                ? "bg-[#2c303c] border-zinc-700 text-zinc-100"
                 : "bg-zinc-900/40 border-transparent text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200"
             )}
           >

@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { DownloadSimple, CaretDown } from "@phosphor-icons/react";
+import {
+  DownloadSimple,
+  CaretDown,
+  FileCsv,
+  BracketsCurly,
+  FileXls,
+  type Icon,
+} from "@phosphor-icons/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { ColumnInfo, RowRecord } from "../types";
 import { ipc } from "../ipc";
@@ -11,10 +18,11 @@ const OPTIONS: {
   format: ExportFormat;
   label: string;
   filterName: string;
+  Icon: Icon;
 }[] = [
-  { format: "csv", label: "CSV file (.csv)", filterName: "CSV" },
-  { format: "json", label: "JSON file (.json)", filterName: "JSON" },
-  { format: "xlsx", label: "Excel file (.xlsx)", filterName: "Excel Workbook" },
+  { format: "csv", label: "CSV file (.csv)", filterName: "CSV", Icon: FileCsv },
+  { format: "json", label: "JSON file (.json)", filterName: "JSON", Icon: BracketsCurly },
+  { format: "xlsx", label: "Excel file (.xlsx)", filterName: "Excel Workbook", Icon: FileXls },
 ];
 
 interface Props {
@@ -90,8 +98,9 @@ export function ExportButton({ database, columns, rows, disabled }: Props) {
             <button
               key={opt.format}
               onClick={() => exportAs(opt.format, opt.filterName)}
-              className="w-full text-left px-3 py-1.5 hover:bg-zinc-800 whitespace-nowrap"
+              className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-950 whitespace-nowrap"
             >
+              <opt.Icon size={14} className="text-emerald-400 shrink-0" />
               {opt.label}
             </button>
           ))}

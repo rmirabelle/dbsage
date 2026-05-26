@@ -14,7 +14,10 @@ import type {
   Relation,
   RowsResult,
   SortSpec,
+  StateCounts,
+  StateSelection,
   TableInfo,
+  TableViewPreset,
 } from "./types";
 
 export const ipc = {
@@ -117,6 +120,23 @@ export const ipc = {
     invoke<IndexDef[]>("index_definitions", { profileId, database, table }),
   tableAutoIncrement: (profileId: string, database: string, table: string) =>
     invoke<number | null>("table_auto_increment", { profileId, database, table }),
+  tableComment: (profileId: string, database: string, table: string) =>
+    invoke<string>("table_comment", { profileId, database, table }),
+  exportTableSql: (
+    profileId: string,
+    database: string,
+    table: string,
+    path: string,
+    includeData: boolean
+  ) =>
+    invoke<boolean>("export_table_sql", {
+      profileId,
+      database,
+      table,
+      path,
+      includeData,
+    }),
+  cancelTableSqlExport: () => invoke<void>("cancel_table_sql_export"),
   runDdl: (profileId: string, database: string, sql: string) =>
     invoke<void>("run_ddl", { profileId, database, sql }),
 
@@ -167,6 +187,20 @@ export const ipc = {
       database,
       table,
     }),
+  listTablePresets: (profileId: string, database: string, table: string) =>
+    invoke<TableViewPreset[]>("list_table_presets", { profileId, database, table }),
+  saveTablePreset: (
+    profileId: string,
+    database: string,
+    table: string,
+    preset: TableViewPreset
+  ) => invoke<void>("save_table_preset", { profileId, database, table, preset }),
+  deleteTablePreset: (
+    profileId: string,
+    database: string,
+    table: string,
+    name: string
+  ) => invoke<void>("delete_table_preset", { profileId, database, table, name }),
   saveColumnSetup: (
     profileId: string,
     database: string,
@@ -174,10 +208,12 @@ export const ipc = {
     setup: ColumnSetup
   ) => invoke<void>("save_column_setup", { profileId, database, table, setup }),
 
-  exportState: (path: string, passphrase: string) =>
-    invoke<void>("export_state", { path, passphrase }),
-  importState: (path: string, passphrase: string) =>
-    invoke<ImportSummary>("import_state", { path, passphrase }),
+  exportState: (path: string, passphrase: string, selection: StateSelection) =>
+    invoke<void>("export_state", { path, passphrase, selection }),
+  previewState: (path: string, passphrase: string) =>
+    invoke<StateCounts>("preview_state", { path, passphrase }),
+  importState: (path: string, passphrase: string, selection: StateSelection) =>
+    invoke<ImportSummary>("import_state", { path, passphrase, selection }),
 
   exportQuery: (args: {
     path: string;

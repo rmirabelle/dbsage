@@ -11,7 +11,11 @@ import {
 } from "@phosphor-icons/react";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
-import type { ImportSummary } from "../types";
+import {
+  STATE_CATEGORIES,
+  type StateCounts,
+  type StateSelection,
+} from "../types";
 
 export type TransferMode = "export" | "import";
 
@@ -22,27 +26,96 @@ interface Props {
 
 const FILTERS = [{ name: "DB Sage State", extensions: ["dbsage"] }];
 
+const allSelected = (): StateSelection => ({
+  profiles: true,
+  relations: true,
+  folders: true,
+  columnSetups: true,
+  tableViewPresets: true,
+});
+
+const fromCounts = (c: StateCounts): StateSelection => ({
+  profiles: c.profiles > 0,
+  relations: c.relations > 0,
+  folders: c.folders > 0,
+  columnSetups: c.columnSetups > 0,
+  tableViewPresets: c.tableViewPresets > 0,
+});
+
+const totalCount = (counts: StateCounts) =>
+  STATE_CATEGORIES.reduce((sum, c) => sum + counts[c.key], 0);
+
 export function StateTransferDialog({ mode, onClose }: Props) {
   return mode === "export" ? (
-    <DialogShell title="Export state" onClose={onClose}>
+    <DialogShell title="Export Settings" onClose={onClose}>
       <ExportBody onClose={onClose} />
     </DialogShell>
   ) : (
-    <DialogShell title="Import state" onClose={onClose}>
+    <DialogShell title="Import Settings" onClose={onClose}>
       <ImportBody onClose={onClose} />
     </DialogShell>
   );
 }
 
+/** A checklist of state categories. When `counts` is given (import), categories
+ * with no items are shown disabled with their count; otherwise all are toggle-able. */
+function CategoryChecklist({
+  selection,
+  counts,
+  onToggle,
+}: {
+  selection: StateSelection;
+  counts?: StateCounts | null;
+  onToggle: (key: keyof StateSelection, checked: boolean) => void;
+}) {
+  return (
+    <div className="rounded border border-zinc-800 bg-[#1d2029] divide-y divide-zinc-800/70">
+      {STATE_CATEGORIES.map(({ key, label }) => {
+        const count = counts ? counts[key] : undefined;
+        const available = counts ? count! > 0 : true;
+        return (
+          <label
+            key={key}
+            className={
+              "flex items-center gap-2.5 px-3 py-2 text-[12px] " +
+              (available
+                ? "text-zinc-200 cursor-pointer hover:bg-zinc-800/40"
+                : "text-zinc-600 cursor-not-allowed")
+            }
+          >
+            <input
+              type="checkbox"
+              checked={selection[key] && available}
+              disabled={!available}
+              onChange={(e) => onToggle(key, e.target.checked)}
+              className="accent-[#06b6d4] h-3.5 w-3.5"
+            />
+            <span className="flex-1">{label}</span>
+            {count !== undefined && (
+              <span className="text-[11px] tabular-nums text-zinc-500">{count}</span>
+            )}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 function ExportBody({ onClose }: { onClose: () => void }) {
+  const [selection, setSelection] = useState<StateSelection>(allSelected);
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
+  const anySelected = Object.values(selection).some(Boolean);
+  const passphraseRequired = selection.profiles;
   const canSubmit =
-    passphrase.length > 0 && passphrase === confirm && !busy;
+    anySelected &&
+    (!passphraseRequired || passphrase.length > 0) &&
+    passphrase === confirm &&
+    !busy;
 
   const handleExport = async () => {
     setError(null);
@@ -50,7 +123,7 @@ function ExportBody({ onClose }: { onClose: () => void }) {
       setError("Passphrases do not match.");
       return;
     }
-    const defaultName = `dbsage-state-${new Date()
+    const defaultName = `dbsage-settings-${new Date()
       .toISOString()
       .slice(0, 10)}.dbsage`;
     const path = await save({ defaultPath: defaultName, filters: FILTERS });
@@ -58,7 +131,7 @@ function ExportBody({ onClose }: { onClose: () => void }) {
 
     setBusy(true);
     try {
-      await ipc.exportState(path, passphrase);
+      await ipc.exportState(path, passphrase, selection);
       setDone(path);
     } catch (e) {
       setError(String(e));
@@ -73,7 +146,7 @@ function ExportBody({ onClose }: { onClose: () => void }) {
         <div className="flex items-start gap-2 text-[12px] text-zinc-200">
           <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-400" weight="fill" />
           <div>
-            <div>State exported successfully.</div>
+            <div>Settings exported successfully.</div>
             <div className="mt-1 break-all text-[11px] text-zinc-500">{done}</div>
           </div>
         </div>
@@ -85,12 +158,22 @@ function ExportBody({ onClose }: { onClose: () => void }) {
     <>
       <div className="px-4 py-4 space-y-3">
         <p className="text-[11px] leading-relaxed text-zinc-400">
-          Exports your connections (including passwords), relationships, table
-          folders, and saved column setups into a single encrypted file.
-          You&apos;ll need the passphrase below to import it again, so store it
-          somewhere safe — it cannot be recovered.
+          Choose what to include in a single file. A passphrase is required only
+          when exporting connections (which contain passwords); other categories
+          are saved unencrypted unless you set one. If you set a passphrase, store
+          it somewhere safe — it cannot be recovered.
         </p>
-        <Field label="Passphrase">
+        <Field label="Include">
+          <CategoryChecklist
+            selection={selection}
+            onToggle={(key, checked) =>
+              setSelection((s) => ({ ...s, [key]: checked }))
+            }
+          />
+        </Field>
+        <Field
+          label={passphraseRequired ? "Passphrase" : "Passphrase (optional)"}
+        >
           <input
             autoFocus
             type="password"
@@ -100,15 +183,22 @@ function ExportBody({ onClose }: { onClose: () => void }) {
             className="dbs-input"
           />
         </Field>
-        <Field label="Confirm passphrase">
-          <input
-            type="password"
-            data-el="export-confirm-input"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            className="dbs-input"
-          />
-        </Field>
+        {passphrase.length > 0 && (
+          <Field label="Confirm passphrase">
+            <input
+              type="password"
+              data-el="export-confirm-input"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              className="dbs-input"
+            />
+          </Field>
+        )}
+        {!passphraseRequired && passphrase.length === 0 && (
+          <p className="text-[11px] text-amber-400/90">
+            This export will not be encrypted.
+          </p>
+        )}
       </div>
       <Footer error={error} onClose={onClose}>
         <button
@@ -129,16 +219,38 @@ function ImportBody({ onClose }: { onClose: () => void }) {
   const reloadAfterImport = useStore((s) => s.reloadAfterImport);
   const [path, setPath] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
+  const [counts, setCounts] = useState<StateCounts | null>(null);
+  const [selection, setSelection] = useState<StateSelection>(allSelected);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<ImportSummary | null>(null);
+  const [summary, setSummary] = useState<StateCounts | null>(null);
 
   const fileName = path ? path.split(/[\\/]/).pop() : null;
-  const canSubmit = path !== null && passphrase.length > 0 && !busy;
+  const canPreview = path !== null && !busy;
+  const anySelected = Object.values(selection).some(Boolean);
 
   const handleChoose = async () => {
     const picked = await open({ multiple: false, filters: FILTERS });
-    if (typeof picked === "string") setPath(picked);
+    if (typeof picked === "string") {
+      setPath(picked);
+      setCounts(null);
+      setError(null);
+    }
+  };
+
+  const handlePreview = async () => {
+    if (!path) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await ipc.previewState(path, passphrase);
+      setCounts(result);
+      setSelection(fromCounts(result));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleImport = async () => {
@@ -146,7 +258,7 @@ function ImportBody({ onClose }: { onClose: () => void }) {
     setError(null);
     setBusy(true);
     try {
-      const result = await ipc.importState(path, passphrase);
+      const result = await ipc.importState(path, passphrase, selection);
       await reloadAfterImport();
       setSummary(result);
     } catch (e) {
@@ -157,6 +269,7 @@ function ImportBody({ onClose }: { onClose: () => void }) {
   };
 
   if (summary) {
+    const parts = STATE_CATEGORIES.map((c) => `${summary[c.key]} ${c.label.toLowerCase()}`);
     return (
       <Result onClose={onClose}>
         <div className="flex items-start gap-2 text-[12px] text-zinc-200">
@@ -164,11 +277,7 @@ function ImportBody({ onClose }: { onClose: () => void }) {
           <div>
             <div>Import complete.</div>
             <div className="mt-1 text-[11px] text-zinc-400">
-              {summary.profiles} connection{summary.profiles === 1 ? "" : "s"},{" "}
-              {summary.relations} relationship{summary.relations === 1 ? "" : "s"},{" "}
-              {summary.folders} folder{summary.folders === 1 ? "" : "s"}, and{" "}
-              {summary.columnSetups} column setup
-              {summary.columnSetups === 1 ? "" : "s"} merged.
+              Merged {parts.join(", ")}.
             </div>
           </div>
         </div>
@@ -176,13 +285,51 @@ function ImportBody({ onClose }: { onClose: () => void }) {
     );
   }
 
+  /* Step 2: file decrypted — choose which categories to merge. */
+  if (counts) {
+    return (
+      <>
+        <div className="px-4 py-4 space-y-3">
+          <p className="text-[11px] leading-relaxed text-zinc-400">
+            Choose what to merge from{" "}
+            <span className="text-zinc-300">{fileName}</span>. Items with a
+            matching id are updated; everything else is added.
+            {totalCount(counts) === 0 && (
+              <span className="block mt-1 text-amber-400">
+                This file contains no importable settings.
+              </span>
+            )}
+          </p>
+          <CategoryChecklist
+            selection={selection}
+            counts={counts}
+            onToggle={(key, checked) =>
+              setSelection((s) => ({ ...s, [key]: checked }))
+            }
+          />
+        </div>
+        <Footer error={error} onClose={onClose}>
+          <button
+            data-el="import-submit-btn"
+            onClick={handleImport}
+            disabled={!anySelected || busy}
+            className="dbs-btn-primary"
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <UploadSimple size={16} />}
+            Import
+          </button>
+        </Footer>
+      </>
+    );
+  }
+
+  /* Step 1: pick a file and unlock it. */
   return (
     <>
       <div className="px-4 py-4 space-y-3">
         <p className="text-[11px] leading-relaxed text-zinc-400">
-          Imports an encrypted DB Sage state file. Items are merged into your
-          existing state — anything with a matching id is updated, everything
-          else is added.
+          Open an encrypted DB Sage settings file. After unlocking it, you can
+          choose which categories to merge into your existing settings.
         </p>
         <Field label="File">
           <button
@@ -194,25 +341,28 @@ function ImportBody({ onClose }: { onClose: () => void }) {
             <span className="truncate">{fileName ?? "Choose a .dbsage file…"}</span>
           </button>
         </Field>
-        <Field label="Passphrase">
+        <Field label="Passphrase (if encrypted)">
           <input
             type="password"
             data-el="import-passphrase-input"
             value={passphrase}
             onChange={(e) => setPassphrase(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canPreview) handlePreview();
+            }}
             className="dbs-input"
           />
         </Field>
       </div>
       <Footer error={error} onClose={onClose}>
         <button
-          data-el="import-submit-btn"
-          onClick={handleImport}
-          disabled={!canSubmit}
+          data-el="import-unlock-btn"
+          onClick={handlePreview}
+          disabled={!canPreview}
           className="dbs-btn-primary"
         >
           {busy ? <Loader2 size={14} className="animate-spin" /> : <UploadSimple size={16} />}
-          Import
+          Continue
         </button>
       </Footer>
     </>

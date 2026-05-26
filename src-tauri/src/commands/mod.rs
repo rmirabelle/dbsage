@@ -6,3 +6,4 @@ pub mod profiles;
 pub mod query;
 pub mod relations;
 pub mod state_io;
+pub mod table_view_presets;

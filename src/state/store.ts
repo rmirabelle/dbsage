@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { save } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { ipc } from "../ipc";
 import {
   columnDefToDraft,
@@ -21,6 +23,7 @@ import type {
   SortSpec,
   Tab,
   TableInfo,
+  TableViewPreset,
 } from "../types";
 
 /** Default row cap for a new query pane — a safety net against fetching a huge
@@ -38,7 +41,9 @@ export function isDesignerTabDirty(tab: CreateTableTab): boolean {
       tab.originalAutoIncrementValue,
       tab.autoIncrementValue,
       tab.originalIndexes,
-      tab.indexes
+      tab.indexes,
+      tab.originalTableComment,
+      tab.tableComment
     );
     /* buildAlterTableSql returns a `--` comment when nothing changed. */
     return !alter.startsWith("--");
@@ -50,14 +55,15 @@ export function isDesignerTabDirty(tab: CreateTableTab): boolean {
   );
 }
 
-/** Persist a rows tab's column setup (visibility, filters, JSON "Show") to the
- * backend store so reopening the table restores it. Best-effort. */
+/** Persist a rows tab's column setup (visibility, filters, JSON "Show", widths)
+ * to the backend store so reopening the table restores it. Best-effort. */
 function persistColumnSetup(tab: RowsTab) {
   ipc
     .saveColumnSetup(tab.profileId, tab.database, tab.table, {
       hiddenColumns: tab.hiddenColumns,
       filters: tab.filters,
       jsonDisplay: tab.jsonDisplay,
+      columnWidths: tab.columnWidths,
     })
     .catch(() => {
       /* persistence is best-effort */
@@ -92,6 +98,13 @@ interface Store {
   activeTabId: string | null;
   /** Tab awaiting an unsaved-changes confirmation before it closes; null when none. */
   pendingCloseTabId: string | null;
+  /** In-progress SQL-script export with row data; null when none is running. */
+  sqlExport: {
+    table: string;
+    done: number;
+    total: number;
+    cancelling: boolean;
+  } | null;
   /** Last table opened per `${profileId}::${database}`, for re-selecting in the DB view. */
   lastOpenedTables: Record<string, string>;
   /** Defined relations per `${profileId}::${database}`. */
@@ -178,7 +191,12 @@ interface Store {
   executeQuery: (tabId: string) => Promise<void>;
   /** Request cancellation of a running query (KILL QUERY server-side). */
   stopQuery: (tabId: string) => Promise<void>;
-  openTableDesigner: (profileId: string, profileName: string, database: string) => void;
+  openTableDesigner: (
+    profileId: string,
+    profileName: string,
+    database: string,
+    folderId?: string | null
+  ) => void;
   /** Open the designer in edit mode, pre-loaded with an existing table's columns. */
   openTableEditor: (
     profileId: string,
@@ -186,12 +204,22 @@ interface Store {
     database: string,
     table: string
   ) => Promise<void>;
+  /** Prompt for a destination and write a `.sql` script for a table (DDL, plus
+   * INSERTs when `includeData`). */
+  exportTableSql: (
+    profileId: string,
+    database: string,
+    table: string,
+    includeData: boolean
+  ) => Promise<void>;
+  /** Request cancellation of the in-progress SQL-script export. */
+  cancelSqlExport: () => void;
   updateCreateTable: (
     tabId: string,
     patch: Partial<
       Pick<
         CreateTableTab,
-        "tableName" | "columns" | "indexes" | "autoIncrementValue"
+        "tableName" | "columns" | "indexes" | "autoIncrementValue" | "tableComment"
       >
     >
   ) => void;
@@ -202,7 +230,8 @@ interface Store {
     profileId: string,
     profileName: string,
     database: string,
-    tableName: string
+    tableName: string,
+    folderId?: string | null
   ) => Promise<void>;
   loadRelations: (profileId: string, database: string) => Promise<void>;
   saveRelation: (args: {
@@ -240,6 +269,18 @@ interface Store {
   setHiddenColumns: (tabId: string, hidden: string[]) => void;
   /** Set (or clear, with null) a JSON column's display property path. */
   setJsonDisplay: (tabId: string, column: string, path: string | null) => void;
+  /** Persist manual column-width overrides (px, keyed by column name). */
+  setColumnWidths: (tabId: string, widths: Record<string, number>) => void;
+  /** Save the rows tab's current view (columns, widths, sort, filters, show) as
+   * a named preset, scoped to its table. */
+  saveTablePreset: (tabId: string, name: string) => Promise<void>;
+  /** Apply a saved preset's settings to the rows tab and reload. */
+  applyTablePreset: (tabId: string, name: string) => Promise<void>;
+  /** Delete a saved preset by name. */
+  deleteTablePreset: (tabId: string, name: string) => Promise<void>;
+  /** Reset the rows tab to defaults: clear hidden columns, widths, sort,
+   * filters, JSON show, and the active preset. */
+  clearTableView: (tabId: string) => Promise<void>;
 
   updateCell: (
     tabId: string,
@@ -274,6 +315,7 @@ export const useStore = create<Store>((set, get) => ({
   tabs: [],
   activeTabId: null,
   pendingCloseTabId: null,
+  sqlExport: null,
   lastOpenedTables: {},
   relations: {},
 
@@ -666,7 +708,10 @@ export const useStore = create<Store>((set, get) => ({
       return;
     }
 
-    const saved = await ipc.getColumnSetup(profileId, database, table);
+    const [saved, presets] = await Promise.all([
+      ipc.getColumnSetup(profileId, database, table),
+      ipc.listTablePresets(profileId, database, table).catch(() => []),
+    ]);
     const tab: RowsTab = {
       id: tabId,
       kind: "rows",
@@ -684,6 +729,9 @@ export const useStore = create<Store>((set, get) => ({
       filters: saved?.filters ?? [],
       hiddenColumns: saved?.hiddenColumns ?? [],
       jsonDisplay: saved?.jsonDisplay ?? {},
+      columnWidths: saved?.columnWidths ?? {},
+      presets,
+      activePreset: null,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     await loadTabPage(tabId, 1, set, get);
@@ -794,7 +842,9 @@ export const useStore = create<Store>((set, get) => ({
         tab.originalAutoIncrementValue,
         tab.autoIncrementValue,
         tab.originalIndexes,
-        tab.indexes
+        tab.indexes,
+        tab.originalTableComment,
+        tab.tableComment
       );
       if (alterSql.startsWith("--")) {
         notifyInfo("No changes to apply.");
@@ -829,7 +879,12 @@ export const useStore = create<Store>((set, get) => ({
       }
     }
 
-    const sqlText = buildCreateTableSql(name, tab.columns, tab.indexes);
+    const sqlText = buildCreateTableSql(
+      name,
+      tab.columns,
+      tab.indexes,
+      tab.tableComment
+    );
     try {
       const exists = await ipc.tableExists(tab.profileId, tab.database, name);
       if (exists) {
@@ -855,7 +910,8 @@ export const useStore = create<Store>((set, get) => ({
         tab.profileId,
         tab.profileName,
         tab.database,
-        name
+        name,
+        tab.targetFolderId ?? null
       );
       return { ok: true };
     } catch (e) {
@@ -895,6 +951,9 @@ export const useStore = create<Store>((set, get) => ({
       loading: false,
       error: null,
       stopping: false,
+      runStartedAt: null,
+      liveServerMs: 0,
+      roundTripMs: null,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
   },
@@ -953,13 +1012,36 @@ export const useStore = create<Store>((set, get) => ({
     const tab = get().tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "query" || tab.loading) return;
     if (!tab.sql.trim()) return;
+    const startedAt = Date.now();
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "query"
-          ? { ...t, loading: true, error: null, stopping: false }
+          ? {
+              ...t,
+              loading: true,
+              error: null,
+              stopping: false,
+              runStartedAt: startedAt,
+              liveServerMs: 0,
+              roundTripMs: null,
+            }
           : t
       ),
     }));
+    /* Tick the live server timer from backend progress events for this token. */
+    const unlisten = await listen<{ token: string; serverMs: number }>(
+      "query-progress",
+      (e) => {
+        if (e.payload.token !== tabId) return;
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === tabId && t.kind === "query"
+              ? { ...t, liveServerMs: e.payload.serverMs }
+              : t
+          ),
+        }));
+      }
+    );
     try {
       const result = await ipc.executeQuery({
         profileId: tab.profileId,
@@ -971,7 +1053,14 @@ export const useStore = create<Store>((set, get) => ({
       set((s) => ({
         tabs: s.tabs.map((t) =>
           t.id === tabId && t.kind === "query"
-            ? { ...t, loading: false, error: null, result }
+            ? {
+                ...t,
+                loading: false,
+                error: null,
+                result,
+                runStartedAt: null,
+                roundTripMs: Date.now() - startedAt,
+              }
             : t
         ),
       }));
@@ -990,12 +1079,20 @@ export const useStore = create<Store>((set, get) => ({
       set((s) => ({
         tabs: s.tabs.map((t) =>
           t.id === tabId && t.kind === "query"
-            ? { ...t, loading: false, stopping: false, error: wasStopped ? null : msg }
+            ? {
+                ...t,
+                loading: false,
+                stopping: false,
+                runStartedAt: null,
+                error: wasStopped ? null : msg,
+              }
             : t
         ),
       }));
       if (wasStopped) notifyInfo("Query stopped.");
       else notifyError(`Query failed: ${msg}`);
+    } finally {
+      unlisten();
     }
   },
 
@@ -1014,7 +1111,7 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  openTableDesigner: (profileId, profileName, database) => {
+  openTableDesigner: (profileId, profileName, database, folderId = null) => {
     const tabId = `create-table::${profileId}::${database}::${Date.now()}`;
     const tab: CreateTableTab = {
       id: tabId,
@@ -1025,12 +1122,15 @@ export const useStore = create<Store>((set, get) => ({
       database,
       tableName: "",
       originalName: "",
+      tableComment: "",
+      originalTableComment: "",
       columns: [],
       originalColumns: [],
       indexes: [],
       originalIndexes: [],
       autoIncrementValue: "",
       originalAutoIncrementValue: "",
+      targetFolderId: folderId,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
   },
@@ -1041,10 +1141,11 @@ export const useStore = create<Store>((set, get) => ({
       set({ activeTabId: tabId });
       return;
     }
-    const [defs, idxDefs, autoInc] = await Promise.all([
+    const [defs, idxDefs, autoInc, comment] = await Promise.all([
       ipc.columnDefinitions(profileId, database, table),
       ipc.indexDefinitions(profileId, database, table),
       ipc.tableAutoIncrement(profileId, database, table),
+      ipc.tableComment(profileId, database, table),
     ]);
     const columns = defs.map(columnDefToDraft);
     const indexes = idxDefs.map(indexDefToDraft);
@@ -1058,6 +1159,8 @@ export const useStore = create<Store>((set, get) => ({
       database,
       tableName: table,
       originalName: table,
+      tableComment: comment,
+      originalTableComment: comment,
       columns,
       originalColumns: columns.map((c) => ({ ...c })),
       indexes,
@@ -1071,6 +1174,60 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
   },
 
+  exportTableSql: async (profileId, database, table, includeData) => {
+    const path = await save({
+      defaultPath: `${table}.sql`,
+      filters: [{ name: "SQL Script", extensions: ["sql"] }],
+    });
+    if (!path) return;
+
+    /* Only the data path is slow enough to warrant a progress bar; it streams
+       rows backend-side and reports `table-sql-progress`. */
+    let unlisten: (() => void) | undefined;
+    if (includeData) {
+      set({ sqlExport: { table, done: 0, total: 0, cancelling: false } });
+      unlisten = await listen<{ done: number; total: number }>(
+        "table-sql-progress",
+        (e) => {
+          set((s) =>
+            s.sqlExport
+              ? { sqlExport: { ...s.sqlExport, done: e.payload.done, total: e.payload.total } }
+              : {}
+          );
+        }
+      );
+    }
+
+    try {
+      const completed = await ipc.exportTableSql(
+        profileId,
+        database,
+        table,
+        path,
+        includeData
+      );
+      if (completed) {
+        notifySuccess(
+          `Saved ${includeData ? "table and data" : "table"} SQL to ${table}.sql`
+        );
+      } else {
+        notifyInfo(`SQL export of "${table}" cancelled.`);
+      }
+    } catch (e) {
+      notifyError(`Could not save SQL script: ${String(e)}`);
+    } finally {
+      unlisten?.();
+      set({ sqlExport: null });
+    }
+  },
+
+  cancelSqlExport: () => {
+    set((s) =>
+      s.sqlExport ? { sqlExport: { ...s.sqlExport, cancelling: true } } : {}
+    );
+    ipc.cancelTableSqlExport().catch(() => {});
+  },
+
   updateCreateTable: (tabId, patch) => {
     set((s) => ({
       tabs: s.tabs.map((t) =>
@@ -1079,7 +1236,14 @@ export const useStore = create<Store>((set, get) => ({
     }));
   },
 
-  finishTableCreation: async (createTabId, profileId, profileName, database, tableName) => {
+  finishTableCreation: async (
+    createTabId,
+    profileId,
+    profileName,
+    database,
+    tableName,
+    folderId = null
+  ) => {
     /* Remember the new table so the (re-mounted) DB view auto-selects it. */
     set((s) => ({
       lastOpenedTables: {
@@ -1087,6 +1251,13 @@ export const useStore = create<Store>((set, get) => ({
         [`${profileId}::${database}`]: tableName,
       },
     }));
+    /* When created from inside a folder, assign the new table to it before the
+       folder state is reloaded below. */
+    if (folderId) {
+      await ipc
+        .setTableFolder(profileId, database, tableName, folderId)
+        .catch((e) => notifyError(`Could not add to folder: ${String(e)}`));
+    }
     /* Close the designer tab and any existing DB view for this database, then
        open a fresh one — remounting DatabaseView so it applies the remembered
        table as the selection and reloads the table list (including the new one). */
@@ -1095,6 +1266,8 @@ export const useStore = create<Store>((set, get) => ({
     if (get().tabs.some((t) => t.id === dbTabId)) get().closeTab(dbTabId);
     await refreshFoldersEverywhere(profileId, database, set, get);
     await get().openDatabase(profileId, profileName, database);
+    /* Land the user back inside the folder so the new table is visible. */
+    if (folderId) get().enterFolder(dbTabId, folderId);
   },
 
   loadRelations: async (profileId, database) => {
@@ -1205,6 +1378,122 @@ export const useStore = create<Store>((set, get) => ({
     }));
     const t = get().tabs.find((x) => x.id === tabId);
     if (t && t.kind === "rows") persistColumnSetup(t);
+  },
+
+  setColumnWidths: (tabId, widths) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows" ? { ...t, columnWidths: widths } : t
+      ),
+    }));
+    const t = get().tabs.find((x) => x.id === tabId);
+    if (t && t.kind === "rows") persistColumnSetup(t);
+  },
+
+  saveTablePreset: async (tabId, name) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows") return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const preset: TableViewPreset = {
+      name: trimmed,
+      setup: {
+        hiddenColumns: tab.hiddenColumns,
+        columnWidths: tab.columnWidths,
+        sort: tab.sort,
+        filters: tab.filters,
+        jsonDisplay: tab.jsonDisplay,
+      },
+    };
+    try {
+      await ipc.saveTablePreset(tab.profileId, tab.database, tab.table, preset);
+      const presets = await ipc.listTablePresets(
+        tab.profileId,
+        tab.database,
+        tab.table
+      );
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "rows" ? { ...t, presets } : t
+        ),
+      }));
+      notifySuccess(`Saved view "${trimmed}".`);
+    } catch (e) {
+      notifyError(`Could not save view: ${String(e)}`);
+    }
+  },
+
+  applyTablePreset: async (tabId, name) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows") return;
+    const preset = tab.presets.find((p) => p.name === name);
+    if (!preset) return;
+    const { hiddenColumns, columnWidths, sort, filters, jsonDisplay } =
+      preset.setup;
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows"
+          ? {
+              ...t,
+              hiddenColumns,
+              columnWidths,
+              sort,
+              filters,
+              jsonDisplay,
+              activePreset: name,
+            }
+          : t
+      ),
+    }));
+    /* Persist the now-current column setup (sort is preset-only) and reload, so
+       the preset's sort + filters take effect against the server. */
+    const t = get().tabs.find((x) => x.id === tabId);
+    if (t && t.kind === "rows") persistColumnSetup(t);
+    await loadTabPage(tabId, 1, set, get);
+  },
+
+  deleteTablePreset: async (tabId, name) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows") return;
+    try {
+      await ipc.deleteTablePreset(tab.profileId, tab.database, tab.table, name);
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "rows"
+            ? {
+                ...t,
+                presets: t.presets.filter((p) => p.name !== name),
+                activePreset: t.activePreset === name ? null : t.activePreset,
+              }
+            : t
+        ),
+      }));
+    } catch (e) {
+      notifyError(`Could not delete view: ${String(e)}`);
+    }
+  },
+
+  clearTableView: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows") return;
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows"
+          ? {
+              ...t,
+              hiddenColumns: [],
+              columnWidths: {},
+              sort: null,
+              filters: [],
+              jsonDisplay: {},
+              activePreset: null,
+            }
+          : t
+      ),
+    }));
+    const t = get().tabs.find((x) => x.id === tabId);
+    if (t && t.kind === "rows") persistColumnSetup(t);
+    await loadTabPage(tabId, 1, set, get);
   },
 
   updateCell: async (tabId, rowIndex, column, newValue) => {
@@ -1342,10 +1631,11 @@ async function reloadDesignerTab(
 ) {
   const tab = get().tabs.find((t) => t.id === tabId);
   if (!tab || tab.kind !== "create-table") return;
-  const [defs, idxDefs, autoInc] = await Promise.all([
+  const [defs, idxDefs, autoInc, comment] = await Promise.all([
     ipc.columnDefinitions(tab.profileId, tab.database, tableName),
     ipc.indexDefinitions(tab.profileId, tab.database, tableName),
     ipc.tableAutoIncrement(tab.profileId, tab.database, tableName),
+    ipc.tableComment(tab.profileId, tab.database, tableName),
   ]);
   const columns = defs.map(columnDefToDraft);
   const indexes = idxDefs.map(indexDefToDraft);
@@ -1357,6 +1647,8 @@ async function reloadDesignerTab(
             ...t,
             tableName,
             originalName: tableName,
+            tableComment: comment,
+            originalTableComment: comment,
             columns,
             originalColumns: columns.map((c) => ({ ...c })),
             indexes,

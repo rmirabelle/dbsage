@@ -13,7 +13,7 @@ import {
   Folder as FolderIcon,
   CircleNotch as Loader2,
   Plus,
-  HardDrives as Server,
+  PlugsConnected,
   Table as Table2,
   PencilSimple,
   TextT,
@@ -187,7 +187,7 @@ export function ConnectionTree() {
                   )}
                 />
                 {conn?.connecting ? (
-                  <Loader2 size={18} className="shrink-0 animate-spin text-lime-400" />
+                  <Loader2 size={18} className="shrink-0 mr-1.5 animate-spin text-lime-400" />
                 ) : conn?.connected ? (
                   <button
                     data-el="disconnect-btn"
@@ -195,14 +195,14 @@ export function ConnectionTree() {
                       e.stopPropagation();
                       disconnectProfile(profile.id);
                     }}
-                    className="shrink-0 text-lime-400 hover:text-zinc-300 transition-colors"
+                    className="shrink-0 mr-1.5 text-lime-400 hover:text-zinc-300 transition-colors"
                     aria-label="Disconnect"
                     title="Disconnect"
                   >
-                    <Server size={18} />
+                    <PlugsConnected size={18} weight="fill" />
                   </button>
                 ) : (
-                  <Server size={18} className="shrink-0 text-zinc-500" />
+                  <PlugsConnected size={18} className="shrink-0 mr-1.5 text-zinc-500" />
                 )}
                 {renamingId === profile.id ? (
                   <ProfileRenameInput
@@ -436,6 +436,7 @@ function DatabaseList({
   const openQuery = useStore((s) => s.openQuery);
   const openTable = useStore((s) => s.openTable);
   const openTableEditor = useStore((s) => s.openTableEditor);
+  const exportTableSql = useStore((s) => s.exportTableSql);
   const renameTable = useStore((s) => s.renameTable);
   const renameFolderInDb = useStore((s) => s.renameFolderInDb);
   const deleteFolderInDb = useStore((s) => s.deleteFolderInDb);
@@ -805,6 +806,11 @@ function DatabaseList({
               table: tableMenu.table,
             });
             setTreeMenu(null);
+          }}
+          onSaveSql={(includeData) => {
+            const { db, table } = tableMenu;
+            setTreeMenu(null);
+            exportTableSql(profile.id, db, table, includeData);
           }}
         />
       )}
