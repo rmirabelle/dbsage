@@ -44,6 +44,7 @@ import {
   cellToFilterValue,
   type RelationTarget,
 } from "../lib/relations";
+import { useRelatedExistence, relKey } from "../lib/relatedExistence";
 
 const EMPTY_RELATIONS: Relation[] = [];
 
@@ -311,7 +312,18 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         : [],
     [relations, tab.table, activeColumn]
   );
-  const canPeek = !!activeCell && peekValue != null && relMatches.length > 0;
+  const hasRelation = !!activeCell && peekValue != null && relMatches.length > 0;
+  /** Disable peeking into relation targets that have no matching rows. While the
+   * check is in flight we stay enabled (optimistic) so the button never lags. */
+  const { exists: relExists, pending: relExistPending } = useRelatedExistence(
+    tab.profileId,
+    tab.database,
+    relMatches,
+    hasRelation ? peekValue : null
+  );
+  const nonEmptyMatches = relMatches.filter((m) => relExists[relKey(m)] !== false);
+  const canPeek =
+    hasRelation && (relExistPending || nonEmptyMatches.length > 0);
   const peekableColumns = useMemo(
     () => peekableColumnsFor(relations, tab.table),
     [relations, tab.table]
@@ -322,7 +334,11 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     ? "This cell is NULL — nothing to match on"
     : relMatches.length === 0
     ? `No relation defined on ${tab.table}.${activeColumn?.name ?? ""}`
-    : `Peek into ${relMatches.map((m) => m.table).join(", ")}`;
+    : !relExistPending && nonEmptyMatches.length === 0
+    ? `No related rows in ${relMatches.map((m) => m.table).join(", ")}`
+    : `Peek into ${(nonEmptyMatches.length > 0 ? nonEmptyMatches : relMatches)
+        .map((m) => m.table)
+        .join(", ")}`;
   const relatedBtnLabel = relatedLabel(relMatches);
 
   /** Clamp a desired top-left (screen px) so the window opens inside the pane. */
@@ -434,12 +450,15 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     });
 
   const onRelatedClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (relMatches.length === 1) {
-      openPeek(relMatches[0]);
+    /** Skip targets already known to be empty; if exactly one remains, open it
+     * directly instead of showing a one-item picker. */
+    const candidates = nonEmptyMatches.length > 0 ? nonEmptyMatches : relMatches;
+    if (candidates.length === 1) {
+      openPeek(candidates[0]);
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    setPicker({ x: rect.left, y: rect.bottom + 4, matches: relMatches });
+    setPicker({ x: rect.left, y: rect.bottom + 4, matches: candidates });
   };
 
   /** Update any open peek launched from (sourceTable, sourceColumn) to a new

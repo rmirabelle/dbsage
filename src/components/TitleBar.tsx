@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Database, DownloadSimple } from "@phosphor-icons/react";
+import {
+  Database,
+  DownloadSimple,
+  FileArrowDown,
+  FileArrowUp,
+  MagnifyingGlassPlus,
+  MagnifyingGlassMinus,
+  ArrowCounterClockwise,
+  Info,
+} from "@phosphor-icons/react";
 import { useUi, ZOOM_BOUNDS } from "../state/ui";
 
 /** Zoom the currently-focused pane (tree or tabs). */
@@ -65,7 +74,10 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                   }}
                   className={MENU_ITEM_CLASS}
                 >
-                  <span>Import Settings…</span>
+                  <span className={MENU_LABEL_CLASS}>
+                    <FileArrowDown size={14} className={MENU_ICON_CLASS} />
+                    Import Settings…
+                  </span>
                 </button>
                 <button
                   data-el="menu-export-state"
@@ -75,7 +87,10 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                   }}
                   className={MENU_ITEM_CLASS}
                 >
-                  <span>Export Settings…</span>
+                  <span className={MENU_LABEL_CLASS}>
+                    <FileArrowUp size={14} className={MENU_ICON_CLASS} />
+                    Export Settings…
+                  </span>
                 </button>
               </>
             )}
@@ -88,7 +103,10 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                   onClick={() => zoomFocused(ZOOM_BOUNDS.STEP)}
                   className={MENU_ITEM_CLASS}
                 >
-                  <span>Zoom In</span>
+                  <span className={MENU_LABEL_CLASS}>
+                    <MagnifyingGlassPlus size={14} className={MENU_ICON_CLASS} />
+                    Zoom In
+                  </span>
                   <span className="text-[10px] text-zinc-500">Ctrl +</span>
                 </button>
                 <button
@@ -96,7 +114,10 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                   onClick={() => zoomFocused(-ZOOM_BOUNDS.STEP)}
                   className={MENU_ITEM_CLASS}
                 >
-                  <span>Zoom Out</span>
+                  <span className={MENU_LABEL_CLASS}>
+                    <MagnifyingGlassMinus size={14} className={MENU_ICON_CLASS} />
+                    Zoom Out
+                  </span>
                   <span className="text-[10px] text-zinc-500">Ctrl −</span>
                 </button>
                 <button
@@ -104,7 +125,10 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                   onClick={() => resetFocusedZoom()}
                   className={MENU_ITEM_CLASS}
                 >
-                  <span>Reset Zoom</span>
+                  <span className={MENU_LABEL_CLASS}>
+                    <ArrowCounterClockwise size={14} className={MENU_ICON_CLASS} />
+                    Reset Zoom
+                  </span>
                   <span className="text-[10px] text-zinc-500">Ctrl 0</span>
                 </button>
               </>
@@ -120,7 +144,10 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                 }}
                 className={MENU_ITEM_CLASS}
               >
-                <span>About DB Sage</span>
+                <span className={MENU_LABEL_CLASS}>
+                  <Info size={14} className={MENU_ICON_CLASS} />
+                  About DB Sage
+                </span>
               </button>
             )}
           </TitleBarMenu>
@@ -170,6 +197,8 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
 
 const MENU_ITEM_CLASS =
   "flex w-full items-center justify-between gap-6 px-3 py-1.5 text-left text-[12px] text-zinc-200 hover:bg-zinc-800";
+const MENU_LABEL_CLASS = "flex items-center gap-2.5";
+const MENU_ICON_CLASS = "text-accent-400 shrink-0";
 
 function TitleBarMenu({
   label,

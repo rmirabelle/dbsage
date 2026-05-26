@@ -6,9 +6,10 @@ use tauri::{AppHandle, Manager};
 
 /**
  * Named table-view presets (visible columns, widths, sort, filters, JSON show),
- * stored opaquely as JSON so the format stays flexible. table_view_presets.json
- * layout:
- *   { "<profile-id>::<database>::<table>": [ { "name": ..., "setup": ... }, ... ] }
+ * stored opaquely as JSON so the format stays flexible. Keyed by connection HOST
+ * (not the profile id) so presets follow the server and import cleanly across
+ * installations. table_view_presets.json layout:
+ *   { "<host>::<database>::<table>": [ { "name": ..., "setup": ... }, ... ] }
  */
 pub type PresetsFile = BTreeMap<String, Value>;
 
@@ -82,14 +83,14 @@ pub fn delete(app: &AppHandle, key: &str, name: &str) -> AppResult<()> {
     save_file(app, &file)
 }
 
-/// Table names (within the given profile + database) that have at least one
-/// saved preset. One file read, filtered by the `profile::database::` prefix.
+/// Table names (within the given host + database) that have at least one saved
+/// preset. One file read, filtered by the `host::database::` prefix.
 pub fn tables_with_presets(
     app: &AppHandle,
-    profile_id: &str,
+    host: &str,
     database: &str,
 ) -> AppResult<Vec<String>> {
-    let prefix = format!("{profile_id}::{database}::");
+    let prefix = format!("{host}::{database}::");
     Ok(load_file(app)?
         .iter()
         .filter_map(|(key, value)| {
@@ -128,4 +129,34 @@ pub fn import_merge(app: &AppHandle, incoming: &PresetsFile) -> AppResult<usize>
     }
     save_file(app, &file)?;
     Ok(count)
+}
+
+/// Re-key the store from "<profile-id>::<db>::<table>" to "<host>::<db>::<table>"
+/// (idempotent). Keys whose first segment isn't a known profile id are left as
+/// is, so re-running is a no-op. Last-wins if two connections share a host.
+pub fn migrate_to_host(
+    app: &AppHandle,
+    host_by_id: &BTreeMap<String, String>,
+) -> AppResult<()> {
+    let file = load_file(app)?;
+    let mut changed = false;
+    let mut out = PresetsFile::new();
+    for (key, value) in file {
+        match host_by_id.iter().find_map(|(id, host)| {
+            key.strip_prefix(&format!("{id}::"))
+                .map(|rest| format!("{host}::{rest}"))
+        }) {
+            Some(new_key) => {
+                changed = true;
+                out.insert(new_key, value);
+            }
+            None => {
+                out.insert(key, value);
+            }
+        }
+    }
+    if changed {
+        save_file(app, &out)?;
+    }
+    Ok(())
 }

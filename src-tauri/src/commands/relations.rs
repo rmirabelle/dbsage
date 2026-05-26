@@ -1,6 +1,13 @@
 use crate::error::AppResult;
+use crate::store::profiles;
 use crate::store::relations::{self, Relation};
 use tauri::AppHandle;
+
+/// Connection identity for the per-connection stores is the host, resolved from
+/// the profile so relations follow the server (and import across installations).
+fn host_of(app: &AppHandle, profile_id: &str) -> AppResult<String> {
+    Ok(profiles::get(app, profile_id)?.host)
+}
 
 #[tauri::command]
 pub async fn list_relations(
@@ -8,7 +15,7 @@ pub async fn list_relations(
     profile_id: String,
     database: String,
 ) -> AppResult<Vec<Relation>> {
-    relations::list(&app, &profile_id, &database)
+    relations::list(&app, &host_of(&app, &profile_id)?, &database)
 }
 
 #[tauri::command]
@@ -27,7 +34,7 @@ pub async fn save_relation(
 ) -> AppResult<Relation> {
     relations::save(
         &app,
-        &profile_id,
+        &host_of(&app, &profile_id)?,
         &database,
         id.as_deref(),
         &from_table,
@@ -46,5 +53,5 @@ pub async fn delete_relation(
     database: String,
     id: String,
 ) -> AppResult<()> {
-    relations::delete(&app, &profile_id, &database, &id)
+    relations::delete(&app, &host_of(&app, &profile_id)?, &database, &id)
 }

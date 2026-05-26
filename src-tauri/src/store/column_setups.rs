@@ -6,8 +6,10 @@ use tauri::{AppHandle, Manager};
 
 /**
  * Per-table column setup (visibility, filters, JSON "Show" extraction), stored
- * opaquely as JSON so the format stays flexible. column_setups.json layout:
- *   { "<profile-id>::<database>::<table>": <setup JSON> }
+ * opaquely as JSON so the format stays flexible. Keyed by connection HOST (not
+ * the profile id) so setups follow the server and import cleanly across
+ * installations. column_setups.json layout:
+ *   { "<host>::<database>::<table>": <setup JSON> }
  */
 pub type ColumnSetupsFile = BTreeMap<String, Value>;
 
@@ -86,4 +88,34 @@ pub fn import_merge(app: &AppHandle, incoming: &ColumnSetupsFile) -> AppResult<u
     }
     save_file(app, &file)?;
     Ok(count)
+}
+
+/// Re-key the store from "<profile-id>::<db>::<table>" to "<host>::<db>::<table>"
+/// (idempotent). Keys whose first segment isn't a known profile id are left as
+/// is, so re-running is a no-op. Last-wins if two connections share a host.
+pub fn migrate_to_host(
+    app: &AppHandle,
+    host_by_id: &std::collections::BTreeMap<String, String>,
+) -> AppResult<()> {
+    let file = load_file(app)?;
+    let mut changed = false;
+    let mut out = ColumnSetupsFile::new();
+    for (key, value) in file {
+        match host_by_id.iter().find_map(|(id, host)| {
+            key.strip_prefix(&format!("{id}::"))
+                .map(|rest| format!("{host}::{rest}"))
+        }) {
+            Some(new_key) => {
+                changed = true;
+                out.insert(new_key, value);
+            }
+            None => {
+                out.insert(key, value);
+            }
+        }
+    }
+    if changed {
+        save_file(app, &out)?;
+    }
+    Ok(())
 }

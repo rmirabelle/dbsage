@@ -19,6 +19,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState::default())
+        .setup(|app| {
+            /* Re-key per-connection stores from profile id to host (idempotent).
+             * Best-effort: a migration hiccup must never block app launch. */
+            let _ = store::migrate::host_rekey(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             profiles::list_profiles,
             profiles::save_profile,

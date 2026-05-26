@@ -998,8 +998,9 @@ pub async fn rename_table(
     (&mut *conn)
         .execute(format!("RENAME TABLE {from} TO {to}").as_str())
         .await?;
-    /* Keep folder membership pointing at the new name. */
-    crate::store::folders::rename_table(&app, &profile_id, &database, &old_name, &new_name)?;
+    /* Keep folder membership pointing at the new name. Folders are keyed by host. */
+    let host = crate::store::profiles::get(&app, &profile_id)?.host;
+    crate::store::folders::rename_table(&app, &host, &database, &old_name, &new_name)?;
     Ok(())
 }
 

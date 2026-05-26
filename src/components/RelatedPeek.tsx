@@ -5,7 +5,7 @@ import clsx from "clsx";
 import { ipc } from "../ipc";
 import { useUi } from "../state/ui";
 import { useStore } from "../state/store";
-import { DataGrid } from "./DataGrid";
+import { DataGrid, gridContentWidth } from "./DataGrid";
 import {
   relationTargets,
   peekableColumnsFor,
@@ -13,6 +13,7 @@ import {
   cellToFilterValue,
   type RelationTarget,
 } from "../lib/relations";
+import { useRelatedExistence, relKey } from "../lib/relatedExistence";
 import type { ColumnFilter, Relation, RowsResult, SortSpec } from "../types";
 
 const EMPTY_RELATIONS: Relation[] = [];
@@ -35,6 +36,28 @@ const GRID_HEADER_H = 44; // DataGrid sticky header (name + type rows)
 const EMPTY_REGION_H = 160; // DataGrid "No rows" block
 const TOOLBAR_H = 40; // peek header bar (h-10)
 const BORDER = 3; // border-[3px]; included in height via box-border, so add it back
+
+const MIN_PEEK_W = 280;
+const MIN_PEEK_H = 160;
+
+type PaneRect = { left: number; top: number; width: number; height: number };
+
+/** Clamp a top-left (screen px) so a winW x winH window stays inside the pane. */
+function clampToPane(
+  x: number,
+  y: number,
+  winW: number,
+  winH: number,
+  pane: PaneRect | null
+) {
+  if (!pane) return { x, y };
+  const maxX = pane.left + Math.max(0, pane.width - winW);
+  const maxY = pane.top + Math.max(0, pane.height - winH);
+  return {
+    x: Math.min(Math.max(x, pane.left), maxX),
+    y: Math.min(Math.max(y, pane.top), maxY),
+  };
+}
 
 export function RelatedPeek({
   profileId,
@@ -93,12 +116,10 @@ export function RelatedPeek({
   /** On-screen rect of the tabs pane, so the peek can be sized, placed, and
    * dragged within it. Measured from the main pane's edges, which are reliable
    * layout positions regardless of the pane's own CSS zoom. */
-  const [pane, setPane] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
+  const [pane, setPane] = useState<PaneRect | null>(null);
+
+  /** User-set on-screen size (px). null = auto-size to content. */
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => {
     const measure = () => {
       const el = document.querySelector('[data-el="main-pane"]');
@@ -136,16 +157,52 @@ export function RelatedPeek({
     const startY = e.clientY;
     const origin = posRef.current;
     const onMove = (ev: PointerEvent) => {
-      let x = origin.x + (ev.clientX - startX);
-      let y = origin.y + (ev.clientY - startY);
       const c = clampRef.current;
+      setPos(
+        clampToPane(
+          origin.x + (ev.clientX - startX),
+          origin.y + (ev.clientY - startY),
+          c.winW,
+          c.winH,
+          c.pane
+        )
+      );
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.style.userSelect = "";
+    };
+    document.body.style.userSelect = "none";
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  };
+
+  /** Resize the window from its bottom-right corner. Sizes are screen px, so the
+   * pointer delta maps 1:1 regardless of the panel's CSS zoom. */
+  const onResizePointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    onFocus();
+    const c0 = clampRef.current;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startW = c0.winW;
+    const startH = c0.winH;
+    const onMove = (ev: PointerEvent) => {
+      const c = clampRef.current;
+      const p = posRef.current;
+      let w = startW + (ev.clientX - startX);
+      let h = startH + (ev.clientY - startY);
       if (c.pane) {
-        const maxX = c.pane.left + Math.max(0, c.pane.width - c.winW);
-        const maxY = c.pane.top + Math.max(0, c.pane.height - c.winH);
-        x = Math.min(Math.max(x, c.pane.left), maxX);
-        y = Math.min(Math.max(y, c.pane.top), maxY);
+        const maxW = Math.max(MIN_PEEK_W, c.pane.left + c.pane.width - p.x);
+        const maxH = Math.max(MIN_PEEK_H, c.pane.top + c.pane.height - p.y);
+        w = Math.min(Math.max(w, MIN_PEEK_W), maxW);
+        h = Math.min(Math.max(h, MIN_PEEK_H), maxH);
+      } else {
+        w = Math.max(w, MIN_PEEK_W);
+        h = Math.max(h, MIN_PEEK_H);
       }
-      setPos({ x, y });
+      setSize({ w, h });
     };
     const onUp = () => {
       document.removeEventListener("pointermove", onMove);
@@ -239,7 +296,18 @@ export function RelatedPeek({
         : [],
     [relations, target.table, activeColumnName]
   );
-  const canPeek = !!activeCell && peekValue != null && relMatches.length > 0;
+  const hasRelation = !!activeCell && peekValue != null && relMatches.length > 0;
+  /** Disable peeking into relation targets with no matching rows (optimistically
+   * enabled while the check is in flight). */
+  const { exists: relExists, pending: relExistPending } = useRelatedExistence(
+    profileId,
+    database,
+    relMatches,
+    hasRelation ? peekValue : null
+  );
+  const nonEmptyMatches = relMatches.filter((m) => relExists[relKey(m)] !== false);
+  const canPeek =
+    hasRelation && (relExistPending || nonEmptyMatches.length > 0);
   const peekBtnLabel = relatedLabel(relMatches);
   const relatedTitle = !activeCell
     ? "Select a cell to peek into a related table"
@@ -247,7 +315,11 @@ export function RelatedPeek({
     ? "This cell is NULL — nothing to match on"
     : relMatches.length === 0
     ? `No relation defined on ${target.table}.${activeColumnName ?? ""}`
-    : `Peek into ${relMatches.map((m) => m.table).join(", ")}`;
+    : !relExistPending && nonEmptyMatches.length === 0
+    ? `No related rows in ${relMatches.map((m) => m.table).join(", ")}`
+    : `Peek into ${(nonEmptyMatches.length > 0 ? nonEmptyMatches : relMatches)
+        .map((m) => m.table)
+        .join(", ")}`;
 
   const [picker, setPicker] = useState<{
     x: number;
@@ -267,12 +339,14 @@ export function RelatedPeek({
   };
 
   const onRelatedClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (relMatches.length === 1) {
-      openChild(relMatches[0]);
+    /** Skip targets already known to be empty; open directly if only one remains. */
+    const candidates = nonEmptyMatches.length > 0 ? nonEmptyMatches : relMatches;
+    if (candidates.length === 1) {
+      openChild(candidates[0]);
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    setPicker({ x: rect.left, y: rect.bottom + 4, matches: relMatches });
+    setPicker({ x: rect.left, y: rect.bottom + 4, matches: candidates });
   };
 
   /* Clear a stale active cell when the rows change (re-fetch / sort / filter). */
@@ -303,21 +377,47 @@ export function RelatedPeek({
   const panelH =
     Math.max(MIN_PANEL_H, TOOLBAR_H + (error ? 52 : 0) + bodyH) + BORDER * 2;
 
-  /** Size the window to a fraction of the tabs pane (never wider than it, minus
-   * an inset). The inner panel is zoomed, so divide on-screen sizes by zoom to
-   * get CSS sizes. */
+  /** Auto-size the window to a fraction of the tabs pane (never wider than it,
+   * minus an inset), unless the user has dragged it to an explicit `size`. The
+   * inner panel is zoomed, so divide on-screen sizes by zoom to get CSS sizes. */
   const PANE_INSET = 16;
   const DEFAULT_W_FRACTION = 0.8;
   const paneW = pane?.width ?? 0.82 * window.innerWidth;
   const paneH = pane?.height ?? 0.8 * window.innerHeight;
-  const winW = Math.max(
-    280,
-    Math.min(Math.round(paneW * DEFAULT_W_FRACTION), paneW - PANE_INSET * 2)
+  const maxScreenW = Math.max(MIN_PEEK_W, paneW - PANE_INSET * 2);
+  /** The window's top stays anchored at its launch point; it may grow downward
+   * to the pane's bottom edge but no further, so it never extends off-screen and
+   * never grows up over the rows it was launched from. */
+  const maxScreenH = Math.max(
+    MIN_PEEK_H,
+    pane ? pane.top + pane.height - pos.y : paneH - PANE_INSET
   );
-  const maxScreenH = Math.max(160, paneH - PANE_INSET);
-  const winH = Math.min(panelH * tabsZoom, maxScreenH);
+  /** Default cap: never wider than ~80% of the pane (wide grids still scroll). */
+  const defaultWinW = Math.min(Math.round(paneW * DEFAULT_W_FRACTION), maxScreenW);
+  /** Shrink to fit the grid's own columns when they're narrower than the cap, so
+   * a few-column peek isn't needlessly wide. (+16 CSS px for borders + a possible
+   * vertical scrollbar; the panel is zoomed, so convert to on-screen px.) */
+  const autoWinW = data
+    ? Math.max(
+        MIN_PEEK_W,
+        Math.min(
+          (gridContentWidth(data.columns, data.rows, columnWidths, hiddenColumns) +
+            16) *
+            tabsZoom,
+          defaultWinW
+        )
+      )
+    : defaultWinW;
+  const autoWinH = Math.min(panelH * tabsZoom, maxScreenH);
+  const winW = size
+    ? Math.min(Math.max(size.w, MIN_PEEK_W), maxScreenW)
+    : autoWinW;
+  const winH = size
+    ? Math.min(Math.max(size.h, MIN_PEEK_H), maxScreenH)
+    : autoWinH;
   const innerWidth = winW / tabsZoom;
-  const innerMaxHeight = maxScreenH / tabsZoom;
+  const innerHeight = size ? winH / tabsZoom : panelH;
+  const innerMaxHeight = (size ? winH : maxScreenH) / tabsZoom;
   clampRef.current = { pane, winW, winH };
 
   return (
@@ -336,7 +436,7 @@ export function RelatedPeek({
         style={{
           zoom: tabsZoom,
           width: innerWidth,
-          height: panelH,
+          height: innerHeight,
           maxHeight: innerMaxHeight,
         }}
         className="flex flex-col rounded-lg border-[3px] border-emerald-500 bg-zinc-950 shadow-2xl shadow-black/60 overflow-hidden"
@@ -442,6 +542,15 @@ export function RelatedPeek({
         ) : (
           <div className="flex-1" />
         )}
+      </div>
+
+      <div
+        data-el="peek-resize-handle"
+        onPointerDown={onResizePointerDown}
+        title="Drag to resize"
+        className="absolute bottom-0 right-0 z-10 h-4 w-4 cursor-nwse-resize"
+      >
+        <div className="absolute bottom-[3px] right-[3px] h-2 w-2 border-b-2 border-r-2 border-zinc-400/70" />
       </div>
     </div>,
     document.body

@@ -63,6 +63,7 @@ interface Props {
 const ROW_HEIGHT = 26;
 const MIN_COL_WIDTH = 80;
 const MAX_INITIAL_COL_WIDTH = 360;
+const ROW_GUTTER_W = 56; // pinned row-number gutter
 
 const COPY_AS_ICONS: Record<CopyAsFormat, typeof Table> = {
   insert: RowsPlusBottom,
@@ -303,7 +304,7 @@ export function DataGrid({
   }, [filters]);
 
   const totalWidth = useMemo(
-    () => 56 + widths.reduce((a, b) => a + b, 0),
+    () => ROW_GUTTER_W + widths.reduce((a, b) => a + b, 0),
     [widths]
   );
 
@@ -490,6 +491,7 @@ export function DataGrid({
                         isEditing={isEditingThis}
                         saving={isEditingThis && saving}
                         isActive={isActiveCell}
+                        isPeekable={peekableColumns?.has(col.name) ?? false}
                         onActivate={() =>
                           onActiveCellChange({
                             rowIndex: vItem.index,
@@ -772,6 +774,7 @@ function Cell({
   isEditing,
   saving,
   isActive,
+  isPeekable,
   onActivate,
   onBeginEdit,
   onCommit,
@@ -785,6 +788,7 @@ function Cell({
   isEditing: boolean;
   saving: boolean;
   isActive: boolean;
+  isPeekable: boolean;
   onActivate: () => void;
   onBeginEdit: () => void;
   onCommit: (next: string | null) => void;
@@ -811,6 +815,10 @@ function Cell({
   const { display, tone } = renderCell(
     jsonPath ? extractJsonDisplay(value, jsonPath) : value
   );
+  /* Colorize peekable (relation) values in the relation violet, so cells you can
+   * peek from stand out. NULL stays muted — there's nothing to match on. */
+  const peekTone =
+    isPeekable && value !== null && value !== undefined ? "text-violet-300" : null;
   return (
     <div
       style={{ width }}
@@ -851,8 +859,12 @@ function Cell({
           ))}
         </span>
       ) : (
-        <span className={clsx("truncate", tone)}>
-          {column.key === "PRI" ? <strong className="text-zinc-100">{display}</strong> : display}
+        <span className={clsx("truncate", peekTone ?? tone)}>
+          {column.key === "PRI" ? (
+            <strong className={peekTone ?? "text-zinc-100"}>{display}</strong>
+          ) : (
+            display
+          )}
         </span>
       )}
     </div>
@@ -961,6 +973,25 @@ function renderCell(value: unknown): { display: string; tone: string } {
     return { display: value, tone: "text-zinc-200" };
   }
   return { display: JSON.stringify(value), tone: "text-zinc-300" };
+}
+
+/** The grid's natural content width (px): the row-number gutter plus every
+ * visible column's width, with manual overrides winning over content-derived
+ * defaults. Lets a container size itself to the grid instead of guessing. */
+export function gridContentWidth(
+  columns: ColumnInfo[],
+  rows: RowRecord[],
+  columnWidths: Record<string, number> | undefined,
+  hiddenColumns: string[]
+): number {
+  const hidden = new Set(hiddenColumns);
+  const visible = columns.filter((c) => !hidden.has(c.name));
+  const defaults = initialWidths(visible, rows);
+  const sum = visible.reduce(
+    (acc, c, i) => acc + (columnWidths?.[c.name] ?? defaults[i]),
+    0
+  );
+  return ROW_GUTTER_W + sum;
 }
 
 function initialWidths(columns: ColumnInfo[], rows: RowRecord[]): number[] {

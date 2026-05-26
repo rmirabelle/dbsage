@@ -24,8 +24,10 @@ pub struct Relation {
 }
 
 /**
- * relations.json layout (mirrors folders.json):
- *   { "<profile-id>": { "<database>": [Relation, ...] } }
+ * relations.json layout (mirrors folders.json). Keyed by connection HOST (not
+ * the profile id) so relations follow the server and import cleanly across
+ * installations:
+ *   { "<host>": { "<database>": [Relation, ...] } }
  */
 pub type RelationsFile = BTreeMap<String, BTreeMap<String, Vec<Relation>>>;
 
@@ -56,10 +58,10 @@ fn save_file(app: &AppHandle, file: &RelationsFile) -> AppResult<()> {
     Ok(())
 }
 
-pub fn list(app: &AppHandle, profile_id: &str, database: &str) -> AppResult<Vec<Relation>> {
+pub fn list(app: &AppHandle, host: &str, database: &str) -> AppResult<Vec<Relation>> {
     let file = load_file(app)?;
     Ok(file
-        .get(profile_id)
+        .get(host)
         .and_then(|m| m.get(database))
         .cloned()
         .unwrap_or_default())
@@ -70,7 +72,7 @@ pub fn list(app: &AppHandle, profile_id: &str, database: &str) -> AppResult<Vec<
 #[allow(clippy::too_many_arguments)]
 pub fn save(
     app: &AppHandle,
-    profile_id: &str,
+    host: &str,
     database: &str,
     id: Option<&str>,
     from_table: &str,
@@ -96,7 +98,7 @@ pub fn save(
     let now = Utc::now();
     let mut file = load_file(app)?;
     let list = file
-        .entry(profile_id.to_string())
+        .entry(host.to_string())
         .or_default()
         .entry(database.to_string())
         .or_default();
@@ -132,9 +134,9 @@ pub fn save(
     Ok(relation)
 }
 
-pub fn delete(app: &AppHandle, profile_id: &str, database: &str, id: &str) -> AppResult<()> {
+pub fn delete(app: &AppHandle, host: &str, database: &str, id: &str) -> AppResult<()> {
     let mut file = load_file(app)?;
-    if let Some(by_db) = file.get_mut(profile_id) {
+    if let Some(by_db) = file.get_mut(host) {
         if let Some(list) = by_db.get_mut(database) {
             list.retain(|r| r.id != id);
         }
@@ -148,15 +150,15 @@ pub fn export_all(app: &AppHandle) -> AppResult<RelationsFile> {
 }
 
 /// Merge an imported relations tree into the store, upserting each relation by
-/// id within its (profile, database) bucket. Returns the number of relations
+/// id within its (host, database) bucket. Returns the number of relations
 /// processed.
 pub fn import_merge(app: &AppHandle, incoming: &RelationsFile) -> AppResult<usize> {
     let mut file = load_file(app)?;
     let mut count = 0;
-    for (profile_id, by_db) in incoming {
+    for (host, by_db) in incoming {
         for (database, relations) in by_db {
             let list = file
-                .entry(profile_id.clone())
+                .entry(host.clone())
                 .or_default()
                 .entry(database.clone())
                 .or_default();
@@ -172,4 +174,39 @@ pub fn import_merge(app: &AppHandle, incoming: &RelationsFile) -> AppResult<usiz
     }
     save_file(app, &file)?;
     Ok(count)
+}
+
+/// Re-key the store from random profile id to connection host, merging when two
+/// connections share a host. Idempotent: keys that aren't a known profile id
+/// (already a host, or orphaned) are left untouched, so re-running is a no-op.
+pub fn migrate_to_host(
+    app: &AppHandle,
+    host_by_id: &BTreeMap<String, String>,
+) -> AppResult<()> {
+    let file = load_file(app)?;
+    let mut changed = false;
+    let mut out: RelationsFile = BTreeMap::new();
+    for (key, by_db) in file {
+        let new_key = match host_by_id.get(&key) {
+            Some(host) => {
+                changed = true;
+                host.clone()
+            }
+            None => key,
+        };
+        let dest = out.entry(new_key).or_default();
+        for (database, mut list) in by_db {
+            dest.entry(database).or_default().append(&mut list);
+        }
+    }
+    if !changed {
+        return Ok(());
+    }
+    for by_db in out.values_mut() {
+        for list in by_db.values_mut() {
+            let mut seen = std::collections::HashSet::new();
+            list.retain(|r| seen.insert(r.id.clone()));
+        }
+    }
+    save_file(app, &out)
 }
