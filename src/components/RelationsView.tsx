@@ -307,7 +307,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="shrink-0 px-4 pt-4 pb-2 flex items-center gap-2">
             <ShareNetwork size={18} className="text-violet-400" />
-            <h2 className="text-[16px] font-semibold text-zinc-100">
+            <h2 className="text-[16px] font-semibold text-violet-400">
               Relations{" "}
               <span className="font-normal text-zinc-500">— {database}</span>
             </h2>
@@ -336,44 +336,47 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                     data-el="relation-row"
                     onClick={() => startEdit(r)}
                     className={clsx(
-                      "group flex flex-col gap-0.5 rounded pl-4 pr-2 py-2 cursor-pointer",
+                      "group flex items-center gap-2 rounded pl-4 pr-2 py-1.5 cursor-pointer",
                       form.editingId === r.id
                         ? "bg-accent-500/10"
                         : "hover:bg-zinc-800/60"
                     )}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-[15px] text-zinc-100">
-                        {subject}
-                      </span>
-                      <span
-                        className={clsx(
-                          "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                          r.kind === "has_many"
-                            ? "bg-amber-500/15 text-amber-300"
-                            : "bg-accent-500/15 text-accent-300"
-                        )}
-                      >
-                        {r.kind === "has_many" ? "has many" : "has one"}
-                      </span>
-                      <span className="truncate text-[15px] text-zinc-100">
-                        {object}
-                      </span>
-                      <button
-                        data-el="relation-delete-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(r.id);
-                        }}
-                        className="ml-auto shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100"
-                        aria-label="Delete relation"
-                      >
-                        <Trash size={13} />
-                      </button>
-                    </div>
-                    <div className="text-[12px] text-zinc-500 truncate">
+                    <ShareNetwork
+                      size={16}
+                      weight="bold"
+                      className="shrink-0 text-violet-400"
+                    />
+                    <span className="truncate text-[13px] font-semibold text-zinc-100">
+                      {subject}
+                    </span>
+                    <span
+                      className={clsx(
+                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                        r.kind === "has_many"
+                          ? "bg-amber-500/15 text-amber-300"
+                          : "bg-accent-500/15 text-accent-300"
+                      )}
+                    >
+                      {r.kind === "has_many" ? "has many" : "has one"}
+                    </span>
+                    <span className="truncate text-[13px] font-semibold text-zinc-100">
+                      {object}
+                    </span>
+                    <span className="shrink-0 text-[12px] text-zinc-500 truncate">
                       {r.fromColumn} &rarr; {r.toColumn}
-                    </div>
+                    </span>
+                    <button
+                      data-el="relation-delete-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(r.id);
+                      }}
+                      className="ml-auto shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100"
+                      aria-label="Delete relation"
+                    >
+                      <Trash size={13} />
+                    </button>
                   </li>
                 );
               })}

@@ -72,6 +72,21 @@ export function SearchableSelect({
     setText(value);
   };
 
+  /**
+   * Close on blur: if the typed text exactly matches an option (case-
+   * insensitive), commit it so the user isn't forced to press Enter; otherwise
+   * revert like a plain close.
+   */
+  const commitOnBlur = () => {
+    const q = text.trim().toLowerCase();
+    const exact = options.find((o) => o.toLowerCase() === q);
+    if (exact && exact !== value) {
+      select(exact);
+    } else {
+      close();
+    }
+  };
+
   const select = (v: string) => {
     setOpen(false);
     setSearching(false);
@@ -124,7 +139,7 @@ export function SearchableSelect({
           setSearching(true);
           setHighlight(0);
         }}
-        onBlur={close}
+        onBlur={commitOnBlur}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
