@@ -79,4 +79,11 @@ if ($existing -contains $tag) {
 }
 if ($LASTEXITCODE -ne 0) { throw "gh release step failed" }
 
+# gh's create flow uploads assets to a draft, then publishes; if that final
+# publish does not take effect the release is left as an invisible draft.
+# Explicitly ensure it ends published so releases/latest can find it.
+Write-Host "==> Ensuring release is published ..." -ForegroundColor Cyan
+gh release edit $tag --draft=false
+if ($LASTEXITCODE -ne 0) { throw "failed to publish release $tag (still a draft)" }
+
 Write-Host "==> Done. https://github.com/rmirabelle/dbsage/releases/tag/$tag" -ForegroundColor Green
