@@ -32,6 +32,7 @@ const allSelected = (): StateSelection => ({
   folders: true,
   columnSetups: true,
   tableViewPresets: true,
+  savedQueries: true,
 });
 
 const fromCounts = (c: StateCounts): StateSelection => ({
@@ -40,6 +41,7 @@ const fromCounts = (c: StateCounts): StateSelection => ({
   folders: c.folders > 0,
   columnSetups: c.columnSetups > 0,
   tableViewPresets: c.tableViewPresets > 0,
+  savedQueries: c.savedQueries > 0,
 });
 
 const totalCount = (counts: StateCounts) =>

@@ -3,8 +3,9 @@ import {
   Play,
   Stop,
   MagicWand,
+  FloppyDisk,
   CaretDown,
-  ArrowsOutSimple,
+  Binoculars,
   Database,
   PlugsConnected,
   CircleNotch as Loader2,
@@ -19,6 +20,7 @@ import { StyledSelect } from "./StyledSelect";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { ExportButton } from "./ExportButton";
 import { SqlEditor } from "./SqlEditor";
+import { SavedQueryMenu } from "./SavedQueryMenu";
 import { compactDisplay, extractJsonCandidates } from "../lib/jsonPath";
 import { formatSql, type FormatStyle } from "../lib/formatSql";
 import { scanFromTables } from "../lib/sqlCompletion";
@@ -34,6 +36,9 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   const setQueryMaxRows = useStore((s) => s.setQueryMaxRows);
   const executeQuery = useStore((s) => s.executeQuery);
   const stopQuery = useStore((s) => s.stopQuery);
+  const saveQuery = useStore((s) => s.saveQuery);
+  const applySavedQuery = useStore((s) => s.applySavedQuery);
+  const deleteSavedQuery = useStore((s) => s.deleteSavedQuery);
 
   /* Client-side view state for the read-only results grid (sort/filter/hide
      don't re-run the query — they just reshape the already-fetched rows). */
@@ -174,6 +179,11 @@ export function QueryView({ tab }: { tab: QueryTab }) {
 
   const canRun = tab.sql.trim().length > 0 && !tab.loading;
 
+  /* When a saved query is loaded and its SQL has been edited, offer a one-click
+     overwrite-save of that named query. */
+  const activeSaved = tab.savedQueries.find((q) => q.name === tab.activeSavedQuery);
+  const savedQueryDirty = activeSaved != null && activeSaved.sql !== tab.sql;
+
   const runFormat = (style: FormatStyle) => {
     if (!tab.sql.trim()) return;
     try {
@@ -218,7 +228,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
       <div
         data-el="query-toolbar"
         data-toolbar="query"
-        className="dbs-toolbar h-9 pl-1 pr-3 border-b border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400"
+        className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
         <div className="inline-flex items-center gap-1.5">
           <PlugsConnected size={16} weight="fill" className="text-lime-400 shrink-0" />
@@ -261,13 +271,33 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           ]}
         />
 
+        <SavedQueryMenu
+          queries={tab.savedQueries}
+          activeName={tab.activeSavedQuery}
+          disabled={!tab.database}
+          onApply={(name) => applySavedQuery(tab.id, name)}
+          onSave={(name) => saveQuery(tab.id, name)}
+          onDelete={(name) => deleteSavedQuery(tab.id, name)}
+        />
+
+        {savedQueryDirty && (
+          <button
+            data-el="saved-query-overwrite-btn"
+            onClick={() => saveQuery(tab.id, tab.activeSavedQuery!)}
+            title={`Overwrite "${tab.activeSavedQuery}" with the current query`}
+            className="inline-flex items-center justify-center p-1 rounded text-emerald-400 hover:text-emerald-300 hover:bg-zinc-800 transition-colors"
+          >
+            <FloppyDisk size={16} weight="fill" />
+          </button>
+        )}
+
         {tab.loading ? (
           <button
             data-el="query-stop-btn"
             onClick={() => stopQuery(tab.id)}
             disabled={tab.stopping}
             title="Stop the running query"
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-rose-500 text-rose-950 hover:bg-rose-400 disabled:opacity-60 disabled:hover:bg-rose-500 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-rose-500 text-rose-950 hover:bg-rose-400 disabled:opacity-60 disabled:hover:bg-rose-500 transition-colors"
           >
             {tab.stopping ? (
               <Loader2 size={16} className="animate-spin" />
@@ -282,7 +312,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             onClick={() => executeQuery(tab.id)}
             disabled={!canRun}
             title="Execute (Ctrl+Enter)"
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
           >
             <Play size={16} weight="fill" />
             Execute
@@ -302,7 +332,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             onClick={() => runFormat(formatStyle)}
             disabled={!tab.sql.trim()}
             title={`Format (${formatStyle})`}
-            className="inline-flex items-center gap-1.5 pl-3 pr-2 py-1 rounded-l font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:hover:bg-zinc-800 transition-colors"
+            className="inline-flex items-center gap-1.5 pl-2 pr-2 py-1 rounded-l font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:hover:bg-zinc-800 transition-colors"
           >
             <MagicWand size={16} />
             Format
@@ -362,7 +392,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
       <div
         data-el="query-results-toolbar"
         data-toolbar="query-results"
-        className="dbs-toolbar h-9 pl-1 pr-3 border-b border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400"
+        className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
         <ExportButton
           database={tab.database}
@@ -372,6 +402,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
               ? selectedRows.map((i) => viewRows[i]).filter((r): r is RowRecord => r != null)
               : viewRows
           }
+          selectedCount={selectedRows.length}
           disabled={!hasResultSet}
         />
 
@@ -379,16 +410,14 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           data-el="expanded-toggle-btn"
           onClick={() => setExpanded((v) => !v)}
           disabled={!hasResultSet}
-          title="Toggle the expanded-value panel"
+          title="Toggle the Inspector panel"
           className={clsx(
-            "ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800",
-            expanded
-              ? "bg-emerald-500 text-emerald-950 hover:bg-emerald-400"
-              : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+            "ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800 bg-zinc-800 hover:bg-zinc-700",
+            expanded ? "text-emerald-300" : "text-zinc-500 hover:text-zinc-400"
           )}
         >
-          <ArrowsOutSimple size={17} />
-          Expanded
+          <Binoculars size={17} />
+          Inspector
         </button>
       </div>
 

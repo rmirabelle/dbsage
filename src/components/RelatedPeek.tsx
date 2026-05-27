@@ -37,7 +37,7 @@ const EMPTY_REGION_H = 160; // DataGrid "No rows" block
 const TOOLBAR_H = 40; // peek header bar (h-10)
 const BORDER = 3; // border-[3px]; included in height via box-border, so add it back
 
-const MIN_PEEK_W = 280;
+const MIN_PEEK_W = 800;
 const MIN_PEEK_H = 160;
 
 type PaneRect = { left: number; top: number; width: number; height: number };
@@ -178,31 +178,67 @@ export function RelatedPeek({
     document.addEventListener("pointerup", onUp);
   };
 
-  /** Resize the window from its bottom-right corner. Sizes are screen px, so the
-   * pointer delta maps 1:1 regardless of the panel's CSS zoom. */
-  const onResizePointerDown = (e: React.PointerEvent) => {
+  /** Resize from any edge or corner. `dir` says which edges move; dragging the
+   * west/north edges also shifts the top-left anchor (`pos`). Sizes are screen
+   * px, so the pointer delta maps 1:1 regardless of the panel's CSS zoom. */
+  const startResize = (
+    e: React.PointerEvent,
+    dir: { n?: boolean; s?: boolean; e?: boolean; w?: boolean }
+  ) => {
     e.preventDefault();
+    e.stopPropagation();
     onFocus();
-    const c0 = clampRef.current;
     const startX = e.clientX;
     const startY = e.clientY;
-    const startW = c0.winW;
-    const startH = c0.winH;
+    const startW = clampRef.current.winW;
+    const startH = clampRef.current.winH;
+    const start = posRef.current;
     const onMove = (ev: PointerEvent) => {
       const c = clampRef.current;
-      const p = posRef.current;
-      let w = startW + (ev.clientX - startX);
-      let h = startH + (ev.clientY - startY);
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      let w = startW;
+      let h = startH;
+      let x = start.x;
+      let y = start.y;
+      if (dir.e) w = startW + dx;
+      if (dir.s) h = startH + dy;
+      if (dir.w) {
+        w = startW - dx;
+        x = start.x + dx;
+      }
+      if (dir.n) {
+        h = startH - dy;
+        y = start.y + dy;
+      }
+      /* Honor the minimum, keeping the opposite (anchored) edge in place. */
+      if (w < MIN_PEEK_W) {
+        if (dir.w) x -= MIN_PEEK_W - w;
+        w = MIN_PEEK_W;
+      }
+      if (h < MIN_PEEK_H) {
+        if (dir.n) y -= MIN_PEEK_H - h;
+        h = MIN_PEEK_H;
+      }
+      /* Keep the window inside the tabs pane. */
       if (c.pane) {
-        const maxW = Math.max(MIN_PEEK_W, c.pane.left + c.pane.width - p.x);
-        const maxH = Math.max(MIN_PEEK_H, c.pane.top + c.pane.height - p.y);
-        w = Math.min(Math.max(w, MIN_PEEK_W), maxW);
-        h = Math.min(Math.max(h, MIN_PEEK_H), maxH);
-      } else {
+        const right = c.pane.left + c.pane.width;
+        const bottom = c.pane.top + c.pane.height;
+        if (dir.w && x < c.pane.left) {
+          w -= c.pane.left - x;
+          x = c.pane.left;
+        }
+        if (dir.n && y < c.pane.top) {
+          h -= c.pane.top - y;
+          y = c.pane.top;
+        }
+        if (dir.e && x + w > right) w = right - x;
+        if (dir.s && y + h > bottom) h = bottom - y;
         w = Math.max(w, MIN_PEEK_W);
         h = Math.max(h, MIN_PEEK_H);
       }
       setSize({ w, h });
+      if (dir.w || dir.n) setPos({ x, y });
     };
     const onUp = () => {
       document.removeEventListener("pointermove", onMove);
@@ -339,14 +375,15 @@ export function RelatedPeek({
   };
 
   const onRelatedClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    /** Skip targets already known to be empty; open directly if only one remains. */
-    const candidates = nonEmptyMatches.length > 0 ? nonEmptyMatches : relMatches;
-    if (candidates.length === 1) {
-      openChild(candidates[0]);
+    /** A single relation on this column opens directly. When several are defined
+     * (the "x tables" label), always show the picker so the user chooses which —
+     * never silently auto-open one. */
+    if (relMatches.length === 1) {
+      openChild(relMatches[0]);
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    setPicker({ x: rect.left, y: rect.bottom + 4, matches: candidates });
+    setPicker({ x: rect.left, y: rect.bottom + 4, matches: relMatches });
   };
 
   /* Clear a stale active cell when the rows change (re-fetch / sort / filter). */
@@ -468,7 +505,7 @@ export function RelatedPeek({
             disabled={!canPeek}
             onClick={onRelatedClick}
             className={clsx(
-              "shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors",
+              "shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors",
               canPeek
                 ? "bg-violet-500 text-violet-950 hover:bg-violet-400"
                 : "bg-zinc-800 text-zinc-600 cursor-not-allowed"
@@ -481,7 +518,7 @@ export function RelatedPeek({
           <button
             data-el="peek-open-tab-btn"
             onClick={onOpenAsTab}
-            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors"
+            className="shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors"
             title="Open this related table as a full, filtered tab"
           >
             <ArrowSquareOut size={15} />
@@ -544,11 +581,20 @@ export function RelatedPeek({
         )}
       </div>
 
+      {/* Edge + corner resize handles. Edges are thin strips; corners are small
+          squares layered above them. */}
+      <div onPointerDown={(e) => startResize(e, { n: true })} className="absolute top-0 inset-x-0 z-10 h-1 cursor-ns-resize" />
+      <div onPointerDown={(e) => startResize(e, { s: true })} className="absolute bottom-0 inset-x-0 z-10 h-1 cursor-ns-resize" />
+      <div onPointerDown={(e) => startResize(e, { w: true })} className="absolute left-0 inset-y-0 z-10 w-1 cursor-ew-resize" />
+      <div onPointerDown={(e) => startResize(e, { e: true })} className="absolute right-0 inset-y-0 z-10 w-1 cursor-ew-resize" />
+      <div onPointerDown={(e) => startResize(e, { n: true, w: true })} className="absolute top-0 left-0 z-20 h-3 w-3 cursor-nwse-resize" />
+      <div onPointerDown={(e) => startResize(e, { n: true, e: true })} className="absolute top-0 right-0 z-20 h-3 w-3 cursor-nesw-resize" />
+      <div onPointerDown={(e) => startResize(e, { s: true, w: true })} className="absolute bottom-0 left-0 z-20 h-3 w-3 cursor-nesw-resize" />
       <div
         data-el="peek-resize-handle"
-        onPointerDown={onResizePointerDown}
+        onPointerDown={(e) => startResize(e, { s: true, e: true })}
         title="Drag to resize"
-        className="absolute bottom-0 right-0 z-10 h-4 w-4 cursor-nwse-resize"
+        className="absolute bottom-0 right-0 z-20 h-4 w-4 cursor-nwse-resize"
       >
         <div className="absolute bottom-[3px] right-[3px] h-2 w-2 border-b-2 border-r-2 border-zinc-400/70" />
       </div>

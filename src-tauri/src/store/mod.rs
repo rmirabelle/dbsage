@@ -1,7 +1,9 @@
 pub mod column_setups;
 pub mod folders;
 pub mod migrate;
+pub mod monitor_history;
 pub mod profiles;
 pub mod relations;
+pub mod saved_queries;
 pub mod secrets;
 pub mod table_view_presets;

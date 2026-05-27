@@ -62,15 +62,19 @@ function inSkipRegion(text: string, caret: number): boolean {
   return /(^|\s)(--\s|#)/.test(line) || line.includes("--");
 }
 
-/** Most recent clause keyword before `before` (nearest wins). */
-function governingClause(before: string): string | null {
-  const words = before.match(/[A-Za-z_][A-Za-z0-9_$]*/g);
-  if (!words) return null;
-  for (let i = words.length - 1; i >= 0; i--) {
-    const w = words[i].toUpperCase();
-    if (CLAUSE_KEYWORDS.has(w)) return w;
+/** Most recent clause keyword before `before` (nearest wins), with the offset
+ * just past it so callers can inspect what's been typed since. */
+function governingClause(
+  before: string
+): { keyword: string; end: number } | null {
+  const re = /[A-Za-z_][A-Za-z0-9_$]*/g;
+  let m: RegExpExecArray | null;
+  let last: { keyword: string; end: number } | null = null;
+  while ((m = re.exec(before)) !== null) {
+    const w = m[0].toUpperCase();
+    if (CLAUSE_KEYWORDS.has(w)) last = { keyword: w, end: m.index + m[0].length };
   }
-  return null;
+  return last;
 }
 
 export function analyzeCompletion(
@@ -93,9 +97,16 @@ export function analyzeCompletion(
     }
   }
 
-  const gov = governingClause(text.slice(0, start));
-  if (gov && TABLE_CONTEXT.has(gov)) {
-    return { kind: "table", prefix, from: start, auto: true };
+  const before = text.slice(0, start);
+  const gov = governingClause(before);
+  if (gov && TABLE_CONTEXT.has(gov.keyword)) {
+    /* Only a table-name position: right after the clause keyword, or after a
+       comma in a multi-table list. Once a table name has been typed, the caret
+       is at an alias / next-clause position, so stop suggesting tables. */
+    const sinceClause = before.slice(gov.end).trimEnd();
+    if (sinceClause === "" || sinceClause.endsWith(",")) {
+      return { kind: "table", prefix, from: start, auto: true };
+    }
   }
 
   return { kind: "keyword", prefix, from: start, auto: false };

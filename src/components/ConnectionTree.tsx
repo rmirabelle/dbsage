@@ -20,6 +20,7 @@ import {
   Power,
   Trash,
   Code,
+  Pulse,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useStore } from "../state/store";
@@ -27,6 +28,7 @@ import { notifyError } from "../state/notify";
 import type { ProfileView } from "../types";
 import { ProfileDialog } from "./ProfileDialog";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
+import { ConnectionDeleteDialog } from "./ConnectionDeleteDialog";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
 import { NewDatabaseDialog } from "./NewDatabaseDialog";
@@ -67,6 +69,7 @@ export function ConnectionTree() {
   const loadProfiles = useStore((s) => s.loadProfiles);
   const disconnectProfile = useStore((s) => s.disconnectProfile);
   const createDatabase = useStore((s) => s.createDatabase);
+  const openMonitoring = useStore((s) => s.openMonitoring);
   const connections = useStore((s) => s.connections);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -74,6 +77,8 @@ export function ConnectionTree() {
   const [treeMenu, setTreeMenu] = useState<TreeMenu | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [newDbProfile, setNewDbProfile] = useState<ProfileView | null>(null);
+  const [pendingProfileDelete, setPendingProfileDelete] =
+    useState<ProfileView | null>(null);
 
   useEffect(() => {
     loadProfiles();
@@ -211,7 +216,14 @@ export function ConnectionTree() {
                     onCancel={() => setRenamingId(null)}
                   />
                 ) : (
-                  <span className="flex-1 truncate text-zinc-200 text-[16px] font-bold">
+                  <span
+                    className={clsx(
+                      "flex-1 truncate text-[16px] font-bold",
+                      conn?.connected || conn?.connecting
+                        ? "text-lime-400"
+                        : "text-zinc-500"
+                    )}
+                  >
                     {profile.name}
                   </span>
                 )}
@@ -222,7 +234,6 @@ export function ConnectionTree() {
                   <ConnectionContextMenu
                     x={treeMenu.x}
                     y={treeMenu.y}
-                    profile={profile}
                     connected={!!conn?.connected}
                     onClose={() => setTreeMenu(null)}
                     onRename={() => {
@@ -240,6 +251,14 @@ export function ConnectionTree() {
                     }}
                     onDisconnect={async () => {
                       await disconnectProfile(profile.id);
+                      setTreeMenu(null);
+                    }}
+                    onMonitor={() => {
+                      openMonitoring(profile.id);
+                      setTreeMenu(null);
+                    }}
+                    onDelete={() => {
+                      setPendingProfileDelete(profile);
                       setTreeMenu(null);
                     }}
                   />
@@ -285,6 +304,17 @@ export function ConnectionTree() {
           onClose={() => setNewDbProfile(null)}
         />
       )}
+
+      {pendingProfileDelete && (
+        <ConnectionDeleteDialog
+          connectionName={pendingProfileDelete.name}
+          onConfirm={async () => {
+            await ipc.deleteProfile(pendingProfileDelete.id);
+            await loadProfiles();
+          }}
+          onClose={() => setPendingProfileDelete(null)}
+        />
+      )}
     </aside>
   );
 }
@@ -292,26 +322,26 @@ export function ConnectionTree() {
 function ConnectionContextMenu({
   x,
   y,
-  profile,
   connected,
   onClose,
   onRename,
   onEdit,
   onNewDatabase,
   onDisconnect,
+  onMonitor,
+  onDelete,
 }: {
   x: number;
   y: number;
-  profile: ProfileView;
   connected: boolean;
   onClose: () => void;
   onRename: () => void;
   onEdit: () => void;
   onNewDatabase: () => void;
   onDisconnect: () => void;
+  onMonitor: () => void;
+  onDelete: () => void;
 }) {
-  const loadProfiles = useStore((s) => s.loadProfiles);
-
   useEffect(() => {
     const close = () => onClose();
     const onKey = (e: KeyboardEvent) => {
@@ -354,20 +384,18 @@ function ConnectionContextMenu({
         New Database
       </button>
       {connected && (
+        <button className={clsx(item, "text-zinc-200")} onClick={onMonitor}>
+          <Pulse size={14} className="text-sky-400 shrink-0" />
+          Monitor Server
+        </button>
+      )}
+      {connected && (
         <button className={clsx(item, "text-zinc-200")} onClick={onDisconnect}>
           <Power size={14} className="text-zinc-400 shrink-0" />
           Disconnect
         </button>
       )}
-      <button
-        className={clsx(item, "text-rose-400")}
-        onClick={async () => {
-          if (!confirm(`Delete connection "${profile.name}"?`)) return;
-          await ipc.deleteProfile(profile.id);
-          await loadProfiles();
-          onClose();
-        }}
-      >
+      <button className={clsx(item, "text-rose-400")} onClick={onDelete}>
         <Trash size={14} className="shrink-0" />
         Delete Connection
       </button>
@@ -991,7 +1019,7 @@ function DraggableTableRow({
       title="Double-click to open · drag to a folder or another database · right-click for actions"
     >
       <Table2 size={13} className="text-zinc-600 shrink-0" />
-      <span className="truncate">{table}</span>
+      <span className="truncate font-normal italic">{table}</span>
     </div>
   );
 }

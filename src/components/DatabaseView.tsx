@@ -23,6 +23,7 @@ import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { ViewsIcon } from "./TableViewPresetMenu";
+import { Tooltip } from "./Tooltip";
 import type { DatabaseTab, Folder, TableInfo } from "../types";
 
 interface Props {
@@ -56,9 +57,19 @@ export function DatabaseView({ tab }: Props) {
   const exportTableSql = useStore((s) => s.exportTableSql);
   const renameTable = useStore((s) => s.renameTable);
   const loadRelations = useStore((s) => s.loadRelations);
-  const relationCount = useStore(
-    (s) => (s.relations[`${tab.profileId}::${tab.database}`] ?? []).length
+  const relations = useStore(
+    (s) => s.relations[`${tab.profileId}::${tab.database}`]
   );
+  const relationCount = relations?.length ?? 0;
+  /** Tables involved in any relation (either endpoint), for the tile indicator. */
+  const relatedTables = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of relations ?? []) {
+      s.add(r.fromTable);
+      s.add(r.toTable);
+    }
+    return s;
+  }, [relations]);
   const rememberedTable = useStore(
     (s) => s.lastOpenedTables[`${tab.profileId}::${tab.database}`]
   );
@@ -451,7 +462,7 @@ export function DatabaseView({ tab }: Props) {
               )
             }
             style={{ fontSize: 13 }}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-emerald-400 text-emerald-950 hover:bg-emerald-300 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-emerald-600 text-black hover:bg-emerald-500 transition-colors"
             title="Design a new table"
           >
             <span className="relative -top-px text-[19px] leading-none">+</span> Table
@@ -463,7 +474,7 @@ export function DatabaseView({ tab }: Props) {
               openQuery(tab.profileId, tab.profileName, tab.database)
             }
             style={{ fontSize: 13 }}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-emerald-600 text-emerald-50 hover:bg-emerald-500 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-emerald-600 text-black hover:bg-emerald-500 transition-colors"
             title="Open a SQL query pane"
           >
             <Code size={16} weight="bold" /> Query
@@ -475,7 +486,7 @@ export function DatabaseView({ tab }: Props) {
               openRelations(tab.profileId, tab.profileName, tab.database)
             }
             style={{ fontSize: 13 }}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
             title="Open the relations view for this database"
           >
             <ShareNetwork size={17} /> Relations
@@ -655,6 +666,7 @@ export function DatabaseView({ tab }: Props) {
                   profileId={tab.profileId}
                   database={tab.database}
                   hasViews={viewTables.has(t.name)}
+                  hasRelations={relatedTables.has(t.name)}
                   moveNames={
                     selectedTables.has(t.name)
                       ? Array.from(selectedTables)
@@ -889,6 +901,7 @@ function TableTile({
   profileId,
   database,
   hasViews,
+  hasRelations,
   moveNames,
   isSelected,
   isAnyDragging,
@@ -905,6 +918,7 @@ function TableTile({
   profileId: string;
   database: string;
   hasViews: boolean;
+  hasRelations: boolean;
   moveNames: string[];
   isSelected: boolean;
   isAnyDragging: boolean;
@@ -939,11 +953,6 @@ function TableTile({
       onClick={renaming ? undefined : onClick}
       onDoubleClick={renaming ? undefined : onOpen}
       onContextMenu={onContextMenu}
-      title={`${table.name} · ${table.kind}${
-        table.estimatedRows != null
-          ? ` · ~${table.estimatedRows.toLocaleString()} rows`
-          : ""
-      }\nClick to select · Shift/Ctrl+click to extend · Double-click to open · drag onto a folder to move`}
       className={clsx(
         "group flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors min-w-0 break-inside-avoid",
         renaming ? "cursor-default" : "cursor-grab active:cursor-grabbing",
@@ -984,11 +993,21 @@ function TableTile({
             >
               {table.name}
             </span>
+            {hasRelations && (
+              <Tooltip
+                className="inline-flex shrink-0"
+                label="This table has one or more Relations"
+              >
+                <ShareNetwork size={12} className="text-violet-400" />
+              </Tooltip>
+            )}
             {hasViews && (
-              <ViewsIcon
-                size={12}
-                className="shrink-0 text-emerald-400"
-              />
+              <Tooltip
+                className="inline-flex shrink-0"
+                label="This table has one or more customized Views"
+              >
+                <ViewsIcon size={12} className="text-emerald-400" />
+              </Tooltip>
             )}
           </span>
           {table.estimatedRows != null && (

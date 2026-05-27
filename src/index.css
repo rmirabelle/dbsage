@@ -68,10 +68,19 @@ input:focus, select:focus, textarea:focus {
   opacity: 1;
 }
 
-/** Standard toolbar background — a subtle vertical gradient, lighter at the top.
- * Shared by all tab/pane/sidebar toolbars for a consistent look. */
-.dbs-toolbar {
-  background-image: linear-gradient(180deg, #262a34, #1d2029);
+/**
+ * Standard toolbar: a subtle vertical gradient (lighter at top) plus the shared
+ * base font size, so the controls inside (selects/buttons inherit via the global
+ * `font-size: inherit` rule) stay consistent across every pane. Lives in
+ * `@layer components` so a deliberate per-instance Tailwind utility — e.g.
+ * `text-[11px]` on the database toolbar — still overrides it. Add `dbs-toolbar`
+ * to any tab/pane/sidebar toolbar instead of re-declaring the font size.
+ */
+@layer components {
+  .dbs-toolbar {
+    background-image: linear-gradient(180deg, #262a34, #1d2029);
+    font-size: 13px;
+  }
 }
 
 /**

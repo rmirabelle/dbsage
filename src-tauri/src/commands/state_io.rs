@@ -5,6 +5,7 @@ use crate::store::{
     folders::{self, FoldersFile},
     profiles::{self, ConnectionProfile},
     relations::{self, RelationsFile},
+    saved_queries::{self, SavedQueriesFile},
     secrets,
     table_view_presets::{self, PresetsFile},
 };
@@ -38,6 +39,8 @@ struct StateBundle {
     column_setups: ColumnSetupsFile,
     #[serde(default)]
     table_view_presets: PresetsFile,
+    #[serde(default)]
+    saved_queries: SavedQueriesFile,
 }
 
 /// A connection profile plus its password (lifted out of the OS keyring so the
@@ -66,6 +69,8 @@ pub struct CategorySelection {
     column_setups: bool,
     #[serde(default)]
     table_view_presets: bool,
+    #[serde(default)]
+    saved_queries: bool,
 }
 
 /// Per-category item counts — returned both as an import result and as a preview
@@ -78,6 +83,7 @@ pub struct StateCounts {
     pub folders: usize,
     pub column_setups: usize,
     pub table_view_presets: usize,
+    pub saved_queries: usize,
 }
 
 fn count_tree<T>(tree: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<T>>>) -> usize {
@@ -85,6 +91,13 @@ fn count_tree<T>(tree: &std::collections::BTreeMap<String, std::collections::BTr
 }
 
 fn count_presets(file: &PresetsFile) -> usize {
+    file.values()
+        .filter_map(serde_json::Value::as_array)
+        .map(Vec::len)
+        .sum()
+}
+
+fn count_saved_queries(file: &SavedQueriesFile) -> usize {
     file.values()
         .filter_map(serde_json::Value::as_array)
         .map(Vec::len)
@@ -141,6 +154,11 @@ pub async fn export_state(
         },
         table_view_presets: if selection.table_view_presets {
             table_view_presets::export_all(&app)?
+        } else {
+            Default::default()
+        },
+        saved_queries: if selection.saved_queries {
+            saved_queries::export_all(&app)?
         } else {
             Default::default()
         },
@@ -209,6 +227,7 @@ pub async fn preview_state(
         folders: count_tree(&bundle.folders),
         column_setups: bundle.column_setups.len(),
         table_view_presets: count_presets(&bundle.table_view_presets),
+        saved_queries: count_saved_queries(&bundle.saved_queries),
     })
 }
 
@@ -253,6 +272,11 @@ pub async fn import_state(
         },
         table_view_presets: if selection.table_view_presets {
             table_view_presets::import_merge(&app, &bundle.table_view_presets)?
+        } else {
+            0
+        },
+        saved_queries: if selection.saved_queries {
+            saved_queries::import_merge(&app, &bundle.saved_queries)?
         } else {
             0
         },

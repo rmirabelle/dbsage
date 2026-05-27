@@ -216,6 +216,18 @@ export function DataGrid({
       setAnchor(index);
       return;
     }
+    /* A plain click on the row-number gutter toggles that row's selection, so
+       clicking an already-selected row's number de-selects it. */
+    const inGutter = !!(e.target as HTMLElement).closest('[data-el="row-gutter"]');
+    if (inGutter && selectedRows.has(index)) {
+      setSelectedRows((prev) => {
+        const next = new Set(prev);
+        next.delete(index);
+        return next;
+      });
+      setAnchor(null);
+      return;
+    }
     setSelectedRows(new Set([index]));
     setAnchor(index);
     draggingRef.current = true;
@@ -357,6 +369,8 @@ export function DataGrid({
 
     if (!activeCell) {
       onActiveCellChange({ rowIndex: 0, column: visibleColumns[0].name });
+      setSelectedRows(new Set([0]));
+      setAnchor(0);
       rowVirtualizer.scrollToIndex(0);
       return;
     }
@@ -373,6 +387,9 @@ export function DataGrid({
     else if (e.key === "ArrowLeft") colIndex = Math.max(colIndex - 1, 0);
 
     onActiveCellChange({ rowIndex, column: visibleColumns[colIndex].name });
+    /* Row selection follows the active cell, matching click behavior. */
+    setSelectedRows(new Set([rowIndex]));
+    setAnchor(rowIndex);
     rowVirtualizer.scrollToIndex(rowIndex);
     scrollColumnIntoView(colIndex);
   };
@@ -451,7 +468,7 @@ export function DataGrid({
                   className={clsx(
                     "absolute left-0 right-0 flex items-stretch border-b border-zinc-900 cursor-default",
                     isSelected
-                      ? "bg-accent-500/20 ring-1 ring-inset ring-accent-500/50"
+                      ? "bg-accent-500/[0.08] ring-1 ring-inset ring-accent-500/50"
                       : stripe,
                     !isSelected && "hover:bg-accent-500/5"
                   )}
@@ -818,7 +835,9 @@ function Cell({
   /* Colorize peekable (relation) values in the relation violet, so cells you can
    * peek from stand out. NULL stays muted — there's nothing to match on. */
   const peekTone =
-    isPeekable && value !== null && value !== undefined ? "text-violet-300" : null;
+    isPeekable && value !== null && value !== undefined
+      ? "text-violet-400 font-bold"
+      : null;
   return (
     <div
       style={{ width }}

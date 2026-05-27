@@ -43,21 +43,37 @@ export const SQL_KEYWORDS: string[] = Array.from(KEYWORDS).sort();
 const TOKEN_RE =
   /'(?:\\.|[^'])*'|"(?:\\.|[^"])*"|`(?:[^`]|``)*`|\/\*[\s\S]*?\*\/|--[^\n]*|#[^\n]*|[A-Za-z_][A-Za-z0-9_$]*|[\s\S]/g;
 
-/** Render SQL as React nodes with MySQL keywords wrapped in purple spans. */
+/** True when a whole token (per TOKEN_RE) is a comment: block `/* … *​/`, or a
+ * `--` / `#` line comment. */
+function isComment(tok: string): boolean {
+  return tok.startsWith("/*") || tok.startsWith("--") || tok.startsWith("#");
+}
+
+/** Render SQL as React nodes with MySQL keywords in purple and comments in a
+ * muted italic gray. */
 export function highlightSql(sql: string): ReactNode[] {
   const out: ReactNode[] = [];
   let buffer = "";
   let key = 0;
+  const flush = () => {
+    if (buffer) {
+      out.push(buffer);
+      buffer = "";
+    }
+  };
   TOKEN_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = TOKEN_RE.exec(sql)) !== null) {
     const tok = m[0];
-    const isWord = /^[A-Za-z_]/.test(tok);
-    if (isWord && KEYWORDS.has(tok.toUpperCase())) {
-      if (buffer) {
-        out.push(buffer);
-        buffer = "";
-      }
+    if (isComment(tok)) {
+      flush();
+      out.push(
+        <span key={key++} className="text-zinc-500 italic">
+          {tok}
+        </span>
+      );
+    } else if (/^[A-Za-z_]/.test(tok) && KEYWORDS.has(tok.toUpperCase())) {
+      flush();
       out.push(
         <span key={key++} className="text-purple-400">
           {tok}
@@ -67,6 +83,6 @@ export function highlightSql(sql: string): ReactNode[] {
       buffer += tok;
     }
   }
-  if (buffer) out.push(buffer);
+  flush();
   return out;
 }

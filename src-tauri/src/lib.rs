@@ -7,10 +7,33 @@ mod store;
 mod updater;
 
 use commands::{
-    column_setups, connect, export, folders, profiles, query, relations, state_io,
-    table_view_presets,
+    column_setups, connect, export, folders, monitoring, profiles, query, relations,
+    saved_queries, state_io, table_view_presets,
 };
 use state::AppState;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, WindowEvent};
+
+/// Show every app window (main + any monitor windows) and surface them. Used by
+/// the tray to bring the app back after a hide-to-tray. Monitor windows are
+/// focused last so they aren't left buried behind the (larger) main window.
+fn show_all_windows(app: &AppHandle) {
+    let mut monitors = Vec::new();
+    for (label, win) in app.webview_windows() {
+        let _ = win.show();
+        let _ = win.unminimize();
+        if label != "main" {
+            monitors.push(win);
+        }
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.set_focus();
+    }
+    for win in monitors {
+        let _ = win.set_focus();
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -23,6 +46,52 @@ pub fn run() {
             /* Re-key per-connection stores from profile id to host (idempotent).
              * Best-effort: a migration hiccup must never block app launch. */
             let _ = store::migrate::host_rekey(app.handle());
+
+            /* Tray icon: lets the app keep running (and background sampling) after
+             * the main window is hidden. Left-click or "Show" restores all
+             * windows; "Quit" exits for real. */
+            let show = MenuItem::with_id(app, "show", "Show DB Sage", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("DB Sage")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_all_windows(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_all_windows(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            /* Closing the MAIN window hides the whole app to the tray (main + any
+             * monitor windows) instead of quitting, so background sampling keeps
+             * running. Monitor windows keep their default close (they're torn down
+             * individually — that's the "stop monitoring this connection" gesture). */
+            if let Some(main) = app.get_webview_window("main") {
+                let handle = app.handle().clone();
+                main.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        for (label, win) in handle.webview_windows() {
+                            if label == "main" || label.starts_with("monitor-") {
+                                let _ = win.hide();
+                            }
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -68,6 +137,15 @@ pub fn run() {
             table_view_presets::tables_with_presets,
             table_view_presets::save_table_preset,
             table_view_presets::delete_table_preset,
+            saved_queries::list_saved_queries,
+            saved_queries::save_saved_query,
+            saved_queries::delete_saved_query,
+            monitoring::list_processes,
+            monitoring::global_status,
+            monitoring::global_variables,
+            monitoring::kill_process,
+            monitoring::open_monitor_window,
+            monitoring::monitor_history,
             relations::list_relations,
             relations::save_relation,
             relations::delete_relation,

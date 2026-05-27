@@ -18,7 +18,7 @@ import {
   Table as Table2,
   Database,
   ShareNetwork,
-  ArrowsOutSimple,
+  Binoculars,
   PencilSimple,
   Code,
   WarningCircle as AlertCircle,
@@ -450,15 +450,15 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     });
 
   const onRelatedClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    /** Skip targets already known to be empty; if exactly one remains, open it
-     * directly instead of showing a one-item picker. */
-    const candidates = nonEmptyMatches.length > 0 ? nonEmptyMatches : relMatches;
-    if (candidates.length === 1) {
-      openPeek(candidates[0]);
+    /** A single relation on this column opens directly. When several are defined
+     * (the "x tables" label), always show the picker so the user chooses which —
+     * never silently auto-open one. */
+    if (relMatches.length === 1) {
+      openPeek(relMatches[0]);
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    setPicker({ x: rect.left, y: rect.bottom + 4, matches: candidates });
+    setPicker({ x: rect.left, y: rect.bottom + 4, matches: relMatches });
   };
 
   /** Update any open peek launched from (sourceTable, sourceColumn) to a new
@@ -505,7 +505,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       <div
         data-el="rows-toolbar"
         data-toolbar="rows"
-        className="dbs-toolbar h-9 pl-1 pr-3 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
+        className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
         <button
           data-el="edit-table-btn"
@@ -521,7 +521,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
               )
             )
           }
-          className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
           title="Edit this table's structure"
         >
           <PencilSimple size={17} />
@@ -531,7 +531,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         <button
           data-el="add-row-btn"
           onClick={() => setInsertOpen(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
           title="Insert a new row"
         >
           <span className="relative -top-px text-[16px] leading-none">+</span> Row
@@ -551,7 +551,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           disabled={!canPeek}
           onClick={onRelatedClick}
           className={clsx(
-            "inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors",
+            "inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors",
             canPeek
               ? "bg-violet-500 text-violet-950 hover:bg-violet-400"
               : "bg-zinc-800 text-zinc-600 cursor-not-allowed"
@@ -566,15 +566,13 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           data-el="expanded-toggle-btn"
           onClick={() => setExpanded((v) => !v)}
           className={clsx(
-            "ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors",
-            expanded
-              ? "bg-emerald-500 text-emerald-950 hover:bg-emerald-400"
-              : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+            "ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 hover:bg-zinc-700",
+            expanded ? "text-emerald-300" : "text-zinc-500 hover:text-zinc-400"
           )}
-          title="Toggle the expanded-value panel"
+          title="Toggle the Inspector panel"
         >
-          <ArrowsOutSimple size={17} />
-          Expanded
+          <Binoculars size={17} />
+          Inspector
         </button>
       </div>
 

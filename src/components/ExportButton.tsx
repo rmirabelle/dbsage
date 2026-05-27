@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  DownloadSimple,
+  Export,
   CaretDown,
   FileCsv,
   BracketsCurly,
@@ -31,10 +31,18 @@ interface Props {
   columns: ColumnInfo[];
   /** Rows to export — the caller passes the full set or just the selection. */
   rows: RowRecord[];
+  /** How many rows are selected; 0 means none (export covers all `rows`). */
+  selectedCount: number;
   disabled: boolean;
 }
 
-export function ExportButton({ database, columns, rows, disabled }: Props) {
+export function ExportButton({
+  database,
+  columns,
+  rows,
+  selectedCount,
+  disabled,
+}: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -82,10 +90,12 @@ export function ExportButton({ database, columns, rows, disabled }: Props) {
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
         title="Export the query results"
-        className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800"
+        className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800"
       >
-        <DownloadSimple size={17} />
-        Export
+        <Export size={17} className="text-emerald-300" />
+        {selectedCount > 0
+          ? `Export ${selectedCount} selected ${selectedCount === 1 ? "row" : "rows"}`
+          : `Export ${rows.length} ${rows.length === 1 ? "row" : "rows"}`}
         <CaretDown size={12} className="-mr-1 opacity-70" />
       </button>
 
@@ -100,7 +110,7 @@ export function ExportButton({ database, columns, rows, disabled }: Props) {
               onClick={() => exportAs(opt.format, opt.filterName)}
               className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-950 whitespace-nowrap"
             >
-              <opt.Icon size={14} className="text-emerald-400 shrink-0" />
+              <opt.Icon size={14} className="text-emerald-300 shrink-0" />
               {opt.label}
             </button>
           ))}

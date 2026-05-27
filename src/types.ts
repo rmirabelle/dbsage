@@ -59,6 +59,7 @@ export interface StateCounts {
   folders: number;
   columnSetups: number;
   tableViewPresets: number;
+  savedQueries: number;
 }
 
 export type ImportSummary = StateCounts;
@@ -70,6 +71,7 @@ export interface StateSelection {
   folders: boolean;
   columnSetups: boolean;
   tableViewPresets: boolean;
+  savedQueries: boolean;
 }
 
 /** The selectable state categories, in display order, with friendly labels. */
@@ -79,6 +81,7 @@ export const STATE_CATEGORIES: { key: keyof StateSelection; label: string }[] = 
   { key: "folders", label: "Table folders" },
   { key: "columnSetups", label: "Column setups" },
   { key: "tableViewPresets", label: "Table view presets" },
+  { key: "savedQueries", label: "Saved queries" },
 ];
 
 /** Per-table column configuration, persisted backend-side and included in
@@ -106,6 +109,12 @@ export interface TableViewSetup {
 export interface TableViewPreset {
   name: string;
   setup: TableViewSetup;
+}
+
+/** A named, saved SQL query (scoped to one database). */
+export interface SavedQuery {
+  name: string;
+  sql: string;
 }
 
 export type CellValue = string | number | boolean | null;
@@ -210,6 +219,38 @@ export interface RelationsTab extends BaseTab {
   kind: "relations";
 }
 
+/** A server thread/connection row in the Monitoring → Activity view. */
+export interface ProcessRow {
+  id: number;
+  user: string | null;
+  host: string | null;
+  db: string | null;
+  command: string | null;
+  /** Seconds in the current state. */
+  time: number;
+  state: string | null;
+  /** The statement the thread is running, or null when idle. */
+  info: string | null;
+}
+
+/** `SHOW GLOBAL STATUS` as a name→value map (values are numeric strings). */
+export type ServerStatus = Record<string, string>;
+
+/** One persisted history sample: raw cumulative counters + unix-second timestamp.
+ * Rates (QPS, etc.) are derived by diffing consecutive samples. */
+export interface MonitorSample {
+  ts: number;
+  queries: number | null;
+  slowQueries: number | null;
+  bytesSent: number | null;
+  bytesReceived: number | null;
+  threadsRunning: number | null;
+  threadsConnected: number | null;
+  bpReadRequests: number | null;
+  bpReads: number | null;
+  uptime: number | null;
+}
+
 export interface QueryTab extends BaseTab {
   kind: "query";
   /** The SQL the user is editing. */
@@ -230,6 +271,10 @@ export interface QueryTab extends BaseTab {
   liveServerMs: number;
   /** Final wall-clock round-trip (ms) of the last completed run; null until one. */
   roundTripMs: number | null;
+  /** Named queries saved for this tab's database (alphabetized in the UI). */
+  savedQueries: SavedQuery[];
+  /** The saved query whose SQL is currently loaded, or null. */
+  activeSavedQuery: string | null;
 }
 
 /** One column row in the table designer. Numeric fields are kept as strings

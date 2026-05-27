@@ -1,7 +1,8 @@
-use sqlx::MySqlPool;
+use sqlx::{MySqlPool, SqlitePool};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use tokio::sync::RwLock;
+use std::sync::Mutex;
+use tokio::sync::{OnceCell, RwLock};
 
 #[derive(Default)]
 pub struct AppState {
@@ -12,4 +13,10 @@ pub struct AppState {
     /// Set true to ask the in-progress SQL-script export to stop streaming. Only
     /// one export runs at a time (the UI blocks behind a modal).
     pub cancel_sql_export: AtomicBool,
+    /// Lazily-opened SQLite pool for the monitor history database.
+    pub monitor_history: OnceCell<SqlitePool>,
+    /// Running background samplers, keyed by profile id, so a monitor window's
+    /// close can abort the matching one. Sync Mutex — touched from window-event
+    /// callbacks (non-async).
+    pub samplers: Mutex<HashMap<String, tokio::task::AbortHandle>>,
 }

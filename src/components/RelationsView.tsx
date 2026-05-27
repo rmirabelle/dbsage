@@ -285,7 +285,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         <button
           data-el="add-relationship-btn"
           onClick={openAdd}
-          className="inline-flex items-center gap-1.5 px-3 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
           title="Add a relation"
         >
           <Plus size={17} /> Relation
@@ -481,7 +481,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
               {form.editingId && (
                 <button
                   onClick={closeEditor}
-                  className="px-3 py-1 rounded text-[11px] text-zinc-300 hover:bg-zinc-800"
+                  className="px-2 py-1 rounded text-[11px] text-zinc-300 hover:bg-zinc-800"
                 >
                   Cancel edit
                 </button>
@@ -490,7 +490,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                 data-el="rel-save-btn"
                 onClick={onSave}
                 disabled={!canSave || saving || !isDirty}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
               >
                 {form.editingId ? <FloppyDisk size={13} /> : <Plus size={13} />}
                 {form.editingId ? "Save Relation" : "Add relation"}

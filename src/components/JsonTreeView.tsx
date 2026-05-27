@@ -94,9 +94,18 @@ function collectContainerPaths(data: unknown): string[] {
   return out;
 }
 
+/** Initial collapsed set: everything collapsed, except — when the root is a
+ *  non-empty array — the first element, so its shape is visible at a glance.
+ *  (No-op if that element isn't itself a container.) */
+function initialCollapsed(data: unknown): Set<string> {
+  const set = new Set(collectContainerPaths(data));
+  if (Array.isArray(data) && data.length > 0) set.delete("/0");
+  return set;
+}
+
 export function JsonTreeView({ data, search, activeIndex }: Props) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(
-    () => new Set(collectContainerPaths(data))
+  const [collapsed, setCollapsed] = useState<Set<string>>(() =>
+    initialCollapsed(data)
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLElement | null>(null);

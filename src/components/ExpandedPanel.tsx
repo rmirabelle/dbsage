@@ -5,6 +5,7 @@ import {
   Check,
   CaretUp,
   CaretDown,
+  Binoculars,
   MagnifyingGlass as Search,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
@@ -56,10 +57,12 @@ export function ExpandedPanel({
   const activeMatchRef = useRef<HTMLElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  /** Reset the editor whenever the selected cell (value/column) changes. */
+  /** Reset the editor whenever the selected cell (value/column) changes, and
+   * focus the search box so the user can immediately search the new value. */
   useEffect(() => {
     setText(initialText);
     setSearch("");
+    searchInputRef.current?.focus();
   }, [initialText]);
 
   const isNull = value === null || value === undefined;
@@ -160,31 +163,8 @@ export function ExpandedPanel({
     }
   };
 
-  /* pt-7 reserves a top strip for the floating Copy button so long values start
-     below it instead of wrapping underneath. */
   const layerClass =
-    "px-3 pt-7 pb-2 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words";
-
-  const copyButton = (
-    <button
-      data-el="expanded-copy-btn"
-      onClick={onCopy}
-      className="absolute top-[7px] right-3.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-900/80 backdrop-blur-sm text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-      title="Copy to clipboard"
-    >
-      {copied ? (
-        <>
-          <Check size={13} className="text-emerald-400" />
-          <span>Copied</span>
-        </>
-      ) : (
-        <>
-          <Copy size={13} />
-          <span>Copy</span>
-        </>
-      )}
-    </button>
-  );
+    "px-3 py-2 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words";
 
   return (
     <div
@@ -225,9 +205,10 @@ export function ExpandedPanel({
         className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 z-10 cursor-ns-resize bg-transparent hover:bg-accent-500/40 transition-colors"
         title="Drag to resize · double-click to reset"
       />
-      <div className="h-7 shrink-0 px-3 flex items-center gap-3 border-b border-zinc-800/60 text-[11px] text-zinc-400">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
-          Expanded
+      <div className="dbs-toolbar h-7 shrink-0 px-3 flex items-center gap-3 border-b border-zinc-800/60 text-[11px] text-zinc-400">
+        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-300">
+          <Binoculars size={13} weight="fill" className="shrink-0" />
+          Inspector
         </span>
         {column ? (
           <>
@@ -250,11 +231,31 @@ export function ExpandedPanel({
         )}
 
         <div className="ml-auto flex items-center gap-1">
+          {column && (
+            <button
+              data-el="expanded-copy-btn"
+              onClick={onCopy}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              title="Copy to clipboard"
+            >
+              {copied ? (
+                <>
+                  <Check size={13} className="text-emerald-400" />
+                  <span>Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy size={13} />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
+          )}
           <button
             data-el="expanded-close-btn"
             onClick={onClose}
             className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100"
-            aria-label="Close expanded panel"
+            aria-label="Close Inspector panel"
             title="Close (Esc)"
           >
             <X size={13} />
@@ -267,10 +268,13 @@ export function ExpandedPanel({
           <div
             className={clsx(
               "relative flex-1 min-h-0 min-w-0",
+              /* Lighter gray marks an editable area (matches the edit-table form
+                 bg). Only the editable Table Inspector — not the read-only Query
+                 Inspector — gets it. */
+              !readOnly && "bg-[#2c303c]",
               column && isJsonColumn && "border-r border-zinc-800"
             )}
           >
-            {column && copyButton}
             <div
               ref={backdropRef}
               aria-hidden="true"
@@ -304,8 +308,7 @@ export function ExpandedPanel({
         )}
 
         {column && isJsonColumn && (
-          <div className="relative flex-1 min-h-0 min-w-0 bg-[#2c303c]">
-            {!showRaw && copyButton}
+          <div className="relative flex-1 min-h-0 min-w-0 bg-zinc-950">
             {treeData !== undefined ? (
               <JsonTreeView
                 key={`${column?.name ?? ""}:${rowOrdinal ?? ""}`}
@@ -324,7 +327,7 @@ export function ExpandedPanel({
 
       <div
         data-el="expanded-footer"
-        className="h-9 shrink-0 px-3 flex items-center gap-2 border-t border-zinc-800/60"
+        className="h-9 shrink-0 px-1 flex items-center gap-2 border-t border-zinc-800/60"
       >
         <div className="relative w-64 max-w-[55%]">
           <Search
@@ -411,7 +414,7 @@ export function ExpandedPanel({
                   ? "Editing requires a primary key on this table"
                   : undefined
               }
-              className="px-3 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
+              className="px-2 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
             >
               {saving ? "Saving…" : "Save"}
             </button>

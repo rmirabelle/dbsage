@@ -320,7 +320,6 @@ pub async fn list_databases(
     let pool = pool_for(&state, &profile_id).await?;
     let rows = sqlx::query(
         "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA \
-         WHERE SCHEMA_NAME NOT IN ('information_schema','performance_schema','mysql','sys') \
          ORDER BY SCHEMA_NAME",
     )
     .fetch_all(&pool)

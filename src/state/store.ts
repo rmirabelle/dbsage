@@ -21,6 +21,7 @@ import type {
   Relation,
   RelationsTab,
   RowsTab,
+  SavedQuery,
   SortSpec,
   Tab,
   TableInfo,
@@ -179,6 +180,8 @@ interface Store {
     newName: string
   ) => Promise<void>;
   openRelations: (profileId: string, profileName: string, database: string) => void;
+  /** Open (or focus) the standalone server Monitoring window for a connection. */
+  openMonitoring: (profileId: string) => void;
   /** Open a new, empty SQL query pane scoped to a connection + database. */
   openQuery: (profileId: string, profileName: string, database: string) => void;
   setQuerySql: (tabId: string, sql: string) => void;
@@ -192,6 +195,12 @@ interface Store {
   executeQuery: (tabId: string) => Promise<void>;
   /** Request cancellation of a running query (KILL QUERY server-side). */
   stopQuery: (tabId: string) => Promise<void>;
+  /** Save the query pane's current SQL under a name, scoped to its database. */
+  saveQuery: (tabId: string, name: string) => Promise<void>;
+  /** Load a saved query's SQL into the pane. */
+  applySavedQuery: (tabId: string, name: string) => void;
+  /** Delete a saved query by name. */
+  deleteSavedQuery: (tabId: string, name: string) => Promise<void>;
   openTableDesigner: (
     profileId: string,
     profileName: string,
@@ -947,6 +956,14 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
   },
 
+  openMonitoring: (profileId) => {
+    /* Server monitoring lives in its own OS window so it can stay open while you
+       work in the main window; the Rust side creates/focuses it. */
+    ipc.openMonitorWindow(profileId).catch((e) =>
+      notifyError(`Could not open the monitor window: ${String(e)}`)
+    );
+  },
+
   openQuery: (profileId, profileName, database) => {
     const tabId = `query::${profileId}::${database}::${Date.now()}`;
     const tab: QueryTab = {
@@ -964,8 +981,11 @@ export const useStore = create<Store>((set, get) => ({
       runStartedAt: null,
       liveServerMs: 0,
       roundTripMs: null,
+      savedQueries: [],
+      activeSavedQuery: null,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+    loadSavedQueries(tabId, set, get);
   },
 
   setQuerySql: (tabId, sql) => {
@@ -1004,18 +1024,24 @@ export const useStore = create<Store>((set, get) => ({
               profileId,
               profileName: profile.name,
               database: dbs.includes(t.database) ? t.database : dbs[0] ?? "",
+              savedQueries: [],
+              activeSavedQuery: null,
             }
           : t
       ),
     }));
+    loadSavedQueries(tabId, set, get);
   },
 
   setQueryDatabase: (tabId, database) => {
     set((s) => ({
       tabs: s.tabs.map((t) =>
-        t.id === tabId && t.kind === "query" ? { ...t, database } : t
+        t.id === tabId && t.kind === "query"
+          ? { ...t, database, savedQueries: [], activeSavedQuery: null }
+          : t
       ),
     }));
+    loadSavedQueries(tabId, set, get);
   },
 
   executeQuery: async (tabId) => {
@@ -1118,6 +1144,68 @@ export const useStore = create<Store>((set, get) => ({
       await ipc.cancelQuery(tab.profileId, tabId);
     } catch (e) {
       notifyError(`Could not stop query: ${String(e)}`);
+    }
+  },
+
+  saveQuery: async (tabId, name) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "query") return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (!tab.database) {
+      notifyError("Pick a database before saving a query.");
+      return;
+    }
+    const query: SavedQuery = { name: trimmed, sql: tab.sql };
+    try {
+      await ipc.saveSavedQuery(tab.profileId, tab.database, query);
+      const savedQueries = await ipc.listSavedQueries(tab.profileId, tab.database);
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "query"
+            ? { ...t, savedQueries, activeSavedQuery: trimmed }
+            : t
+        ),
+      }));
+      notifySuccess(`Saved query "${trimmed}".`);
+    } catch (e) {
+      notifyError(`Could not save query: ${String(e)}`);
+    }
+  },
+
+  applySavedQuery: (tabId, name) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "query") return;
+    const saved = tab.savedQueries.find((q) => q.name === name);
+    if (!saved) return;
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query"
+          ? { ...t, sql: saved.sql, activeSavedQuery: name }
+          : t
+      ),
+    }));
+  },
+
+  deleteSavedQuery: async (tabId, name) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "query") return;
+    try {
+      await ipc.deleteSavedQuery(tab.profileId, tab.database, name);
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "query"
+            ? {
+                ...t,
+                savedQueries: t.savedQueries.filter((q) => q.name !== name),
+                activeSavedQuery:
+                  t.activeSavedQuery === name ? null : t.activeSavedQuery,
+              }
+            : t
+        ),
+      }));
+    } catch (e) {
+      notifyError(`Could not delete query: ${String(e)}`);
     }
   },
 
@@ -1570,6 +1658,31 @@ type SetFn = (
     | ((s: Store) => Partial<Store>)
 ) => void;
 type GetFn = () => Store;
+
+/** Fetch the saved queries for a query tab's current database and store them on
+ * the tab. Best-effort; a load failure just leaves the list empty. */
+function loadSavedQueries(tabId: string, set: SetFn, get: GetFn) {
+  const tab = get().tabs.find((t) => t.id === tabId);
+  if (!tab || tab.kind !== "query" || !tab.database) return;
+  const { profileId, database } = tab;
+  ipc
+    .listSavedQueries(profileId, database)
+    .then((savedQueries) => {
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId &&
+          t.kind === "query" &&
+          t.profileId === profileId &&
+          t.database === database
+            ? { ...t, savedQueries }
+            : t
+        ),
+      }));
+    })
+    .catch(() => {
+      /* load is best-effort */
+    });
+}
 
 async function loadTabPage(tabId: string, page: number, set: SetFn, get: GetFn) {
   const tab = get().tabs.find((t) => t.id === tabId);

@@ -9,10 +9,14 @@ import type {
   ImportSummary,
   IndexDef,
   ProfileInput,
+  MonitorSample,
+  ProcessRow,
   ProfileView,
   QueryResult,
   Relation,
   RowsResult,
+  SavedQuery,
+  ServerStatus,
   SortSpec,
   StateCounts,
   StateSelection,
@@ -210,6 +214,24 @@ export const ipc = {
     table: string,
     name: string
   ) => invoke<void>("delete_table_preset", { profileId, database, table, name }),
+  listProcesses: (profileId: string) =>
+    invoke<ProcessRow[]>("list_processes", { profileId }),
+  globalStatus: (profileId: string) =>
+    invoke<ServerStatus>("global_status", { profileId }),
+  globalVariables: (profileId: string) =>
+    invoke<ServerStatus>("global_variables", { profileId }),
+  monitorHistory: (profileId: string, sinceSecs: number) =>
+    invoke<MonitorSample[]>("monitor_history", { profileId, sinceSecs }),
+  killProcess: (profileId: string, id: number, queryOnly: boolean) =>
+    invoke<void>("kill_process", { profileId, id, queryOnly }),
+  openMonitorWindow: (profileId: string) =>
+    invoke<void>("open_monitor_window", { profileId }),
+  listSavedQueries: (profileId: string, database: string) =>
+    invoke<SavedQuery[]>("list_saved_queries", { profileId, database }),
+  saveSavedQuery: (profileId: string, database: string, query: SavedQuery) =>
+    invoke<void>("save_saved_query", { profileId, database, query }),
+  deleteSavedQuery: (profileId: string, database: string, name: string) =>
+    invoke<void>("delete_saved_query", { profileId, database, name }),
   saveColumnSetup: (
     profileId: string,
     database: string,

@@ -210,7 +210,7 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             data-el="designer-save-btn"
             onClick={handleSave}
             disabled={!canSave || saving}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
+            className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
             title="Save all table changes (columns and indexes)"
           >
             {saving ? (
@@ -406,7 +406,7 @@ function ColumnsEditor({
           <button
             data-el="columns-add-btn"
             onClick={onAddColumn}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
           >
             <span className="relative -top-px text-[19px] leading-none">+</span> Add Column
           </button>
@@ -602,7 +602,7 @@ function IndexesEditor({
           <button
             data-el="indexes-add-btn"
             onClick={onAddIndex}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
           >
             <span className="relative -top-px text-[19px] leading-none">+</span> Add Index
           </button>
