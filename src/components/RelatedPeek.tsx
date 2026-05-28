@@ -48,7 +48,7 @@ type PaneRect = { left: number; top: number; width: number; height: number };
 function clampToPane(
   x: number,
   y: number,
-  winW: number,
+  _winW: number,
   winH: number,
   pane: PaneRect | null
 ) {
