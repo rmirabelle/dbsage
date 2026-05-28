@@ -5,6 +5,7 @@ pub mod folders;
 pub mod monitoring;
 pub mod profiles;
 pub mod query;
+pub mod query_history;
 pub mod relations;
 pub mod saved_queries;
 pub mod state_io;

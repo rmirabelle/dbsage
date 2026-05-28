@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CaretDown, Check, Code, Plus, X } from "@phosphor-icons/react";
+import { CaretDown, Check, FloppyDisk, Plus, X } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type { SavedQuery } from "../types";
 
@@ -64,8 +64,8 @@ export function SavedQueryMenu({
         className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-zinc-800 text-emerald-300 hover:bg-zinc-700"
         title={activeName ? `Loaded query: ${activeName}` : "Saved queries"}
       >
-        <Code size={16} weight="bold" className="shrink-0" />
-        <span className="max-w-[160px] truncate font-bold">{activeName ?? "Saved Queries"}</span>
+        <FloppyDisk size={16} weight="fill" className="shrink-0" />
+        <span className="max-w-[160px] truncate font-bold">{activeName ?? "Saved"}</span>
         <span className="rounded-full px-1.5 text-[10px] font-semibold tabular-nums bg-zinc-700 text-zinc-200">
           {queries.length}
         </span>
@@ -97,7 +97,7 @@ export function SavedQueryMenu({
                     className="flex-1 min-w-0 flex items-center gap-2 py-1.5 text-left"
                     title={`Load "${q.name}"`}
                   >
-                    <Code size={14} weight="bold" className="text-emerald-400 shrink-0" />
+                    <FloppyDisk size={14} weight="fill" className="text-emerald-400 shrink-0" />
                     <span className={clsx("truncate", active && "font-semibold text-zinc-100")}>
                       {q.name}
                     </span>

@@ -1261,6 +1261,68 @@ pub async fn update_cell(
     Ok(affected)
 }
 
+#[tauri::command]
+pub async fn delete_row(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    pk: Vec<PkValue>,
+) -> AppResult<u64> {
+    if pk.is_empty() {
+        return Err(AppError::Other(
+            "cannot delete: table has no primary key columns provided".into(),
+        ));
+    }
+
+    let pool = pool_for(&state, &profile_id).await?;
+    let columns = fetch_columns(&pool, &database, &table).await?;
+    let column_set: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    for p in &pk {
+        if !column_set.contains(p.column.as_str()) {
+            return Err(AppError::Other(format!(
+                "unknown pk column: {}",
+                p.column
+            )));
+        }
+    }
+
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    let where_clauses: Vec<String> = pk
+        .iter()
+        .map(|p| {
+            if p.value.is_none() {
+                format!("{} IS NULL", quote_ident(&p.column))
+            } else {
+                format!("{} = ?", quote_ident(&p.column))
+            }
+        })
+        .collect();
+    let where_clause = where_clauses.join(" AND ");
+
+    let sql = format!("DELETE FROM {qualified} WHERE {where_clause}");
+    let mut q = sqlx::query(&sql);
+    for p in &pk {
+        if let Some(v) = &p.value {
+            q = q.bind(v.clone());
+        }
+    }
+
+    let result = q.execute(&pool).await?;
+    let affected = result.rows_affected();
+    if affected == 0 {
+        return Err(AppError::Other(
+            "no rows matched - row may have been deleted or modified concurrently".into(),
+        ));
+    }
+    if affected > 1 {
+        return Err(AppError::Other(format!(
+            "delete affected {affected} rows - refusing silently. Check the table for duplicate primary keys."
+        )));
+    }
+    Ok(affected)
+}
+
 /// INSERT a new row. `values` carries only the columns the caller supplied
 /// (omitted columns fall back to their DB default / auto-increment). A value of
 /// `None` inserts SQL NULL.

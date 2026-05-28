@@ -218,6 +218,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const clearTableView = useStore((s) => s.clearTableView);
   const updateCell = useStore((s) => s.updateCell);
   const insertRow = useStore((s) => s.insertRow);
+  const deleteRows = useStore((s) => s.deleteRows);
   const openTableEditor = useStore((s) => s.openTableEditor);
   const openTable = useStore((s) => s.openTable);
   const loadRelations = useStore((s) => s.loadRelations);
@@ -563,6 +564,21 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         </button>
 
         <button
+          data-el="refresh-btn"
+          onClick={() => refreshTab(tab.id)}
+          disabled={tab.loading}
+          title="Refresh the row set"
+          aria-label="Refresh"
+          className="inline-flex items-center justify-center h-7 w-7 rounded transition-colors bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-40 disabled:hover:bg-zinc-800"
+        >
+          {tab.loading ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : (
+            <RefreshCw size={15} />
+          )}
+        </button>
+
+        <button
           data-el="expanded-toggle-btn"
           onClick={() => setExpanded((v) => !v)}
           className={clsx(
@@ -613,10 +629,78 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onCellEdit={(rowIndex, column, value) =>
             updateCell(tab.id, rowIndex, column, value)
           }
+          onDeleteRows={hasPrimaryKey ? (indices) => deleteRows(tab.id, indices) : undefined}
         />
       ) : (
         <div className="flex-1" />
       )}
+
+      <div data-el="rows-pager" className="h-8 pl-1 pr-3 border-t border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400 bg-zinc-950">
+        <button
+          data-el="prev-page-btn"
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-40 disabled:hover:bg-zinc-800"
+          onClick={() => setTabPage(tab.id, tab.page - 1)}
+          disabled={tab.page <= 1 || tab.loading}
+        >
+          <ChevronLeft size={15} /> Prev
+        </button>
+        <button
+          data-el="next-page-btn"
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-40 disabled:hover:bg-zinc-800"
+          onClick={() => setTabPage(tab.id, tab.page + 1)}
+          disabled={
+            tab.loading ||
+            atLastPage ||
+            (isExactTotal && totalPages != null && tab.page >= totalPages)
+          }
+        >
+          Next <ChevronRight size={15} />
+        </button>
+
+        <div className="ml-2 flex items-center gap-1.5">
+          <span>page</span>
+          <PageInput
+            page={tab.page}
+            maxPage={isExactTotal ? totalPages : null}
+            disabled={tab.loading}
+            onCommit={(p) => setTabPage(tab.id, p)}
+          />
+          <span>of</span>
+          <span className="font-mono text-zinc-300">
+            {totalPages == null ? "?" : `${isExactTotal ? "" : "~"}${totalPages}`}
+          </span>
+        </div>
+
+        <PageSizeDropup
+          value={tab.pageSize}
+          disabled={tab.loading}
+          onChange={(n) => setPageSize(tab.id, n)}
+        />
+
+        {tab.data && (
+          <span className="ml-auto inline-flex items-center gap-1.5">
+            <span>
+              <span className="text-zinc-200">{tab.data.rows.length}</span> rows
+              {displayTotal != null ? (
+                <>
+                  {" "}
+                  of{" "}
+                  <span className="text-zinc-200">
+                    {isExactTotal ? "" : "~"}
+                    {displayTotal.toLocaleString()}
+                  </span>
+                </>
+              ) : (
+                <> of <span className="text-zinc-500">?</span></>
+              )}
+            </span>
+            {!isExactTotal && (
+              <ExactCountButton onCount={() => countExactRows(tab.id)} />
+            )}
+          </span>
+        )}
+
+      </div>
 
       {expanded && (
         <ExpandedPanel
@@ -696,89 +780,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           </>,
           document.body
         )}
-
-      <div data-el="rows-pager" className="h-8 px-3 border-t border-zinc-800/60 flex items-center gap-2 text-[11px] text-zinc-400 bg-zinc-950">
-        <button
-          data-el="prev-page-btn"
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30 disabled:hover:bg-transparent"
-          onClick={() => setTabPage(tab.id, tab.page - 1)}
-          disabled={tab.page <= 1 || tab.loading}
-        >
-          <ChevronLeft size={13} /> Prev
-        </button>
-        <button
-          data-el="next-page-btn"
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30 disabled:hover:bg-transparent"
-          onClick={() => setTabPage(tab.id, tab.page + 1)}
-          disabled={
-            tab.loading ||
-            atLastPage ||
-            (isExactTotal && totalPages != null && tab.page >= totalPages)
-          }
-        >
-          Next <ChevronRight size={13} />
-        </button>
-
-        <div className="ml-2 flex items-center gap-1.5">
-          <span>page</span>
-          <PageInput
-            page={tab.page}
-            maxPage={isExactTotal ? totalPages : null}
-            disabled={tab.loading}
-            onCommit={(p) => setTabPage(tab.id, p)}
-          />
-          <span>of</span>
-          <span className="font-mono text-zinc-300">
-            {totalPages == null ? "?" : `${isExactTotal ? "" : "~"}${totalPages}`}
-          </span>
-        </div>
-
-        <PageSizeDropup
-          value={tab.pageSize}
-          disabled={tab.loading}
-          onChange={(n) => setPageSize(tab.id, n)}
-        />
-
-        {tab.data && (
-          <span className="ml-auto inline-flex items-center gap-1.5">
-            <span>
-              <span className="text-zinc-200">{tab.data.rows.length}</span> rows
-              {displayTotal != null ? (
-                <>
-                  {" "}
-                  of{" "}
-                  <span className="text-zinc-200">
-                    {isExactTotal ? "" : "~"}
-                    {displayTotal.toLocaleString()}
-                  </span>
-                </>
-              ) : (
-                <> of <span className="text-zinc-500">?</span></>
-              )}
-            </span>
-            {!isExactTotal && (
-              <ExactCountButton onCount={() => countExactRows(tab.id)} />
-            )}
-          </span>
-        )}
-
-        <button
-          data-el="refresh-btn"
-          onClick={() => refreshTab(tab.id)}
-          disabled={tab.loading}
-          className={clsx(
-            "inline-flex items-center gap-1.5 py-0.5 pl-3 pr-1 rounded hover:text-zinc-100 disabled:opacity-30 border-l border-zinc-800/60",
-            tab.data ? "ml-3" : "ml-auto"
-          )}
-        >
-          {tab.loading ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : (
-            <RefreshCw size={13} />
-          )}
-          Refresh
-        </button>
-      </div>
     </div>
   );
 }

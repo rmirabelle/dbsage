@@ -117,6 +117,13 @@ export interface SavedQuery {
   sql: string;
 }
 
+/** One entry in the silent per-database query history. `executedAt` is a
+ * unix-millisecond timestamp; the list is stored most-recent-first. */
+export interface QueryHistoryItem {
+  sql: string;
+  executedAt: number;
+}
+
 export type CellValue = string | number | boolean | null;
 export type RowRecord = Record<string, CellValue>;
 
@@ -275,6 +282,8 @@ export interface QueryTab extends BaseTab {
   savedQueries: SavedQuery[];
   /** The saved query whose SQL is currently loaded, or null. */
   activeSavedQuery: string | null;
+  /** Silent execution history for this tab's database, most-recent-first. */
+  queryHistory: QueryHistoryItem[];
 }
 
 /** One column row in the table designer. Numeric fields are kept as strings

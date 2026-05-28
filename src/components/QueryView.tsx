@@ -21,6 +21,7 @@ import { ExpandedPanel } from "./ExpandedPanel";
 import { ExportButton } from "./ExportButton";
 import { SqlEditor } from "./SqlEditor";
 import { SavedQueryMenu } from "./SavedQueryMenu";
+import { QueryHistoryButton } from "./QueryHistoryButton";
 import { compactDisplay, extractJsonCandidates } from "../lib/jsonPath";
 import { formatSql, type FormatStyle } from "../lib/formatSql";
 import { scanFromTables } from "../lib/sqlCompletion";
@@ -39,6 +40,9 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   const saveQuery = useStore((s) => s.saveQuery);
   const applySavedQuery = useStore((s) => s.applySavedQuery);
   const deleteSavedQuery = useStore((s) => s.deleteSavedQuery);
+  const applyQueryHistory = useStore((s) => s.applyQueryHistory);
+  const deleteQueryHistory = useStore((s) => s.deleteQueryHistory);
+  const clearQueryHistory = useStore((s) => s.clearQueryHistory);
 
   /* Client-side view state for the read-only results grid (sort/filter/hide
      don't re-run the query — they just reshape the already-fetched rows). */
@@ -280,6 +284,14 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           onDelete={(name) => deleteSavedQuery(tab.id, name)}
         />
 
+        <QueryHistoryButton
+          items={tab.queryHistory}
+          disabled={!tab.database}
+          onApply={(sql) => applyQueryHistory(tab.id, sql)}
+          onDelete={(sql) => deleteQueryHistory(tab.id, sql)}
+          onClear={() => clearQueryHistory(tab.id)}
+        />
+
         {savedQueryDirty && (
           <button
             data-el="saved-query-overwrite-btn"
@@ -482,17 +494,6 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         />
       )}
 
-      {expanded && (
-        <ExpandedPanel
-          readOnly
-          editable={false}
-          column={activeColumn}
-          value={activeValue}
-          rowOrdinal={activeRowOrdinal}
-          onClose={() => setExpanded(false)}
-        />
-      )}
-
       <div
         data-el="query-footer"
         className="h-7 px-3 border-t border-zinc-800/60 flex items-center gap-3 text-[11px] text-zinc-400 bg-zinc-950"
@@ -569,6 +570,17 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           </span>
         )}
       </div>
+
+      {expanded && (
+        <ExpandedPanel
+          readOnly
+          editable={false}
+          column={activeColumn}
+          value={activeValue}
+          rowOrdinal={activeRowOrdinal}
+          onClose={() => setExpanded(false)}
+        />
+      )}
     </div>
   );
 }

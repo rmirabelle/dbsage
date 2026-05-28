@@ -3,6 +3,7 @@ pub mod folders;
 pub mod migrate;
 pub mod monitor_history;
 pub mod profiles;
+pub mod query_history;
 pub mod relations;
 pub mod saved_queries;
 pub mod secrets;

@@ -7,8 +7,8 @@ mod store;
 mod updater;
 
 use commands::{
-    column_setups, connect, export, folders, monitoring, profiles, query, relations,
-    saved_queries, state_io, table_view_presets,
+    column_setups, connect, export, folders, monitoring, profiles, query, query_history,
+    relations, saved_queries, state_io, table_view_presets,
 };
 use state::AppState;
 use tauri::menu::{Menu, MenuItem};
@@ -113,6 +113,7 @@ pub fn run() {
             query::cancel_query,
             query::update_cell,
             query::insert_row,
+            query::delete_row,
             query::table_exists,
             query::create_table,
             query::copy_table,
@@ -140,6 +141,10 @@ pub fn run() {
             saved_queries::list_saved_queries,
             saved_queries::save_saved_query,
             saved_queries::delete_saved_query,
+            query_history::list_query_history,
+            query_history::add_query_history,
+            query_history::delete_query_history,
+            query_history::clear_query_history,
             monitoring::list_processes,
             monitoring::global_status,
             monitoring::global_variables,

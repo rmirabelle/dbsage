@@ -970,7 +970,7 @@ function TableTile({
         className={clsx(
           "shrink-0",
           isSelected
-            ? "text-accent-300"
+            ? "text-emerald-400"
             : isAnyDragging
             ? "text-zinc-500"
             : "text-zinc-500 group-hover:text-emerald-400"

@@ -12,6 +12,7 @@ import {
   Rows,
   ShareNetwork,
   Key,
+  Trash,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type {
@@ -55,6 +56,9 @@ interface Props {
   /** When set, right-clicking a row's number gutter opens a "Copy As" menu that
    * copies the selected rows (or just the clicked row) targeting this table. */
   copyTarget?: { database: string; table: string };
+  /** When set, the row-gutter context menu shows a Delete item that calls this
+   * with the right-clicked row's selection. The grid handles the confirmation. */
+  onDeleteRows?: (indices: number[]) => Promise<void>;
   /** Column names that participate in a relation — marked with the relation icon
    * in their header to signal a peek can be launched from them. */
   peekableColumns?: Set<string>;
@@ -68,8 +72,8 @@ const ROW_GUTTER_W = 56; // pinned row-number gutter
 const COPY_AS_ICONS: Record<CopyAsFormat, typeof Table> = {
   insert: RowsPlusBottom,
   update: PencilSimple,
-  tsv: Table,
-  "tsv-header": Rows,
+  psv: Table,
+  "psv-header": Rows,
 };
 
 interface MenuAnchor {
@@ -99,6 +103,7 @@ export function DataGrid({
   columnWidths,
   onColumnWidthsChange,
   copyTarget,
+  onDeleteRows,
   peekableColumns,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -238,11 +243,11 @@ export function DataGrid({
     extendSelection(anchor, index);
   };
 
-  /* Right-click a row's number gutter → Copy As menu. Operate on the whole
-     selection when the clicked row is part of it; otherwise select just that
-     row and operate on it. */
+  /* Right-click a row's number gutter → row context menu (Delete + Copy As).
+     Operate on the whole selection when the clicked row is part of it;
+     otherwise select just that row and operate on it. */
   const handleRowContextMenu = (index: number, e: React.MouseEvent) => {
-    if (!copyTarget) return;
+    if (!copyTarget && !onDeleteRows) return;
     e.preventDefault();
     e.stopPropagation();
     let indices: number[];
@@ -254,6 +259,26 @@ export function DataGrid({
       setAnchor(index);
     }
     setRowMenu({ x: e.clientX, y: e.clientY, indices });
+  };
+
+  const deleteRows = async (indices: number[]) => {
+    setRowMenu(null);
+    if (!onDeleteRows || indices.length === 0) return;
+    const n = indices.length;
+    const ok = confirm(
+      n === 1
+        ? "Delete this row? This cannot be undone."
+        : `Delete ${n} rows? This cannot be undone.`
+    );
+    if (!ok) return;
+    try {
+      await onDeleteRows(indices);
+      setSelectedRows(new Set());
+      setAnchor(null);
+      notifySuccess(`Deleted ${n} row${n === 1 ? "" : "s"}`);
+    } catch (e) {
+      notifyError(`Delete failed: ${String(e)}`);
+    }
   };
 
   const copyRowsAs = async (
@@ -272,7 +297,7 @@ export function DataGrid({
         format,
         copyTarget.database,
         copyTarget.table,
-        columns,
+        visibleColumns,
         picked
       );
       await navigator.clipboard.writeText(text);
@@ -467,9 +492,7 @@ export function DataGrid({
                   onMouseEnter={() => handleRowMouseEnter(vItem.index)}
                   className={clsx(
                     "absolute left-0 right-0 flex items-stretch border-b border-zinc-900 cursor-default",
-                    isSelected
-                      ? "bg-accent-500/[0.08] ring-1 ring-inset ring-accent-500/50"
-                      : stripe,
+                    isSelected ? "bg-emerald-900/60" : stripe,
                     !isSelected && "hover:bg-accent-500/5"
                   )}
                   style={{
@@ -482,9 +505,9 @@ export function DataGrid({
                     onContextMenu={(e) => handleRowContextMenu(vItem.index, e)}
                     className={clsx(
                       "sticky left-0 z-10 w-14 shrink-0 flex items-center justify-end pr-3 text-[10px] font-mono border-r border-zinc-900",
-                      copyTarget && "cursor-context-menu",
+                      (copyTarget || onDeleteRows) && "cursor-context-menu",
                       isSelected
-                        ? "bg-[#26303f] text-accent-300 font-semibold"
+                        ? "bg-[#113e36] text-emerald-200 font-semibold"
                         : `${gutterStripe} text-zinc-600`
                     )}
                   >
@@ -552,7 +575,13 @@ export function DataGrid({
           anchor={columnsMenu}
           columns={columns}
           hidden={hiddenColumns}
+          selectedRowCount={selectedRows.size}
+          totalRowCount={rows.length}
           onChange={onHiddenColumnsChange}
+          onSelectAllRows={() =>
+            setSelectedRows(new Set(rows.map((_, i) => i)))
+          }
+          onSelectNoRows={() => setSelectedRows(new Set())}
           onClose={() => setColumnsMenu(null)}
         />
       )}
@@ -562,7 +591,10 @@ export function DataGrid({
           x={rowMenu.x}
           y={rowMenu.y}
           count={rowMenu.indices.length}
+          canCopy={!!copyTarget}
+          canDelete={!!onDeleteRows}
           onPick={(format, label) => copyRowsAs(format, label, rowMenu.indices)}
+          onDelete={() => deleteRows(rowMenu.indices)}
           onClose={() => setRowMenu(null)}
         />
       )}
@@ -574,13 +606,19 @@ function RowContextMenu({
   x,
   y,
   count,
+  canCopy,
+  canDelete,
   onPick,
+  onDelete,
   onClose,
 }: {
   x: number;
   y: number;
   count: number;
+  canCopy: boolean;
+  canDelete: boolean;
   onPick: (format: CopyAsFormat, label: string) => void;
+  onDelete: () => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -603,22 +641,38 @@ function RowContextMenu({
       onMouseDown={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
     >
-      <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-        Copy {count} row{count === 1 ? "" : "s"} as
-      </div>
-      {COPY_AS_OPTIONS.map((opt) => {
-        const Icon = COPY_AS_ICONS[opt.format];
-        return (
+      {canDelete && (
+        <>
           <button
-            key={opt.format}
-            onClick={() => onPick(opt.format, opt.label)}
-            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 whitespace-nowrap"
+            onClick={onDelete}
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-rose-300 hover:bg-rose-950/60 whitespace-nowrap"
           >
-            <Icon size={14} className="text-zinc-400 shrink-0" />
-            {opt.label}
+            <Trash size={14} className="text-rose-400 shrink-0" />
+            Delete {count} row{count === 1 ? "" : "s"}
           </button>
-        );
-      })}
+          {canCopy && <div className="my-1 border-t border-zinc-800" />}
+        </>
+      )}
+      {canCopy && (
+        <>
+          <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+            Copy {count} row{count === 1 ? "" : "s"} as
+          </div>
+          {COPY_AS_OPTIONS.map((opt) => {
+            const Icon = COPY_AS_ICONS[opt.format];
+            return (
+              <button
+                key={opt.format}
+                onClick={() => onPick(opt.format, opt.label)}
+                className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 whitespace-nowrap"
+              >
+                <Icon size={14} className="text-zinc-400 shrink-0" />
+                {opt.label}
+              </button>
+            );
+          })}
+        </>
+      )}
     </div>,
     document.body
   );

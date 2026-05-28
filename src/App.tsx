@@ -70,6 +70,20 @@ export default function App() {
 
   useZoomShortcuts();
 
+  /* Ctrl+W closes the active tab (routes through requestCloseTab so dirty
+     designer tabs still hit the unsaved-changes confirmation). */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key !== "w" && e.key !== "W") return;
+      e.preventDefault();
+      const { activeTabId, requestCloseTab } = useStore.getState();
+      if (activeTabId) requestCloseTab(activeTabId);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   /**
    * One app-level drag context spans both panes so a table can be dragged from
    * the DB view onto the tree (and vice versa) — dnd-kit only connects

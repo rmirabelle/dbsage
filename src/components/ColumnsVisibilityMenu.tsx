@@ -8,7 +8,11 @@ interface Props {
   anchor: { x: number; y: number };
   columns: ColumnInfo[];
   hidden: string[];
+  selectedRowCount: number;
+  totalRowCount: number;
   onChange: (hidden: string[]) => void;
+  onSelectAllRows: () => void;
+  onSelectNoRows: () => void;
   onClose: () => void;
 }
 
@@ -19,9 +23,19 @@ export function ColumnsVisibilityMenu({
   anchor,
   columns,
   hidden,
+  selectedRowCount,
+  totalRowCount,
   onChange,
+  onSelectAllRows,
+  onSelectNoRows,
   onClose,
 }: Props) {
+  const rowsAllSelected = totalRowCount > 0 && selectedRowCount === totalRowCount;
+  const rowsNoneSelected = selectedRowCount === 0;
+  const colsAllVisible = hidden.length === 0;
+  const colsNoneVisible = columns.length > 0 && hidden.length === columns.length;
+  const baseBtn = "px-1.5 rounded text-zinc-200 font-semibold hover:bg-zinc-800";
+  const activeBtn = "px-1.5 rounded font-semibold bg-emerald-900/60 text-emerald-200";
   const ref = useRef<HTMLDivElement>(null);
   const hiddenSet = new Set(hidden);
 
@@ -71,22 +85,52 @@ export function ColumnsVisibilityMenu({
     >
       <div className="px-3 py-1.5 border-b border-zinc-800 flex items-center justify-between gap-2">
         <span className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">
-          Columns
+          Select ROWS
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2 text-zinc-500">
+          <button
+            data-el="rows-select-all-btn"
+            onClick={() => {
+              onSelectAllRows();
+              onClose();
+            }}
+            className={rowsAllSelected ? activeBtn : baseBtn}
+          >
+            ALL
+          </button>
+          <span className="text-zinc-700">|</span>
+          <button
+            data-el="rows-select-none-btn"
+            onClick={() => {
+              onSelectNoRows();
+              onClose();
+            }}
+            className={rowsNoneSelected ? activeBtn : baseBtn}
+          >
+            NONE
+          </button>
+        </div>
+      </div>
+
+      <div className="px-3 py-1.5 border-b border-zinc-800 flex items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+          Show COLUMNS
+        </span>
+        <div className="flex items-center gap-2 text-zinc-500">
           <button
             data-el="columns-show-all-btn"
             onClick={showAll}
-            className="px-2 py-0.5 rounded text-zinc-300 hover:bg-zinc-800"
+            className={colsAllVisible ? activeBtn : baseBtn}
           >
-            Show all
+            ALL
           </button>
+          <span className="text-zinc-700">|</span>
           <button
             data-el="columns-hide-all-btn"
             onClick={hideAll}
-            className="px-2 py-0.5 rounded text-zinc-300 hover:bg-zinc-800"
+            className={colsNoneVisible ? activeBtn : baseBtn}
           >
-            Hide all
+            NONE
           </button>
         </div>
       </div>
@@ -108,11 +152,9 @@ export function ColumnsVisibilityMenu({
               {hide ? (
                 <EyeSlash size={14} className="shrink-0 text-zinc-500" />
               ) : (
-                <Eye size={14} className="shrink-0 text-accent-400" />
+                <Eye size={14} className="shrink-0 text-emerald-400" />
               )}
-              <span className={clsx("truncate flex-1", hide && "line-through")}>
-                {col.name}
-              </span>
+              <span className="truncate flex-1">{col.name}</span>
               <span className="text-[10px] font-mono text-zinc-600 truncate shrink-0">
                 {col.dataType}
               </span>

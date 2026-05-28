@@ -1,12 +1,12 @@
 import type { CellValue, ColumnInfo, RowRecord } from "../types";
 
-export type CopyAsFormat = "insert" | "update" | "tsv" | "tsv-header";
+export type CopyAsFormat = "insert" | "update" | "psv" | "psv-header";
 
 export const COPY_AS_OPTIONS: { format: CopyAsFormat; label: string }[] = [
-  { format: "insert", label: "INSERT statement" },
-  { format: "update", label: "UPDATE statement" },
-  { format: "tsv", label: "Tab-separated values" },
-  { format: "tsv-header", label: "Tab-separated values (w/ header row)" },
+  { format: "insert", label: "INSERT SQL" },
+  { format: "update", label: "UPDATE SQL" },
+  { format: "psv", label: "Pipe-delimited" },
+  { format: "psv-header", label: "Pipe-delimited + header" },
 ];
 
 /** Backtick-quote an identifier (column / table / database name). */
@@ -25,10 +25,10 @@ function predicate(col: ColumnInfo, v: CellValue): string {
   return v === null ? `${id(col.name)} IS NULL` : `${id(col.name)} = ${sqlLiteral(v)}`;
 }
 
-/** Flatten a cell to a TSV field: tabs/newlines collapse to a space; null → empty. */
-function tsvCell(v: CellValue): string {
+/** Flatten a cell to a pipe-delimited field: pipes/newlines collapse to a space; null → empty. */
+function psvCell(v: CellValue): string {
   if (v === null) return "";
-  return String(v).replace(/[\t\r\n]+/g, " ");
+  return String(v).replace(/[|\r\n]+/g, " ");
 }
 
 /**
@@ -44,11 +44,11 @@ export function buildCopyText(
   columns: ColumnInfo[],
   rows: RowRecord[]
 ): string {
-  if (format === "tsv" || format === "tsv-header") {
+  if (format === "psv" || format === "psv-header") {
     const lines: string[] = [];
-    if (format === "tsv-header") lines.push(columns.map((c) => c.name).join("\t"));
+    if (format === "psv-header") lines.push(columns.map((c) => c.name).join("|"));
     for (const row of rows) {
-      lines.push(columns.map((c) => tsvCell(row[c.name])).join("\t"));
+      lines.push(columns.map((c) => psvCell(row[c.name])).join("|"));
     }
     return lines.join("\n");
   }

@@ -12,6 +12,7 @@ import type {
   MonitorSample,
   ProcessRow,
   ProfileView,
+  QueryHistoryItem,
   QueryResult,
   Relation,
   RowsResult,
@@ -98,6 +99,22 @@ export const ipc = {
     table: string;
     values: { column: string; value: string | null }[];
   }) => invoke<number>("insert_row", args),
+
+  deleteRow: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    pk: { column: string; value: string | null }[];
+  }) => invoke<number>("delete_row", args),
+
+  listQueryHistory: (profileId: string, database: string) =>
+    invoke<QueryHistoryItem[]>("list_query_history", { profileId, database }),
+  addQueryHistory: (profileId: string, database: string, sql: string) =>
+    invoke<QueryHistoryItem[]>("add_query_history", { profileId, database, sql }),
+  deleteQueryHistory: (profileId: string, database: string, sql: string) =>
+    invoke<void>("delete_query_history", { profileId, database, sql }),
+  clearQueryHistory: (profileId: string, database: string) =>
+    invoke<void>("clear_query_history", { profileId, database }),
 
   tableExists: (profileId: string, database: string, table: string) =>
     invoke<boolean>("table_exists", { profileId, database, table }),

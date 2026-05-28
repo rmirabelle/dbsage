@@ -498,8 +498,8 @@ function DatabaseList({
   } | null>(null);
   const activeDbName = useStore((s) => {
     const tab = s.tabs.find((t) => t.id === s.activeTabId);
-    if (!tab || tab.kind !== "database" || tab.profileId !== profile.id) return null;
-    return tab.database;
+    if (!tab || tab.profileId !== profile.id) return null;
+    return tab.database || null;
   });
 
   if (!tree) return null;
@@ -610,7 +610,7 @@ function DatabaseList({
               data-el="db-row"
               className={clsx(
                 "flex items-center gap-1 pl-6 pr-2 py-1.5 cursor-pointer hover:bg-zinc-900/70",
-                isActive && "bg-zinc-900/60",
+                isActive && "bg-blue-500/15",
                 isOver && "ring-1 ring-inset ring-accent-400 bg-accent-500/10"
               )}
               onClick={() => openDatabase(profile.id, profile.name, db)}

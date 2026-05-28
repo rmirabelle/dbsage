@@ -42,7 +42,9 @@ const MIN_PEEK_H = 160;
 
 type PaneRect = { left: number; top: number; width: number; height: number };
 
-/** Clamp a top-left (screen px) so a winW x winH window stays inside the pane. */
+/** Clamp a top-left (screen px). The left edge may travel until it sits 40px
+ *  short of the OS window's right edge (the peek can park almost fully off-
+ *  screen to the right). Vertical bounds remain inside the pane. */
 function clampToPane(
   x: number,
   y: number,
@@ -51,7 +53,7 @@ function clampToPane(
   pane: PaneRect | null
 ) {
   if (!pane) return { x, y };
-  const maxX = pane.left + Math.max(0, pane.width - winW);
+  const maxX = window.innerWidth - 40;
   const maxY = pane.top + Math.max(0, pane.height - winH);
   return {
     x: Math.min(Math.max(x, pane.left), maxX),

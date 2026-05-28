@@ -201,6 +201,12 @@ interface Store {
   applySavedQuery: (tabId: string, name: string) => void;
   /** Delete a saved query by name. */
   deleteSavedQuery: (tabId: string, name: string) => Promise<void>;
+  /** Load a history entry's SQL into the pane (no name; just SQL). */
+  applyQueryHistory: (tabId: string, sql: string) => void;
+  /** Delete one history entry by its SQL. */
+  deleteQueryHistory: (tabId: string, sql: string) => Promise<void>;
+  /** Clear the entire history for this tab's database. */
+  clearQueryHistory: (tabId: string) => Promise<void>;
   openTableDesigner: (
     profileId: string,
     profileName: string,
@@ -306,6 +312,7 @@ interface Store {
     tabId: string,
     values: { column: string; value: string | null }[]
   ) => Promise<void>;
+  deleteRows: (tabId: string, rowIndices: number[]) => Promise<void>;
 }
 
 const defaultTree = (): DbTree => ({
@@ -983,9 +990,11 @@ export const useStore = create<Store>((set, get) => ({
       roundTripMs: null,
       savedQueries: [],
       activeSavedQuery: null,
+      queryHistory: [],
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     loadSavedQueries(tabId, set, get);
+    loadQueryHistory(tabId, set, get);
   },
 
   setQuerySql: (tabId, sql) => {
@@ -1026,22 +1035,31 @@ export const useStore = create<Store>((set, get) => ({
               database: dbs.includes(t.database) ? t.database : dbs[0] ?? "",
               savedQueries: [],
               activeSavedQuery: null,
+              queryHistory: [],
             }
           : t
       ),
     }));
     loadSavedQueries(tabId, set, get);
+    loadQueryHistory(tabId, set, get);
   },
 
   setQueryDatabase: (tabId, database) => {
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "query"
-          ? { ...t, database, savedQueries: [], activeSavedQuery: null }
+          ? {
+              ...t,
+              database,
+              savedQueries: [],
+              activeSavedQuery: null,
+              queryHistory: [],
+            }
           : t
       ),
     }));
     loadSavedQueries(tabId, set, get);
+    loadQueryHistory(tabId, set, get);
   },
 
   executeQuery: async (tabId) => {
@@ -1064,6 +1082,28 @@ export const useStore = create<Store>((set, get) => ({
           : t
       ),
     }));
+    /* Silently record this execution attempt. Backend dedupes + bumps timestamp
+       on identical SQL. Skipped when no database is selected (no key). */
+    if (tab.database) {
+      const sqlAtExecute = tab.sql;
+      ipc
+        .addQueryHistory(tab.profileId, tab.database, sqlAtExecute)
+        .then((queryHistory) => {
+          set((s) => ({
+            tabs: s.tabs.map((t) =>
+              t.id === tabId &&
+              t.kind === "query" &&
+              t.profileId === tab.profileId &&
+              t.database === tab.database
+                ? { ...t, queryHistory }
+                : t
+            ),
+          }));
+        })
+        .catch(() => {
+          /* history is best-effort; don't surface */
+        });
+    }
     /* Tick the live server timer from backend progress events for this token. */
     const unlisten = await listen<{ token: string; serverMs: number }>(
       "query-progress",
@@ -1206,6 +1246,48 @@ export const useStore = create<Store>((set, get) => ({
       }));
     } catch (e) {
       notifyError(`Could not delete query: ${String(e)}`);
+    }
+  },
+
+  applyQueryHistory: (tabId, sql) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query"
+          ? { ...t, sql, activeSavedQuery: null }
+          : t
+      ),
+    }));
+  },
+
+  deleteQueryHistory: async (tabId, sql) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "query" || !tab.database) return;
+    try {
+      await ipc.deleteQueryHistory(tab.profileId, tab.database, sql);
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "query"
+            ? { ...t, queryHistory: t.queryHistory.filter((h) => h.sql !== sql) }
+            : t
+        ),
+      }));
+    } catch (e) {
+      notifyError(`Could not delete history entry: ${String(e)}`);
+    }
+  },
+
+  clearQueryHistory: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "query" || !tab.database) return;
+    try {
+      await ipc.clearQueryHistory(tab.profileId, tab.database);
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "query" ? { ...t, queryHistory: [] } : t
+        ),
+      }));
+    } catch (e) {
+      notifyError(`Could not clear history: ${String(e)}`);
     }
   },
 
@@ -1643,6 +1725,35 @@ export const useStore = create<Store>((set, get) => ({
     }));
     await loadTabPage(tabId, tab.page, set, get);
   },
+
+  deleteRows: async (tabId, rowIndices) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows" || !tab.data) return;
+    const pkColumns = tab.data.columns.filter((c) => c.key === "PRI");
+    if (pkColumns.length === 0) {
+      throw new Error("Table has no primary key - row deletion is disabled.");
+    }
+    for (const rowIndex of rowIndices) {
+      const row = tab.data.rows[rowIndex];
+      if (!row) continue;
+      const pk = pkColumns.map((c) => ({
+        column: c.name,
+        value: toIpcString(row[c.name]),
+      }));
+      await ipc.deleteRow({
+        profileId: tab.profileId,
+        database: tab.database,
+        table: tab.table,
+        pk,
+      });
+    }
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: null } : t
+      ),
+    }));
+    await loadTabPage(tabId, tab.page, set, get);
+  },
 }));
 
 function toIpcString(v: unknown): string | null {
@@ -1675,6 +1786,31 @@ function loadSavedQueries(tabId: string, set: SetFn, get: GetFn) {
           t.profileId === profileId &&
           t.database === database
             ? { ...t, savedQueries }
+            : t
+        ),
+      }));
+    })
+    .catch(() => {
+      /* load is best-effort */
+    });
+}
+
+/** Fetch the query history for a query tab's current database and store it on
+ * the tab. Best-effort; a load failure just leaves the list empty. */
+function loadQueryHistory(tabId: string, set: SetFn, get: GetFn) {
+  const tab = get().tabs.find((t) => t.id === tabId);
+  if (!tab || tab.kind !== "query" || !tab.database) return;
+  const { profileId, database } = tab;
+  ipc
+    .listQueryHistory(profileId, database)
+    .then((queryHistory) => {
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId &&
+          t.kind === "query" &&
+          t.profileId === profileId &&
+          t.database === database
+            ? { ...t, queryHistory }
             : t
         ),
       }));
