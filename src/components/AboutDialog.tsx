@@ -7,11 +7,11 @@ import {
   ArrowSquareOut,
   CheckCircle,
   CircleNotch,
-  Database,
   DownloadSimple,
   X,
 } from "@phosphor-icons/react";
 import { checkForUpdate, type UpdateInfo } from "../lib/updater";
+import appIcon from "../assets/app-icon.png";
 
 type Props = {
   open: boolean;
@@ -121,30 +121,29 @@ export function AboutDialog({ open, version, initialUpdateInfo, onClose }: Props
         )}
 
         <div className="flex items-center gap-4 px-5 pt-6 pb-4">
-          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-accent-500/10 border border-accent-500/30">
-            <Database size={37} weight="duotone" className="text-accent-400" />
+          <div className="flex shrink-0 items-center justify-center">
+            <img src={appIcon} alt="DB Sage" className="h-36 w-36" />
           </div>
           <div className="flex flex-col gap-0.5">
-            <div className="text-lg font-semibold text-zinc-100">DB Sage</div>
+            <div className="text-lg font-semibold text-lime-400">DB Sage</div>
             <div className="text-[11px] text-zinc-500">Version {version || "—"}</div>
             <div className="mt-1 text-xs text-zinc-400">by Robert Mirabelle</div>
             <div className="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
               A focused, opinionated, intelligent and robust MySQL client for
               Windows.
             </div>
+            <div className="mt-3 min-h-[52px]">
+              <UpdateSection
+                state={state}
+                onCheck={handleCheck}
+                onDownload={handleDownload}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="border-t border-zinc-800 px-5 py-4">
-          <UpdateSection
-            state={state}
-            onCheck={handleCheck}
-            onDownload={handleDownload}
-          />
-        </div>
-
         {state.kind !== "downloading" && (
-          <div className="flex justify-end border-t border-zinc-800 px-5 py-3">
+          <div className="flex justify-end border-t border-zinc-800 px-3 py-3">
             <button type="button" data-el="about-close-btn" onClick={onClose} className="dbs-btn-secondary">
               Close
             </button>
@@ -189,10 +188,7 @@ function UpdateSection({
   switch (state.kind) {
     case "idle":
       return (
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-[11px] text-zinc-500">
-            Check GitHub for a newer release.
-          </span>
+        <div className="flex items-center justify-start gap-3">
           <button
             type="button"
             data-el="check-update-btn"
@@ -215,11 +211,7 @@ function UpdateSection({
 
     case "upToDate":
       return (
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-[11px] text-zinc-300">
-            <CheckCircle size={17} className="text-emerald-400" weight="fill" />
-            You&apos;re up to date.
-          </div>
+        <div className="flex flex-col items-start gap-2">
           <button
             type="button"
             onClick={onCheck}
@@ -228,6 +220,10 @@ function UpdateSection({
             <ArrowClockwise size={13} />
             Check again
           </button>
+          <div className="flex items-center gap-2 text-[11px] text-zinc-300">
+            <CheckCircle size={17} className="text-emerald-400" weight="fill" />
+            You&apos;re up to date.
+          </div>
         </div>
       );
 

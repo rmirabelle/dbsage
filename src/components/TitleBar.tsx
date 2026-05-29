@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  Database,
   DownloadSimple,
   FileArrowDown,
   FileArrowUp,
@@ -11,6 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import { useUi, ZOOM_BOUNDS } from "../state/ui";
 import { WindowControls } from "./WindowControls";
+import appIcon from "../assets/app-icon.png";
 
 /** Zoom the currently-focused pane (tree or tabs). */
 const zoomFocused = (delta: number) => {
@@ -41,8 +41,8 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
           data-tauri-drag-region
           className="flex items-center gap-2 pr-3 text-zinc-300 pointer-events-none"
         >
-          <Database size={16} className="text-accent-400" />
-          <span className="text-[12px] font-bold tracking-wide text-accent-400">DB Sage</span>
+          <img src={appIcon} alt="" className="h-4 w-4" />
+          <span className="text-[12px] font-bold tracking-wide text-lime-400">DB Sage</span>
         </div>
         <nav data-el="app-menu" className="flex items-center">
           <TitleBarMenu label="File">
@@ -155,7 +155,7 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
 const MENU_ITEM_CLASS =
   "flex w-full items-center justify-between gap-6 px-3 py-1.5 text-left text-[12px] text-zinc-200 hover:bg-zinc-800";
 const MENU_LABEL_CLASS = "flex items-center gap-2.5";
-const MENU_ICON_CLASS = "text-accent-400 shrink-0";
+const MENU_ICON_CLASS = "text-lime-400 shrink-0";
 
 function TitleBarMenu({
   label,

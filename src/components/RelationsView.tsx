@@ -97,6 +97,21 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
     [sortedRelations, query]
   );
 
+  /**
+   * Group the visible relations by their source table (table1) so each table
+   * renders as a single card. Relies on visibleRelations already being sorted
+   * by fromTable, so Map insertion order yields alphabetical groups.
+   */
+  const groupedRelations = useMemo(() => {
+    const groups = new Map<string, Relation[]>();
+    for (const r of visibleRelations) {
+      const arr = groups.get(r.fromTable);
+      if (arr) arr.push(r);
+      else groups.set(r.fromTable, [r]);
+    }
+    return [...groups.entries()];
+  }, [visibleRelations]);
+
   useEffect(() => {
     ipc
       .listTables(profileId, database)
@@ -288,7 +303,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
           title="Add a relation"
         >
-          <Plus size={17} /> Relation
+          <span className="relative -top-px text-[19px] leading-none">+</span> Relation
         </button>
         <span className="ml-auto text-[11px] text-zinc-500">
           {query
@@ -303,16 +318,9 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         </div>
       )}
 
-      <div className="flex-1 min-h-0 flex">
+      <div data-el="relations-body" className="flex-1 min-h-0 flex bg-[#1d2029]">
         <div className="flex-1 min-h-0 flex flex-col">
-          <div className="shrink-0 px-4 pt-4 pb-2 flex items-center gap-2">
-            <ShareNetwork size={18} className="text-violet-400" />
-            <h2 className="text-[16px] font-semibold text-violet-400">
-              Relations{" "}
-              <span className="font-normal text-zinc-500">— {database}</span>
-            </h2>
-          </div>
-          <div className="flex-1 min-h-0 overflow-auto px-4 pb-4">
+          <div className="flex-1 min-h-0 overflow-auto px-4 pt-4 pb-4">
           {relations.length === 0 ? (
             <div className="text-[12px] text-zinc-500 py-2">
               No relations defined for this database yet.
@@ -322,65 +330,76 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
               No relations match “{search.trim()}”.
             </div>
           ) : (
-            <ul className="space-y-0.5">
-              {visibleRelations.map((r) => {
-                const subject = singularize(r.fromTable);
-                const object =
-                  r.name.trim() ||
-                  (r.kind === "has_many"
-                    ? pluralize(singularize(r.toTable))
-                    : singularize(r.toTable));
-                return (
-                  <li
-                    key={r.id}
-                    data-el="relation-row"
-                    onClick={() => startEdit(r)}
-                    className={clsx(
-                      "group flex items-center gap-2 rounded pl-4 pr-2 py-1.5 cursor-pointer",
-                      form.editingId === r.id
-                        ? "bg-accent-500/10"
-                        : "hover:bg-zinc-800/60"
-                    )}
-                  >
+            <div className="space-y-1.5">
+              {groupedRelations.map(([fromTable, rels]) => (
+                <div
+                  key={fromTable}
+                  data-el="relation-group"
+                  className="flex rounded-lg border border-zinc-800 bg-zinc-900/40 overflow-hidden"
+                >
+                  <div className="flex w-44 shrink-0 items-center gap-2 px-3 py-2 border-r border-zinc-800 bg-zinc-900/60">
                     <ShareNetwork
-                      size={16}
+                      size={15}
                       weight="bold"
                       className="shrink-0 text-violet-400"
                     />
                     <span className="truncate text-[13px] font-semibold text-zinc-100">
-                      {subject}
+                      {fromTable}
                     </span>
-                    <span
-                      className={clsx(
-                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                        r.kind === "has_many"
-                          ? "bg-amber-500/15 text-amber-300"
-                          : "bg-accent-500/15 text-accent-300"
-                      )}
-                    >
-                      {r.kind === "has_many" ? "has many" : "has one"}
-                    </span>
-                    <span className="truncate text-[13px] font-semibold text-zinc-100">
-                      {object}
-                    </span>
-                    <span className="shrink-0 text-[12px] text-zinc-500 truncate">
-                      {r.fromColumn} &rarr; {r.toColumn}
-                    </span>
-                    <button
-                      data-el="relation-delete-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(r.id);
-                      }}
-                      className="ml-auto shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100"
-                      aria-label="Delete relation"
-                    >
-                      <Trash size={13} />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                  </div>
+                  <ul className="flex-1 min-w-0 divide-y divide-zinc-800/50">
+                    {rels.map((r) => {
+                      const object =
+                        r.name.trim() ||
+                        (r.kind === "has_many"
+                          ? pluralize(singularize(r.toTable))
+                          : singularize(r.toTable));
+                      return (
+                        <li
+                          key={r.id}
+                          data-el="relation-row"
+                          onClick={() => startEdit(r)}
+                          className={clsx(
+                            "group flex items-center gap-2 px-3 py-1.5 cursor-pointer",
+                            form.editingId === r.id
+                              ? "bg-accent-500/10"
+                              : "hover:bg-zinc-800/60"
+                          )}
+                        >
+                          <span
+                            className={clsx(
+                              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                              r.kind === "has_many"
+                                ? "bg-accent-500/15 text-accent-300"
+                                : "bg-amber-500/15 text-amber-300"
+                            )}
+                          >
+                            {r.kind === "has_many" ? "has many" : "has one"}
+                          </span>
+                          <span className="truncate text-[13px] font-semibold text-violet-400">
+                            {object}
+                          </span>
+                          <span className="shrink-0 text-[12px] text-zinc-500 truncate">
+                            {r.fromColumn} &rarr; {r.toColumn}
+                          </span>
+                          <button
+                            data-el="relation-delete-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDelete(r.id);
+                            }}
+                            className="ml-auto shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100"
+                            aria-label="Delete relation"
+                          >
+                            <Trash size={13} />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
           )}
           </div>
         </div>

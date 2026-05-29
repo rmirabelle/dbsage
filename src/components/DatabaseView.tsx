@@ -24,6 +24,7 @@ import { TableContextMenu } from "./TableContextMenu";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { ViewsIcon } from "./TableViewPresetMenu";
 import { Tooltip } from "./Tooltip";
+import appIconLarge from "../assets/app-icon-large.png";
 import type { DatabaseTab, Folder, TableInfo } from "../types";
 
 interface Props {
@@ -421,7 +422,12 @@ export function DatabaseView({ tab }: Props) {
 
   return (
     <>
-      <div data-el="database-view" className="flex-1 flex flex-col min-h-0">
+      <div data-el="database-view" className="relative isolate flex-1 flex flex-col min-h-0 bg-[#1d2029]">
+        <img
+          src={appIconLarge}
+          alt=""
+          className="absolute bottom-6 right-6 w-[120px] h-[120px] object-contain opacity-[0.08] select-none pointer-events-none -z-10"
+        />
         <div data-el="database-toolbar" className="dbs-toolbar pl-1.5 pr-3 py-1.5 border-b border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400">
           <div className="relative">
             <Search
@@ -566,7 +572,7 @@ export function DatabaseView({ tab }: Props) {
 
         <div
           ref={scrollContainerRef}
-          className="flex-1 min-h-0 overflow-auto p-2 bg-[#1d2029] select-none"
+          className="flex-1 min-h-0 overflow-auto p-2 select-none"
           onPointerDown={handleMarqueeDown}
           onClick={(e) => {
             if (e.target === e.currentTarget) clearSelection();

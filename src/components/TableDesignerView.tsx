@@ -236,7 +236,7 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             className="w-72 bg-zinc-950 border border-zinc-700 rounded-r px-2 py-1 text-zinc-100 outline-none focus:border-accent-500"
           />
         </div>
-        <Asterisk size={14} weight="bold" className="text-red-500 shrink-0" />
+        <Asterisk size={9} weight="bold" className="text-red-500 shrink-0 self-start mt-2 -ml-1" />
 
         {isEdit && tab.originalAutoIncrementValue !== "" && (
           <div className="flex items-center gap-2 ml-5">

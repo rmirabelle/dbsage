@@ -36,6 +36,7 @@ import { ExpandedPanel } from "./ExpandedPanel";
 import { TableViewPresetMenu } from "./TableViewPresetMenu";
 import { RelatedPeek, type PeekTarget } from "./RelatedPeek";
 import { InsertRowDialog } from "./InsertRowDialog";
+import appIconLarge from "../assets/app-icon-large.png";
 import type { Relation, RowsTab, Tab } from "../types";
 import {
   relationTargets,
@@ -975,14 +976,12 @@ function TableEditIcon({
 
 function EmptyState() {
   return (
-    <div data-el="tabs-empty-state" className="flex-1 flex items-center justify-center">
-      <div className="text-center text-zinc-600">
-        <Database size={46} className="mx-auto mb-3 opacity-30" />
-        <p className="text-sm">Click a database to browse its tables.</p>
-        <p className="text-[11px] mt-1 text-zinc-700">
-          Double-click a table to view its rows.
-        </p>
-      </div>
+    <div data-el="tabs-empty-state" className="flex-1 flex items-end justify-end p-6">
+      <img
+        src={appIconLarge}
+        alt=""
+        className="w-[120px] h-[120px] object-contain opacity-[0.08] select-none pointer-events-none"
+      />
     </div>
   );
 }
