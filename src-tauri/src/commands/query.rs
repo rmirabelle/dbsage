@@ -72,7 +72,23 @@ pub struct SortSpec {
 #[serde(rename_all = "lowercase")]
 pub enum FilterOp {
     Equals,
+    /// `col <> ?`
+    Ne,
     Like,
+    /// `col NOT LIKE ?`
+    NotLike,
+    /// `col IS NULL` — takes no value.
+    IsNull,
+    /// `col IS NOT NULL` — takes no value.
+    NotNull,
+    /// `col > ?`
+    Gt,
+    /// `col >= ?`
+    Gte,
+    /// `col < ?`
+    Lt,
+    /// `col <= ?`
+    Lte,
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,25 +280,60 @@ fn build_where(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            match (json_path, &f.op) {
-                (Some(path), FilterOp::Equals) => {
-                    where_clauses.push(format!("JSON_CONTAINS({ident}, CAST(? AS JSON))"));
-                    bindings.push(json_candidate(path, &f.value));
+            match &f.op {
+                /* Comparison operators apply to the column directly (no JSON
+                   path); IS [NOT] NULL take no bound value. */
+                FilterOp::IsNull => {
+                    where_clauses.push(format!("{ident} IS NULL"));
                 }
-                (Some(path), FilterOp::Like) => {
-                    where_clauses
-                        .push(format!("JSON_SEARCH({ident}, 'one', ?, NULL, ?) IS NOT NULL"));
-                    bindings.push(prepare_like_value(&f.value));
-                    bindings.push(json_search_path(path));
+                FilterOp::NotNull => {
+                    where_clauses.push(format!("{ident} IS NOT NULL"));
                 }
-                (None, FilterOp::Equals) => {
-                    where_clauses.push(format!("{ident} = ?"));
+                FilterOp::Ne => {
+                    where_clauses.push(format!("{ident} <> ?"));
                     bindings.push(f.value.clone());
                 }
-                (None, FilterOp::Like) => {
-                    where_clauses.push(format!("{ident} LIKE ?"));
+                FilterOp::NotLike => {
+                    where_clauses.push(format!("{ident} NOT LIKE ?"));
                     bindings.push(prepare_like_value(&f.value));
                 }
+                FilterOp::Gt => {
+                    where_clauses.push(format!("{ident} > ?"));
+                    bindings.push(f.value.clone());
+                }
+                FilterOp::Gte => {
+                    where_clauses.push(format!("{ident} >= ?"));
+                    bindings.push(f.value.clone());
+                }
+                FilterOp::Lt => {
+                    where_clauses.push(format!("{ident} < ?"));
+                    bindings.push(f.value.clone());
+                }
+                FilterOp::Lte => {
+                    where_clauses.push(format!("{ident} <= ?"));
+                    bindings.push(f.value.clone());
+                }
+                FilterOp::Equals | FilterOp::Like => match (json_path, &f.op) {
+                    (Some(path), FilterOp::Equals) => {
+                        where_clauses.push(format!("JSON_CONTAINS({ident}, CAST(? AS JSON))"));
+                        bindings.push(json_candidate(path, &f.value));
+                    }
+                    (Some(path), FilterOp::Like) => {
+                        where_clauses
+                            .push(format!("JSON_SEARCH({ident}, 'one', ?, NULL, ?) IS NOT NULL"));
+                        bindings.push(prepare_like_value(&f.value));
+                        bindings.push(json_search_path(path));
+                    }
+                    (None, FilterOp::Equals) => {
+                        where_clauses.push(format!("{ident} = ?"));
+                        bindings.push(f.value.clone());
+                    }
+                    (None, FilterOp::Like) => {
+                        where_clauses.push(format!("{ident} LIKE ?"));
+                        bindings.push(prepare_like_value(&f.value));
+                    }
+                    _ => unreachable!(),
+                },
             }
         }
     }

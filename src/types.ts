@@ -162,7 +162,26 @@ export interface SortSpec {
   direction: SortDirection;
 }
 
-export type FilterOp = "equals" | "like";
+export type FilterOp =
+  | "equals"
+  | "ne"
+  | "like"
+  | "notlike"
+  | "isnull"
+  | "notnull"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte";
+
+/** The four ordered-comparison operators (the combined `>` `>=` `<` `<=`
+ * toggle). `isnull`/`notnull` take no value; the rest compare against `value`. */
+export const COMPARE_OPS: { op: FilterOp; label: string }[] = [
+  { op: "gt", label: ">" },
+  { op: "gte", label: ">=" },
+  { op: "lt", label: "<" },
+  { op: "lte", label: "<=" },
+];
 
 export interface ColumnFilter {
   column: string;

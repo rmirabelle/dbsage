@@ -2,7 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Trash,
   Plus,
+  Copy,
+  ArrowsClockwise,
   ShareNetwork,
+  Warning,
+  CircleNotch as Loader2,
   X,
   FloppyDisk,
   MagnifyingGlass,
@@ -13,6 +17,8 @@ import { singularize, pluralize } from "../lib/inflector";
 import { useStore } from "../state/store";
 import { useUi } from "../state/ui";
 import { SearchableSelect } from "./SearchableSelect";
+import { CopyRelationsDialog } from "./CopyRelationsDialog";
+import { notifySuccess, notifyInfo } from "../state/notify";
 import type { Relation, RelationKind, RelationsTab } from "../types";
 
 const EMPTY_RELATIONS: Relation[] = [];
@@ -45,6 +51,10 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
 
   const [form, setForm] = useState(BLANK);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [addFocusSignal, setAddFocusSignal] = useState(0);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -65,6 +75,95 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   const closeEditor = () => {
     setForm(BLANK);
     setEditorOpen(false);
+  };
+
+  /** Delete every relation defined on this database, then refresh. */
+  const onClearAll = async () => {
+    if (clearing) return;
+    setClearing(true);
+    setError(null);
+    try {
+      const count = relations.length;
+      for (const r of relations) {
+        await ipc.deleteRelation(profileId, database, r.id);
+      }
+      await loadRelations(profileId, database);
+      setClearOpen(false);
+      notifySuccess(
+        `Cleared ${count} relation${count === 1 ? "" : "s"} from ${database}.`
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  /**
+   * Re-fetch the schema and run a validation pass: any defined relation whose
+   * tables/columns no longer exist is removed automatically. Notifies with the
+   * number pruned, or confirms all relations are valid.
+   */
+  const onRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      const ts = await ipc.listTables(profileId, database);
+      const tableNames = ts.map((t) => t.name);
+      setTables(tableNames);
+      const tableSet = new Set(tableNames);
+      const current = await ipc.listRelations(profileId, database);
+
+      /** Cache of column names per table (null = table absent). */
+      const colCache = new Map<string, Set<string> | null>();
+      const colsOf = async (table: string): Promise<Set<string> | null> => {
+        if (!tableSet.has(table)) return null;
+        if (!colCache.has(table)) {
+          const cols = await ipc.listColumns(profileId, database, table);
+          colCache.set(table, new Set(cols.map((c) => c.name)));
+        }
+        return colCache.get(table) ?? null;
+      };
+
+      const invalid: Relation[] = [];
+      for (const r of current) {
+        const fromCols = await colsOf(r.fromTable);
+        const toCols = await colsOf(r.toTable);
+        const valid =
+          !!fromCols &&
+          !!toCols &&
+          fromCols.has(r.fromColumn) &&
+          toCols.has(r.toColumn);
+        if (!valid) invalid.push(r);
+      }
+
+      for (const r of invalid) {
+        await ipc.deleteRelation(profileId, database, r.id);
+      }
+
+      await loadRelations(profileId, database);
+
+      if (invalid.length > 0) {
+        notifyInfo(
+          `Removed ${invalid.length} invalid relation${
+            invalid.length === 1 ? "" : "s"
+          } (missing table or column).`
+        );
+      } else {
+        notifySuccess(
+          current.length === 0
+            ? "No relations to validate."
+            : `All ${current.length} relation${
+                current.length === 1 ? "" : "s"
+              } are valid.`
+        );
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const sortedTables = useMemo(() => [...tables].sort(), [tables]);
@@ -282,7 +381,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
       data-el="relations-view"
       className="flex-1 flex flex-col min-h-0 bg-zinc-950"
     >
-      <div className="dbs-toolbar h-9 shrink-0 pl-1 pr-4 flex items-center gap-1 border-b border-zinc-800/60">
+      <div className="dbs-toolbar h-9 shrink-0 pl-1 pr-2 flex items-center gap-1 border-b border-zinc-800/60">
         <div className="relative">
           <MagnifyingGlass
             size={13}
@@ -305,11 +404,39 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         >
           <span className="relative -top-px text-[19px] leading-none">+</span> Relation
         </button>
-        <span className="ml-auto text-[11px] text-zinc-500">
+        <span className="ml-1 text-[11px] text-zinc-500">
           {query
             ? `${visibleRelations.length} of ${relations.length}`
             : `${relations.length} defined`}
         </span>
+        <button
+          data-el="copy-relations-btn"
+          onClick={() => setCopyOpen(true)}
+          disabled={relations.length === 0}
+          className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Copy these relations to another database"
+        >
+          <Copy size={14} /> Copy All
+        </button>
+        <button
+          data-el="clear-relations-btn"
+          onClick={() => setClearOpen(true)}
+          disabled={relations.length === 0}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Delete all relations for this database"
+        >
+          <Trash size={14} /> Clear All
+        </button>
+        <button
+          data-el="refresh-relations-btn"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="inline-flex items-center justify-center p-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50"
+          title="Refresh relations"
+          aria-label="Refresh relations"
+        >
+          <ArrowsClockwise size={15} className={refreshing ? "animate-spin" : undefined} />
+        </button>
       </div>
 
       {error && (
@@ -418,7 +545,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           style={{ width: editorWidth }}
           className="shrink-0 overflow-auto px-4 py-4 bg-[#2c303c]"
         >
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-5 flex items-center justify-between">
             <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
               {form.editingId ? "Edit relation" : "Add relation"}
             </span>
@@ -519,6 +646,82 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           </>
         )}
       </div>
+
+      <CopyRelationsDialog
+        open={copyOpen}
+        sourceProfileId={profileId}
+        sourceDatabase={database}
+        relations={relations}
+        onClose={() => setCopyOpen(false)}
+      />
+
+      {clearOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => !clearing && setClearOpen(false)}
+        >
+          <div
+            data-el="clear-relations-dialog"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            className="w-[440px] max-w-[90vw] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Warning size={18} weight="fill" className="text-amber-400" />
+                <h2 className="text-sm font-semibold text-zinc-100">
+                  Clear all relations
+                </h2>
+              </div>
+              {!clearing && (
+                <button
+                  onClick={() => setClearOpen(false)}
+                  className="text-zinc-500 hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+
+            <div className="px-4 py-4 text-[12px] leading-relaxed text-zinc-300">
+              <p>
+                Delete all{" "}
+                <span className="font-semibold text-zinc-100">
+                  {relations.length}
+                </span>{" "}
+                relation{relations.length === 1 ? "" : "s"} defined on{" "}
+                <span className="font-mono text-zinc-100">{database}</span>? This
+                cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-4 py-3">
+              <button
+                onClick={() => setClearOpen(false)}
+                disabled={clearing}
+                className="px-3 py-1.5 rounded text-[12px] text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                data-el="clear-relations-confirm"
+                onClick={onClearAll}
+                disabled={clearing}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-semibold bg-rose-900 text-rose-100 hover:bg-rose-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {clearing ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Trash size={14} />
+                )}
+                {clearing ? "Clearing…" : "Clear All"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

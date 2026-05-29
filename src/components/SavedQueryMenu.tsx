@@ -66,7 +66,7 @@ export function SavedQueryMenu({
       >
         <FloppyDisk size={16} weight="fill" className="shrink-0" />
         <span className="max-w-[160px] truncate font-bold">{activeName ?? "Saved"}</span>
-        <span className="rounded-full px-1.5 text-[10px] font-semibold tabular-nums bg-zinc-700 text-zinc-200">
+        <span className="text-[10px] font-semibold tabular-nums text-zinc-100">
           {queries.length}
         </span>
         <CaretDown size={12} className="-mr-1 opacity-70" />
@@ -75,6 +75,7 @@ export function SavedQueryMenu({
       {open && (
         <div
           data-el="saved-queries-menu"
+          style={{ fontSize: "13.5px" }}
           className="dbs-context-menu absolute left-0 top-full mt-1 z-50 w-80 rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 py-1 text-zinc-200"
         >
           {sorted.length === 0 ? (

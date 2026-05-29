@@ -234,45 +234,50 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         data-toolbar="query"
         className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
-        <div className="inline-flex items-center gap-1.5">
-          <PlugsConnected size={16} weight="fill" className="text-lime-400 shrink-0" />
-          <StyledSelect
-            dataEl="query-connection-select"
-            value={tab.profileId}
-            onChange={(v) => setQueryConnection(tab.id, v)}
-            title="Connection"
-            className="font-bold max-w-44"
-            options={profiles.map((p) => ({ value: p.id, label: p.name }))}
-          />
-        </div>
-
-        <div className="inline-flex items-center gap-1.5">
-          <Database size={16} weight="fill" className="text-blue-400 shrink-0" />
-          <StyledSelect
-            dataEl="query-database-select"
-            value={tab.database}
-            onChange={(v) => setQueryDatabase(tab.id, v)}
-            title="Database"
-            className="font-bold max-w-44"
-            options={
-              dbOptions.length === 0
-                ? [{ value: "", label: "(no database)" }]
-                : dbOptions.map((d) => ({ value: d, label: d }))
-            }
-          />
-        </div>
+        <StyledSelect
+          dataEl="query-connection-select"
+          icon={<PlugsConnected size={16} weight="fill" className="shrink-0" />}
+          value={tab.profileId}
+          onChange={(v) => setQueryConnection(tab.id, v)}
+          title="Connection"
+          className="font-bold max-w-44 text-lime-300"
+          menuClassName="text-[13.5px]"
+          options={profiles.map((p) => ({
+            value: p.id,
+            label: p.name,
+            icon: (
+              <PlugsConnected
+                size={15}
+                weight="fill"
+                className="shrink-0 text-lime-400"
+              />
+            ),
+          }))}
+        />
 
         <StyledSelect
-          dataEl="query-maxrows-select"
-          value={tab.maxRows == null ? "" : String(tab.maxRows)}
-          onChange={(v) => setQueryMaxRows(tab.id, v === "" ? null : Number(v))}
-          title="Maximum rows to fetch — a safety cap against huge result sets"
-          options={[
-            { value: "100", label: "100 rows" },
-            { value: "1000", label: "1,000 rows" },
-            { value: "10000", label: "10,000 rows" },
-            { value: "", label: "No limit" },
-          ]}
+          dataEl="query-database-select"
+          icon={<Database size={16} weight="fill" className="shrink-0" />}
+          value={tab.database}
+          onChange={(v) => setQueryDatabase(tab.id, v)}
+          title="Database"
+          className="font-bold max-w-44 text-accent-300"
+          menuClassName="text-[13.5px]"
+          options={
+            dbOptions.length === 0
+              ? [{ value: "", label: "(no database)" }]
+              : dbOptions.map((d) => ({
+                  value: d,
+                  label: d,
+                  icon: (
+                    <Database
+                      size={15}
+                      weight="fill"
+                      className="shrink-0 text-accent-400"
+                    />
+                  ),
+                }))
+          }
         />
 
         <SavedQueryMenu
@@ -406,17 +411,32 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         data-toolbar="query-results"
         className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
-        <ExportButton
-          database={tab.database}
-          columns={result?.columns ?? []}
-          rows={
-            selectedRows.length > 0
-              ? selectedRows.map((i) => viewRows[i]).filter((r): r is RowRecord => r != null)
-              : viewRows
-          }
-          selectedCount={selectedRows.length}
-          disabled={!hasResultSet}
+        <StyledSelect
+          dataEl="query-maxrows-select"
+          value={tab.maxRows == null ? "" : String(tab.maxRows)}
+          onChange={(v) => setQueryMaxRows(tab.id, v === "" ? null : Number(v))}
+          title="Maximum rows to fetch — a safety cap against huge result sets"
+          options={[
+            { value: "100", label: "100 rows" },
+            { value: "1000", label: "1,000 rows" },
+            { value: "10000", label: "10,000 rows" },
+            { value: "", label: "No limit" },
+          ]}
         />
+
+        <div className="ml-auto">
+          <ExportButton
+            database={tab.database}
+            columns={result?.columns ?? []}
+            rows={
+              selectedRows.length > 0
+                ? selectedRows.map((i) => viewRows[i]).filter((r): r is RowRecord => r != null)
+                : viewRows
+            }
+            selectedCount={selectedRows.length}
+            disabled={!hasResultSet}
+          />
+        </div>
 
         <button
           data-el="expanded-toggle-btn"
@@ -424,7 +444,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           disabled={!hasResultSet}
           title="Toggle the Inspector panel"
           className={clsx(
-            "ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800 bg-zinc-800 hover:bg-zinc-700",
+            "inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800 bg-zinc-800 hover:bg-zinc-700",
             expanded ? "text-emerald-300" : "text-zinc-500 hover:text-zinc-400"
           )}
         >
@@ -615,11 +635,34 @@ function matchFilter(value: unknown, f: ColumnFilter): boolean {
     const needle = f.value.replace(/[%_]/g, "").toLowerCase();
     return candidates.some((c) => c.toLowerCase().includes(needle));
   }
-  const s = value == null ? "" : typeof value === "string" ? value : String(value);
-  if (f.op === "equals") return s === f.value;
-  /* "like": substring match, ignoring SQL wildcards (client-side approximation). */
-  const needle = f.value.replace(/[%_]/g, "").toLowerCase();
-  return s.toLowerCase().includes(needle);
+  /* The null-aware ops decide purely on presence; every other op treats a null
+     cell as a non-match (mirrors SQL, where comparisons with NULL are unknown). */
+  if (f.op === "isnull") return value == null;
+  if (f.op === "notnull") return value != null;
+  if (value == null) return false;
+  const s = typeof value === "string" ? value : String(value);
+  const likeNeedle = () => f.value.replace(/[%_]/g, "").toLowerCase();
+  switch (f.op) {
+    case "equals":
+      return s === f.value;
+    case "like":
+      /* substring match, ignoring SQL wildcards (client-side approximation). */
+      return s.toLowerCase().includes(likeNeedle());
+    case "notlike":
+      return !s.toLowerCase().includes(likeNeedle());
+    case "ne":
+      return cmp(s, f.value) !== 0;
+    case "gt":
+      return cmp(s, f.value) > 0;
+    case "gte":
+      return cmp(s, f.value) >= 0;
+    case "lt":
+      return cmp(s, f.value) < 0;
+    case "lte":
+      return cmp(s, f.value) <= 0;
+    default:
+      return true;
+  }
 }
 
 function applyView(

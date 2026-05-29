@@ -30,12 +30,12 @@ export function QueryHistoryButton({
         onClick={() => setOpen(true)}
         disabled={disabled}
         title={`Query history (${items.length})`}
-        className="relative inline-flex items-center justify-center h-7 w-7 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100"
+        className="inline-flex items-center gap-1.5 h-7 px-2 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100"
       >
-        <ClockCounterClockwise size={16} weight="bold" />
+        <ClockCounterClockwise size={16} weight="bold" className="shrink-0 text-emerald-400" />
         {items.length > 0 && (
           <span
-            className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-accent-500 text-[#042f2e] text-[10px] font-bold leading-none flex items-center justify-center tabular-nums"
+            className="text-[10px] font-semibold tabular-nums text-zinc-100"
             aria-label={`${items.length} history items`}
           >
             {items.length}

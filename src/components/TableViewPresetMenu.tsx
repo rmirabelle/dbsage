@@ -92,10 +92,8 @@ export function TableViewPresetMenu({
         <span className="max-w-[160px] truncate">{activeName ?? "Views"}</span>
         <span
           className={clsx(
-            "rounded-full px-1.5 text-[10px] font-semibold tabular-nums",
-            activeName
-              ? "bg-emerald-950/40 text-emerald-50"
-              : "bg-zinc-700 text-zinc-200"
+            "text-[10px] font-semibold tabular-nums",
+            activeName ? "text-emerald-50" : "text-zinc-100"
           )}
         >
           {presets.length}
