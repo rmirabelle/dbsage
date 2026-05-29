@@ -66,6 +66,7 @@ function persistColumnSetup(tab: RowsTab) {
       filters: tab.filters,
       jsonDisplay: tab.jsonDisplay,
       columnWidths: tab.columnWidths,
+      sort: tab.sort,
     })
     .catch(() => {
       /* persistence is best-effort */
@@ -750,7 +751,7 @@ export const useStore = create<Store>((set, get) => ({
       exactTotal: null,
       loading: true,
       error: null,
-      sort: null,
+      sort: saved?.sort ?? null,
       filters: saved?.filters ?? [],
       hiddenColumns: saved?.hiddenColumns ?? [],
       jsonDisplay: saved?.jsonDisplay ?? {},
@@ -1519,6 +1520,8 @@ export const useStore = create<Store>((set, get) => ({
         t.id === tabId && t.kind === "rows" ? { ...t, sort, page: 1 } : t
       ),
     }));
+    const t = get().tabs.find((x) => x.id === tabId);
+    if (t && t.kind === "rows") persistColumnSetup(t);
     await loadTabPage(tabId, 1, set, get);
   },
 

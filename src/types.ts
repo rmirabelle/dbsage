@@ -93,6 +93,8 @@ export interface ColumnSetup {
   /** Manual column-width overrides in pixels, keyed by column name. Absent in
    * setups saved before width persistence existed. */
   columnWidths?: Record<string, number>;
+  /** Active sort. Absent in setups saved before sort persistence existed. */
+  sort?: SortSpec | null;
 }
 
 /** A full, reusable table-view snapshot: everything a named preset captures and
