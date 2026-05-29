@@ -48,16 +48,15 @@ function MonitorTitleBar({ title }: { title: string }) {
         data-tauri-drag-region
         className="flex items-center gap-2 text-zinc-300 pointer-events-none"
       >
-        <Pulse size={16} className="text-sky-400" />
-        <span className="text-[12px] font-bold tracking-wide text-zinc-200">
+        <Pulse size={16} className="text-blue-400" />
+        {title && (
+          <span className="text-[15px] font-bold tracking-wide text-lime-400">
+            {title}
+          </span>
+        )}
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
           Monitor
         </span>
-        {title && (
-          <>
-            <span className="text-zinc-600">·</span>
-            <span className="text-[12px] text-zinc-400">{title}</span>
-          </>
-        )}
       </div>
       <WindowControls />
     </div>

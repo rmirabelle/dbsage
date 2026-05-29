@@ -13,6 +13,48 @@ export interface ProfileView extends ConnectionProfile {
   hasPassword: boolean;
 }
 
+/** MySQL Windows service summary for the Admin panel (local connections only). */
+export interface ServiceInfo {
+  name: string;
+  displayName: string | null;
+  state: string;
+  startMode: string;
+  binPath: string | null;
+  defaultsFile: string | null;
+}
+
+/** Resolved log destinations for a connection (Admin "Logs" panel). */
+export interface LogConfig {
+  datadir: string | null;
+  logOutput: string;
+  errorLog: string | null;
+  errorToEventlog: boolean;
+  slowLogFile: string | null;
+  slowLogEnabled: boolean;
+  generalLogFile: string | null;
+  generalLogEnabled: boolean;
+}
+
+/** One log's tail content plus where it was read from. */
+export interface LogTail {
+  /** "file" | "table" | "eventlog" | "disabled" | "missing" | "denied" */
+  source: string;
+  path: string | null;
+  content: string;
+}
+
+/** A candidate my.ini location and whether it exists on disk. */
+export interface IniCandidate {
+  path: string;
+  exists: boolean;
+}
+
+/** The resolved (applied) my.ini plus all candidate locations. */
+export interface IniResolution {
+  resolved: string | null;
+  candidates: IniCandidate[];
+}
+
 export interface ProfileInput {
   id?: string;
   name: string;

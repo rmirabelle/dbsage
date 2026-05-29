@@ -8,6 +8,9 @@ import type {
   Folder,
   ImportSummary,
   IndexDef,
+  IniResolution,
+  LogConfig,
+  LogTail,
   ProfileInput,
   MonitorSample,
   ProcessRow,
@@ -18,6 +21,7 @@ import type {
   RowsResult,
   SavedQuery,
   ServerStatus,
+  ServiceInfo,
   SortSpec,
   StateCounts,
   StateSelection,
@@ -243,6 +247,28 @@ export const ipc = {
     invoke<void>("kill_process", { profileId, id, queryOnly }),
   openMonitorWindow: (profileId: string) =>
     invoke<void>("open_monitor_window", { profileId }),
+  mysqlServiceStatus: (profileId: string) =>
+    invoke<ServiceInfo | null>("mysql_service_status", { profileId }),
+  serviceControl: (profileId: string, action: "start" | "stop" | "restart") =>
+    invoke<void>("service_control", { profileId, action }),
+  setServiceStartMode: (
+    profileId: string,
+    mode: "auto" | "manual" | "disabled"
+  ) => invoke<void>("set_service_start_mode", { profileId, mode }),
+  openAdminWindow: (profileId: string) =>
+    invoke<void>("open_admin_window", { profileId }),
+  logConfig: (profileId: string) =>
+    invoke<LogConfig>("log_config", { profileId }),
+  readLogTail: (
+    profileId: string,
+    kind: "error" | "slow" | "general",
+    maxBytes: number
+  ) => invoke<LogTail>("read_log_tail", { profileId, kind, maxBytes }),
+  resolveMyIni: (profileId: string) =>
+    invoke<IniResolution>("resolve_my_ini", { profileId }),
+  readMyIni: (path: string) => invoke<string>("read_my_ini", { path }),
+  saveMyIni: (path: string, content: string) =>
+    invoke<void>("save_my_ini", { path, content }),
   listSavedQueries: (profileId: string, database: string) =>
     invoke<SavedQuery[]>("list_saved_queries", { profileId, database }),
   saveSavedQuery: (profileId: string, database: string, query: SavedQuery) =>

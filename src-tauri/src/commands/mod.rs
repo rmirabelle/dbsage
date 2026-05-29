@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod column_setups;
 pub mod connect;
 pub mod export;

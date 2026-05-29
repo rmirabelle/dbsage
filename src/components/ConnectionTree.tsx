@@ -21,10 +21,12 @@ import {
   Trash,
   Code,
   Pulse,
+  GearSix,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useStore } from "../state/store";
 import { notifyError } from "../state/notify";
+import { canAdminister } from "../lib/local";
 import type { ProfileView } from "../types";
 import { ProfileDialog } from "./ProfileDialog";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
@@ -165,7 +167,10 @@ export function ConnectionTree() {
           const expanded = expandedProfiles.has(profile.id);
           const conn = connections[profile.id];
           return (
-            <div key={profile.id} className="text-xs">
+            <div
+              key={profile.id}
+              className="text-xs mb-1.5"
+            >
               <div
                 data-el="connection-row"
                 className={clsx(
@@ -184,13 +189,6 @@ export function ConnectionTree() {
                   });
                 }}
               >
-                <ChevronRight
-                  size={16}
-                  className={clsx(
-                    "text-zinc-500 transition-transform",
-                    expanded && "rotate-90"
-                  )}
-                />
                 {conn?.connecting ? (
                   <Loader2 size={18} className="shrink-0 mr-1.5 animate-spin text-lime-400" />
                 ) : conn?.connected ? (
@@ -218,7 +216,7 @@ export function ConnectionTree() {
                 ) : (
                   <span
                     className={clsx(
-                      "flex-1 truncate text-[16px] font-bold",
+                      "flex-1 truncate text-[15px] font-bold",
                       conn?.connected || conn?.connecting
                         ? "text-lime-400"
                         : "text-zinc-500"
@@ -228,6 +226,49 @@ export function ConnectionTree() {
                   </span>
                 )}
               </div>
+
+              {expanded && (
+                <div
+                  data-el="connection-toolbar"
+                  className="bg-[#1d2029] flex items-center gap-1 pl-1 pr-2 py-1 border-b border-zinc-800/60"
+                >
+                  <button
+                    onClick={() => openMonitoring(profile.id)}
+                    disabled={!conn?.connected}
+                    style={{ fontSize: 11 }}
+                    className="inline-flex items-center gap-1.5 rounded bg-zinc-800 px-2 py-1 font-semibold text-zinc-300 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-zinc-800"
+                    aria-label="Monitor Server"
+                    title={
+                      conn?.connected
+                        ? "Monitor Server"
+                        : "Connect to monitor server"
+                    }
+                  >
+                    <Pulse size={13} weight="fill" className="text-blue-400" />
+                    Monitor
+                  </button>
+                  {canAdminister(profile.host) && (
+                    <button
+                      onClick={() =>
+                        ipc
+                          .openAdminWindow(profile.id)
+                          .catch((e) =>
+                            notifyError(
+                              `Could not open the admin window: ${String(e)}`
+                            )
+                          )
+                      }
+                      style={{ fontSize: 11 }}
+                      className="inline-flex items-center gap-1.5 rounded bg-zinc-800 px-2 py-1 font-semibold text-zinc-300 transition-colors hover:bg-zinc-700"
+                      aria-label="Server Admin"
+                      title="Local server administration"
+                    >
+                      <GearSix size={13} weight="fill" className="text-zinc-400" />
+                      Admin
+                    </button>
+                  )}
+                </div>
+              )}
 
               {treeMenu?.kind === "connection" &&
                 treeMenu.profileId === profile.id && (
@@ -251,10 +292,6 @@ export function ConnectionTree() {
                     }}
                     onDisconnect={async () => {
                       await disconnectProfile(profile.id);
-                      setTreeMenu(null);
-                    }}
-                    onMonitor={() => {
-                      openMonitoring(profile.id);
                       setTreeMenu(null);
                     }}
                     onDelete={() => {
@@ -328,7 +365,6 @@ function ConnectionContextMenu({
   onEdit,
   onNewDatabase,
   onDisconnect,
-  onMonitor,
   onDelete,
 }: {
   x: number;
@@ -339,7 +375,6 @@ function ConnectionContextMenu({
   onEdit: () => void;
   onNewDatabase: () => void;
   onDisconnect: () => void;
-  onMonitor: () => void;
   onDelete: () => void;
 }) {
   useEffect(() => {
@@ -383,12 +418,6 @@ function ConnectionContextMenu({
         <Database size={14} className="text-accent-400 shrink-0" />
         New Database
       </button>
-      {connected && (
-        <button className={clsx(item, "text-zinc-200")} onClick={onMonitor}>
-          <Pulse size={14} className="text-sky-400 shrink-0" />
-          Monitor Server
-        </button>
-      )}
       {connected && (
         <button className={clsx(item, "text-zinc-200")} onClick={onDisconnect}>
           <Power size={14} className="text-zinc-400 shrink-0" />

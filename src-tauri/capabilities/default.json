@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window and the per-connection monitor windows",
-  "windows": ["main", "monitor-*"],
+  "description": "Capability for the main window and the per-connection monitor and admin windows",
+  "windows": ["main", "monitor-*", "admin-*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

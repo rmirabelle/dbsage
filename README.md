@@ -55,6 +55,14 @@ DB Sage pairs a fast, virtualized data grid with a full SQL workspace, a visual 
 - **Custom relations** — define arbitrary, one-way **HAS ONE** or **HAS MANY** relations between any two tables that contain related data. Relations are completely independent of MySQL indexes or foreign keys.
 - **Related-row peek** — from the grid, pop open a floating window showing the rows on the other side of a relation, without leaving your current view.
 
+### Server operations
+
+- **Live monitoring** — a per-connection **Monitor** window showing server activity (the live process list), throughput and status counters, and trend charts backed by sampled history.
+- **Local server administration (Windows)** — for connections to the local machine (`localhost` / `127.0.0.1`), a per-connection **Admin** window with three tabs:
+  - **Service** — see the MySQL Windows service's status and startup type, and **start / stop / restart** it or change its startup type. Each privileged action raises a single Windows **UAC** prompt; DB Sage itself never runs elevated.
+  - **Logs** — tail the **error**, **slow-query**, and **general** logs, transparently reading from a file, the `mysql.*_log` tables (`log_output=TABLE`), or the Windows Event Log, with optional word-wrap and live polling.
+  - **Configuration** — resolves the `my.ini` the server actually uses (from the service's `--defaults-file`, otherwise the Windows search order), and edits it with a **guided form** for common settings (typed inputs, enum dropdowns, and plain-English descriptions) or a **raw** editor. Saves create a `.bak` backup and write via UAC; a service restart applies the changes.
+
 ### Workspace
 
 - **Encrypted, passphrase-protected state export/import** (connections, relations, folders, column setups, and presets), with a preview of a file's contents before importing.
@@ -99,7 +107,8 @@ src/                React 19 frontend (TypeScript, Tailwind 4, Zustand)
 src-tauri/          Rust backend (Tauri 2, sqlx, keyring)
 src-tauri/src/
   commands/          Tauri IPC commands (profiles, connect, query, schema/DDL,
-                     folders, relations, column_setups, presets, state, updater)
+                     folders, relations, column_setups, presets, state, updater,
+                     monitoring, admin)
   store/             Persistence (profiles, secrets, folders, relations,
                      column_setups, table_view_presets — JSON + OS keyring)
   db/                MySQL connection pool + row→JSON serializer

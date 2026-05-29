@@ -7,7 +7,7 @@ mod store;
 mod updater;
 
 use commands::{
-    column_setups, connect, export, folders, monitoring, profiles, query, query_history,
+    admin, column_setups, connect, export, folders, monitoring, profiles, query, query_history,
     relations, saved_queries, state_io, table_view_presets,
 };
 use state::AppState;
@@ -85,7 +85,10 @@ pub fn run() {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         for (label, win) in handle.webview_windows() {
-                            if label == "main" || label.starts_with("monitor-") {
+                            if label == "main"
+                                || label.starts_with("monitor-")
+                                || label.starts_with("admin-")
+                            {
                                 let _ = win.hide();
                             }
                         }
@@ -161,6 +164,15 @@ pub fn run() {
             updater::check_for_update,
             updater::download_and_run_installer,
             updater::get_app_version,
+            admin::mysql_service_status,
+            admin::service_control,
+            admin::set_service_start_mode,
+            admin::open_admin_window,
+            admin::log_config,
+            admin::read_log_tail,
+            admin::resolve_my_ini,
+            admin::read_my_ini,
+            admin::save_my_ini,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DBSage");
