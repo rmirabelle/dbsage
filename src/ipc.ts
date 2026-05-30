@@ -129,13 +129,16 @@ export const ipc = {
     sql: string;
     overwrite: boolean;
   }) => invoke<void>("create_table", args),
+  /** Resolves true when the copy completed, false when the user cancelled it. */
   copyTable: (args: {
     profileId: string;
     sourceDatabase: string;
     sourceTable: string;
+    targetProfileId?: string;
     targetDatabase: string;
     includeData: boolean;
-  }) => invoke<void>("copy_table", args),
+  }) => invoke<boolean>("copy_table", args),
+  cancelTableCopy: () => invoke<void>("cancel_table_copy"),
   truncateTable: (profileId: string, database: string, table: string) =>
     invoke<void>("truncate_table", { profileId, database, table }),
   dropTable: (profileId: string, database: string, table: string) =>

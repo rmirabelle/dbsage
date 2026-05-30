@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   GearSix,
   Play,
@@ -9,6 +9,9 @@ import {
   Power,
   FileText,
   SlidersHorizontal,
+  CaretDown,
+  MagnifyingGlass,
+  X,
   type Icon,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
@@ -60,7 +63,7 @@ export function AdminWindow({ profileId }: { profileId: string }) {
             className={clsx(
               "inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-[12px] font-semibold transition-colors",
               tab === t.value
-                ? "bg-zinc-700 text-zinc-100"
+                ? "bg-lime-500 text-black hover:bg-lime-400"
                 : "text-zinc-400 hover:bg-zinc-800"
             )}
           >
@@ -69,7 +72,7 @@ export function AdminWindow({ profileId }: { profileId: string }) {
           </button>
         ))}
       </nav>
-      <div className="flex-1 min-h-0 flex flex-col p-4">
+      <div data-el="admin-body" className="flex-1 min-h-0 flex flex-col p-4 bg-zinc-900">
         {tab === "service" && <ServicePanel profileId={profileId} />}
         {tab === "logs" && <LogsPanel profileId={profileId} />}
         {tab === "config" && <ConfigPanel profileId={profileId} />}
@@ -179,8 +182,8 @@ function ServicePanel({ profileId }: { profileId: string }) {
   const currentMode = svc.startMode.toLowerCase();
 
   return (
-    <div className="max-w-2xl space-y-4">
-      <section className="rounded-lg border border-zinc-800/80 bg-zinc-900/40">
+    <div className="space-y-4">
+      <section className="rounded-lg border border-zinc-800/80 bg-zinc-950">
         <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/60">
           <div className="flex items-center gap-2.5 min-w-0">
             <StatusDot running={running} />
@@ -269,7 +272,7 @@ function ServicePanel({ profileId }: { profileId: string }) {
       </section>
 
       {(svc.binPath || svc.defaultsFile) && (
-        <section className="rounded-lg border border-zinc-800/80 bg-zinc-900/40 px-4 py-3 space-y-2 text-[12px]">
+        <section className="rounded-lg border border-zinc-800/80 bg-zinc-950 px-4 py-3 space-y-2 text-[12px]">
           {svc.binPath && (
             <Detail label="Executable" value={svc.binPath} />
           )}
@@ -317,7 +320,8 @@ function LogsPanel({ profileId }: { profileId: string }) {
   const [loading, setLoading] = useState(false);
   const [live, setLive] = useState(false);
   const [wrap, setWrap] = useState(false);
-  const preRef = useRef<HTMLPreElement>(null);
+  const [query, setQuery] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -343,14 +347,48 @@ function LogsPanel({ profileId }: { profileId: string }) {
 
   /* Keep the newest lines in view as content streams in. */
   useEffect(() => {
-    const el = preRef.current;
+    const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [tail]);
 
   const note = tail ? sourceNote(tail) : null;
 
+  /* The slow-query file uses MySQL's structured `# Time:` block format; parse
+   * it into readable entries. Other sources/tabs keep the raw tail. */
+  const slowItems = useMemo(
+    () =>
+      kind === "slow" && tail?.source === "file" && tail.content.trim()
+        ? parseSlowLog(tail.content)
+        : null,
+    [kind, tail]
+  );
+  const structured = !!slowItems && slowItems.length > 0;
+
+  /* The search box filters the visible log to matching lines (raw view) or
+   * matching slow-query entries (structured view). */
+  const q = query.trim().toLowerCase();
+  const rawContent = tail?.content ?? "";
+  const shownContent =
+    q && !structured
+      ? rawContent
+          .split("\n")
+          .filter((l) => l.toLowerCase().includes(q))
+          .join("\n")
+      : rawContent;
+  const shownItems =
+    structured && q
+      ? slowItems!.filter(
+          (it) => it.kind === "entry" && slowEntryMatches(it, q)
+        )
+      : slowItems;
+  const matchCount = structured
+    ? shownItems!.reduce((n, it) => (it.kind === "entry" ? n + 1 : n), 0)
+    : shownContent
+      ? shownContent.split("\n").filter((l) => l.length > 0).length
+      : 0;
+
   return (
-    <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-zinc-800/80 bg-zinc-900/40">
+    <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-zinc-800/80 bg-zinc-950">
       <header className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800/60">
         <div className="flex items-center gap-1">
           {LOG_TABS.map((t) => (
@@ -406,16 +444,53 @@ function LogsPanel({ profileId }: { profileId: string }) {
         </div>
       )}
 
-      <pre
-        ref={preRef}
-        className={clsx(
-          "flex-1 min-h-0 overflow-auto m-0 p-3 text-[12px] leading-relaxed font-mono text-zinc-300",
-          wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto">
+        {structured ? (
+          <SlowLogView items={shownItems!} wrap={wrap} />
+        ) : (
+          <pre
+            className={clsx(
+              "m-0 p-3 text-[12px] leading-relaxed font-mono text-zinc-300",
+              wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"
+            )}
+          >
+            {shownContent || (loading ? "" : q ? "No matching lines." : "—")}
+          </pre>
         )}
-      >
-        {tail?.content || (loading ? "" : "—")}
-      </pre>
+      </div>
+
+      <div className="flex items-center gap-2 px-3 py-2 border-t border-zinc-800/60">
+        <MagnifyingGlass size={13} className="shrink-0 text-zinc-500" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter log…"
+          spellCheck={false}
+          className="flex-1 bg-transparent text-[12px] text-zinc-200 outline-none placeholder:text-zinc-600"
+        />
+        {q && (
+          <>
+            <span className="text-[11px] tabular-nums text-zinc-500">
+              {matchCount} match{matchCount === 1 ? "" : "es"}
+            </span>
+            <button
+              onClick={() => setQuery("")}
+              className="rounded p-0.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              aria-label="Clear filter"
+            >
+              <X size={13} />
+            </button>
+          </>
+        )}
+      </div>
     </section>
+  );
+}
+
+/** True if a slow-query entry matches the lowercased filter term. */
+function slowEntryMatches(e: SlowEntry, q: string): boolean {
+  return [e.sql, e.userHost, e.time, e.schema].some((f) =>
+    f ? f.toLowerCase().includes(q) : false
   );
 }
 
@@ -493,7 +568,7 @@ function ConfigPanel({ profileId }: { profileId: string }) {
   };
 
   return (
-    <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-zinc-800/80 bg-zinc-900/40">
+    <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-zinc-800/80 bg-zinc-950">
       <header className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800/60">
         <span className="text-[11px] uppercase tracking-wide font-semibold text-zinc-500 shrink-0">
           Option file
@@ -586,64 +661,225 @@ function StructuredForm({
   content: string;
   onChange: (next: string) => void;
 }) {
-  return (
-    <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
-      {INI_CATALOG.map((s) => {
-        const raw = getIniValue(content, s.section, s.key);
-        const set = (v: string) =>
-          onChange(setIniValue(content, s.section, s.key, v));
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const active = INI_CATALOG.find((s) => s.key === activeKey) ?? null;
 
-        return (
-          <div
-            key={s.key}
-            className="rounded border border-zinc-800/70 bg-zinc-900/40 px-3 py-2"
-          >
-            <div className="flex items-center gap-3">
-              <code className="text-[12px] font-semibold text-lime-400">
-                {s.key}
-              </code>
-              {s.type === "enum" ? (
-                <select
-                  value={raw ?? s.default ?? s.options?.[0] ?? ""}
-                  onChange={(e) => set(e.target.value)}
-                  className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200"
-                >
-                  {s.options?.map((o) => (
-                    <option key={o} value={o}>
-                      {o}
-                    </option>
-                  ))}
-                </select>
-              ) : s.type === "bool" ? (
-                <select
-                  value={iniValueIsOn(raw) ? "ON" : "OFF"}
-                  onChange={(e) => set(e.target.value)}
-                  className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200"
-                >
-                  <option value="ON">ON</option>
-                  <option value="OFF">OFF</option>
-                </select>
-              ) : (
-                <input
-                  type={s.type === "int" ? "number" : "text"}
-                  value={raw ?? ""}
-                  placeholder={s.default ? `default: ${s.default}` : ""}
-                  onChange={(e) => set(e.target.value)}
-                  className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200 w-48"
-                />
-              )}
-              {raw === undefined && (
-                <span className="text-[11px] text-zinc-600">
-                  not set{s.default ? ` · default ${s.default}` : ""}
-                </span>
-              )}
+  const groups = useMemo(() => {
+    const out: { name: string; items: typeof INI_CATALOG }[] = [];
+    for (const s of INI_CATALOG) {
+      const g = out.find((x) => x.name === s.group);
+      if (g) g.items.push(s);
+      else out.push({ name: s.group, items: [s] });
+    }
+    return out;
+  }, []);
+
+  return (
+    <div className="flex-1 min-h-0 flex">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3">
+        {groups.map((group) => (
+          <div key={group.name}>
+            <h3 className="sticky top-0 z-10 bg-zinc-950 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-lime-400/90">
+              {group.name}
+            </h3>
+            <div className="divide-y divide-zinc-800/70">
+              {group.items.map((s) => {
+                const raw = getIniValue(content, s.section, s.key);
+                const set = (v: string) =>
+                  onChange(setIniValue(content, s.section, s.key, v));
+
+                return (
+                  <div
+                    key={s.key}
+                    data-el={`setting-${s.key}`}
+                    onMouseEnter={() => setActiveKey(s.key)}
+                    onClick={() => setActiveKey(s.key)}
+                    className={clsx(
+                      "flex items-center gap-3 -mx-3 px-3 py-3 cursor-pointer transition-colors",
+                      activeKey === s.key && "bg-zinc-800/40"
+                    )}
+                  >
+                    <code className="text-[12px] font-semibold text-white">
+                      {s.key}
+                    </code>
+                    <div className="ml-auto flex items-center gap-2">
+                      {raw === undefined && (
+                        <span className="text-[11px] text-zinc-600">
+                          not set
+                          {s.default && s.type !== "set"
+                            ? ` · default ${s.default}`
+                            : ""}
+                        </span>
+                      )}
+                      {s.type === "set" ? (
+                        <SetDropdown
+                          value={raw}
+                          defaultValue={s.default}
+                          options={s.options ?? []}
+                          onChange={set}
+                        />
+                      ) : s.type === "enum" ? (
+                        <select
+                          value={raw ?? s.default ?? s.options?.[0] ?? ""}
+                          onChange={(e) => set(e.target.value)}
+                          className="w-44 rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200"
+                        >
+                          {s.options?.map((o) => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </select>
+                      ) : s.type === "bool" ? (
+                        <select
+                          value={iniValueIsOn(raw) ? "ON" : "OFF"}
+                          onChange={(e) => set(e.target.value)}
+                          className="w-44 rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200"
+                        >
+                          <option value="ON">ON</option>
+                          <option value="OFF">OFF</option>
+                        </select>
+                      ) : (
+                        <input
+                          type={s.type === "int" ? "number" : "text"}
+                          value={raw ?? ""}
+                          placeholder={s.default ? `default: ${s.default}` : ""}
+                          onChange={(e) => set(e.target.value)}
+                          className="w-44 rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200"
+                        />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <p className="mt-1.5 text-[11px] text-zinc-500 leading-relaxed">
-              {s.description}
-            </p>
           </div>
-        );
-      })}
+        ))}
+      </div>
+
+      <aside className="w-72 shrink-0 border-l border-zinc-800/70 overflow-y-auto p-4">
+        {active ? (
+          <>
+            <code className="text-[12px] font-semibold text-white">
+              {active.key}
+            </code>
+            <p className="mt-2 text-[12px] text-zinc-400 leading-relaxed">
+              {active.description}
+            </p>
+            {active.default && (
+              <div className="mt-3 text-[11px] text-zinc-600">
+                Default:
+                {active.type === "set" ? (
+                  <ul className="mt-1 space-y-0.5">
+                    {active.default.split(",").map((m) => (
+                      <li key={m} className="font-mono text-zinc-500">
+                        {m}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="text-zinc-500 break-words"> {active.default}</span>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="text-[12px] text-zinc-600 leading-relaxed">
+            Hover or click a setting to see its description.
+          </p>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+/**
+ * Multi-select control for `type: "set"` settings (e.g. `sql_mode`). The value
+ * is a comma-separated list; the button shows the selected count and opens a
+ * checkbox popover. Selections are written back in catalog-option order so the
+ * saved line is stable regardless of click sequence.
+ */
+function SetDropdown({
+  value,
+  defaultValue,
+  options,
+  onChange,
+}: {
+  value: string | undefined;
+  defaultValue: string | undefined;
+  options: string[];
+  onChange: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  /**
+   * When the key isn't in the file the server still applies its default set,
+   * so seed from the default — otherwise nothing shows checked and there's no
+   * way to *remove* a default mode. The first toggle writes an explicit line.
+   */
+  const selected = useMemo(() => {
+    const raw = (value ?? defaultValue ?? "").replace(/^["']|["']$/g, "").trim();
+    return new Set(
+      raw
+        ? raw
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : []
+    );
+  }, [value, defaultValue]);
+
+  const toggle = (opt: string) => {
+    const next = new Set(selected);
+    if (next.has(opt)) next.delete(opt);
+    else next.add(opt);
+    onChange(options.filter((o) => next.has(o)).join(","));
+  };
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="w-44 flex items-center justify-between rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-left text-zinc-200"
+      >
+        <span className="truncate">
+          {selected.size === 0 ? "none" : `${selected.size} selected`}
+        </span>
+        <CaretDown size={12} className="ml-1 shrink-0 text-zinc-500" />
+      </button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-20"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
+          />
+          <div
+            className="absolute right-0 z-30 mt-1 max-h-72 w-64 overflow-y-auto rounded border border-zinc-700 bg-zinc-900 p-1 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {options.map((o) => (
+              <label
+                key={o}
+                className="flex items-center gap-2 rounded px-2 py-1 text-[12px] text-zinc-200 hover:bg-zinc-800 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(o)}
+                  onChange={() => toggle(o)}
+                  className="accent-lime-500"
+                />
+                <span className="font-mono">{o}</span>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -664,4 +900,242 @@ function sourceNote(t: LogTail): string | null {
     default:
       return null;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Slow-query log parsing + structured rendering                       */
+/* ------------------------------------------------------------------ */
+
+interface SlowEntry {
+  kind: "entry";
+  time: string | null;
+  userHost: string | null;
+  queryTime: string | null;
+  lockTime: string | null;
+  rowsSent: string | null;
+  rowsExamined: string | null;
+  schema: string | null;
+  sql: string;
+}
+
+interface RestartMarker {
+  kind: "restart";
+  count: number;
+  port: string | null;
+  version: string | null;
+}
+
+type SlowItem = SlowEntry | RestartMarker;
+
+const VERSION_BANNER = /,\s*Version:.*started with/i;
+
+/**
+ * Parse a MySQL slow-query log file into an ordered list of entries and
+ * server-restart markers. Each restart writes a 3-line banner (version,
+ * port, column header); consecutive banners collapse into one marker. Real
+ * slow queries are `# Time:` blocks followed by `# User@Host` / `# Query_time`
+ * comment lines and the executed statement(s).
+ */
+function parseSlowLog(content: string): SlowItem[] {
+  const lines = content.split(/\r?\n/);
+  const items: SlowItem[] = [];
+  let version: string | null = null;
+  let port: string | null = null;
+  let i = 0;
+
+  const pushRestart = () => {
+    const last = items[items.length - 1];
+    if (last && last.kind === "restart") {
+      last.count++;
+      last.port = port ?? last.port;
+      last.version = version ?? last.version;
+    } else {
+      items.push({ kind: "restart", count: 1, port, version });
+    }
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (VERSION_BANNER.test(line)) {
+      version = line.match(/Version:\s*(\S+)/)?.[1] ?? version;
+      i++;
+      while (i < lines.length) {
+        const l = lines[i];
+        if (/^\s*(?:Tcp port|TCP Port):/i.test(l)) {
+          port = l.match(/(?:Tcp port|TCP Port):\s*(\d+)/i)?.[1] ?? port;
+          i++;
+        } else if (/^\s*Time\s+Id\s+Command\s+Argument/i.test(l)) {
+          i++;
+        } else {
+          break;
+        }
+      }
+      pushRestart();
+      continue;
+    }
+
+    if (/^#\s*Time:/i.test(line)) {
+      const entry: SlowEntry = {
+        kind: "entry",
+        time: line.match(/#\s*Time:\s*(.+)$/i)?.[1].trim() ?? null,
+        userHost: null,
+        queryTime: null,
+        lockTime: null,
+        rowsSent: null,
+        rowsExamined: null,
+        schema: null,
+        sql: "",
+      };
+      i++;
+      while (i < lines.length && /^#/.test(lines[i])) {
+        const h = lines[i];
+        const uh = h.match(/#\s*User@Host:\s*(.+?)(?:\s+Id:\s*\d+)?\s*$/i);
+        if (uh) entry.userHost = uh[1].trim();
+        entry.queryTime = h.match(/Query_time:\s*([\d.]+)/i)?.[1] ?? entry.queryTime;
+        entry.lockTime = h.match(/Lock_time:\s*([\d.]+)/i)?.[1] ?? entry.lockTime;
+        entry.rowsSent = h.match(/Rows_sent:\s*(\d+)/i)?.[1] ?? entry.rowsSent;
+        entry.rowsExamined =
+          h.match(/Rows_examined:\s*(\d+)/i)?.[1] ?? entry.rowsExamined;
+        entry.schema = h.match(/Schema:\s*(\S+)/i)?.[1] ?? entry.schema;
+        i++;
+      }
+      const body: string[] = [];
+      while (i < lines.length) {
+        const l = lines[i];
+        if (/^#\s*Time:/i.test(l) || VERSION_BANNER.test(l)) break;
+        body.push(l);
+        i++;
+      }
+      const sql = body.filter((l) => {
+        const t = l.trim();
+        if (/^use\s+\S+;$/i.test(t)) {
+          if (!entry.schema) entry.schema = t.replace(/^use\s+/i, "").replace(/;$/, "");
+          return false;
+        }
+        return !/^SET\s+timestamp\s*=/i.test(t);
+      });
+      entry.sql = sql.join("\n").trim();
+      items.push(entry);
+      continue;
+    }
+
+    i++;
+  }
+
+  return items;
+}
+
+function formatSeconds(s: number): string {
+  if (Number.isNaN(s)) return "";
+  return s < 1 ? `${Math.round(s * 1000)} ms` : `${s.toFixed(2)} s`;
+}
+
+function prettyTime(t: string | null): string | null {
+  if (!t) return null;
+  const m = t.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);
+  return m ? `${m[1]} ${m[2]}` : t;
+}
+
+function SlowLogView({ items, wrap }: { items: SlowItem[]; wrap: boolean }) {
+  const entryCount = items.reduce((n, it) => (it.kind === "entry" ? n + 1 : n), 0);
+  return (
+    <div className="p-3 space-y-2">
+      {entryCount === 0 && (
+        <div className="px-1 py-2 text-[12px] text-zinc-500">
+          No slow queries recorded yet — the log only contains server-start markers.
+        </div>
+      )}
+      {items.map((it, idx) =>
+        it.kind === "restart" ? (
+          <RestartDivider key={idx} m={it} />
+        ) : (
+          <SlowEntryCard key={idx} e={it} wrap={wrap} />
+        )
+      )}
+    </div>
+  );
+}
+
+function RestartDivider({ m }: { m: RestartMarker }) {
+  const label = m.count > 1 ? `Server restarted ×${m.count}` : "Server started";
+  const detail = [
+    m.version && `v${m.version}`,
+    m.port && m.port !== "0" && `port ${m.port}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className="flex select-none items-center gap-3 py-1">
+      <span className="h-px flex-1 bg-zinc-800" />
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+        {label}
+        {detail && (
+          <span className="ml-2 font-normal normal-case text-zinc-600">{detail}</span>
+        )}
+      </span>
+      <span className="h-px flex-1 bg-zinc-800" />
+    </div>
+  );
+}
+
+function SlowEntryCard({ e, wrap }: { e: SlowEntry; wrap: boolean }) {
+  const qt = e.queryTime != null ? parseFloat(e.queryTime) : null;
+  const qtClass =
+    qt == null
+      ? "border-zinc-700 text-zinc-300"
+      : qt >= 10
+        ? "border-rose-500/30 bg-rose-500/10 text-rose-300"
+        : qt >= 1
+          ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+  return (
+    <div className="overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-900/60">
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800/60 bg-zinc-900/40 px-3 py-2">
+        {qt != null && (
+          <span
+            className={clsx(
+              "rounded border px-1.5 py-0.5 text-[11px] font-semibold tabular-nums",
+              qtClass
+            )}
+          >
+            {formatSeconds(qt)}
+          </span>
+        )}
+        {prettyTime(e.time) && (
+          <span className="text-[12px] tabular-nums text-zinc-300">
+            {prettyTime(e.time)}
+          </span>
+        )}
+        <span className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+          {e.lockTime != null && (
+            <SlowMeta label="Lock" value={formatSeconds(parseFloat(e.lockTime))} />
+          )}
+          {e.rowsSent != null && <SlowMeta label="Sent" value={e.rowsSent} />}
+          {e.rowsExamined != null && (
+            <SlowMeta label="Examined" value={e.rowsExamined} />
+          )}
+          {e.schema && <SlowMeta label="DB" value={e.schema} />}
+          {e.userHost && <SlowMeta label="User" value={e.userHost} />}
+        </span>
+      </div>
+      <pre
+        className={clsx(
+          "m-0 px-3 py-2 text-[12px] leading-relaxed font-mono text-zinc-200",
+          wrap ? "whitespace-pre-wrap break-words" : "overflow-x-auto whitespace-pre"
+        )}
+      >
+        {e.sql || "(no statement captured)"}
+      </pre>
+    </div>
+  );
+}
+
+function SlowMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <span>
+      <span className="text-zinc-600">{label}:</span>{" "}
+      <span className="tabular-nums text-zinc-400">{value}</span>
+    </span>
+  );
 }

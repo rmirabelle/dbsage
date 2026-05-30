@@ -13,6 +13,14 @@ pub struct AppState {
     /// Set true to ask the in-progress SQL-script export to stop streaming. Only
     /// one export runs at a time (the UI blocks behind a modal).
     pub cancel_sql_export: AtomicBool,
+    /// Set true to ask the in-progress table copy to stop. Only one copy runs at
+    /// a time (the UI blocks behind a modal).
+    pub cancel_copy: AtomicBool,
+    /// Profile id + connection id of the statement a same-connection copy is
+    /// currently running, so a cancel can `KILL QUERY` it (the cross-connection
+    /// path stops via the `cancel_copy` flag instead). None when no copy
+    /// statement is in flight.
+    pub copy_kill: RwLock<Option<(String, u32)>>,
     /// Lazily-opened SQLite pool for the monitor history database.
     pub monitor_history: OnceCell<SqlitePool>,
     /// Running background samplers, keyed by profile id, so a monitor window's

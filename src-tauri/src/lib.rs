@@ -120,6 +120,7 @@ pub fn run() {
             query::table_exists,
             query::create_table,
             query::copy_table,
+            query::cancel_table_copy,
             query::truncate_table,
             query::drop_table,
             query::rename_table,

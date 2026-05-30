@@ -7,7 +7,11 @@ export interface TableCopyPrompt {
   profileId: string;
   sourceDb: string;
   tables: string[];
+  /** Target connection; differs from `profileId` for a cross-connection copy. */
+  targetProfileId: string;
   targetDb: string;
+  /** Target connection's display name, shown when it differs from the source. */
+  targetConnectionName?: string;
   x: number;
   y: number;
 }

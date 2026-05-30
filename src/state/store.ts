@@ -108,6 +108,19 @@ interface Store {
     total: number;
     cancelling: boolean;
   } | null;
+  /** In-progress table copy; null when none is running. `total === 0` means the
+   * row count is unknown (same-connection copies finish server-side with no
+   * per-row reporting), so the bar shows an indeterminate state. */
+  copyProgress: {
+    /** 1-based index of the table currently being copied. */
+    current: number;
+    /** Total number of tables in this copy batch. */
+    count: number;
+    table: string;
+    done: number;
+    total: number;
+    cancelling: boolean;
+  } | null;
   /** Last table opened per `${profileId}::${database}`, for re-selecting in the DB view. */
   lastOpenedTables: Record<string, string>;
   /** Defined relations per `${profileId}::${database}`. */
@@ -158,15 +171,21 @@ interface Store {
     table: string,
     folderId: string | null
   ) => Promise<void>;
-  /** Copy a table to another database on the same connection (structure, and
-   * optionally data). Used by dragging a table onto a different database. */
-  copyTableToDatabase: (
+  /** Copy one or more tables to another database (structure, and optionally
+   * data). The target may be a different connection. Tables are copied
+   * sequentially with a progress overlay. Used by dragging table(s) onto a
+   * database node. */
+  copyTablesToDatabase: (
     profileId: string,
     sourceDatabase: string,
-    table: string,
+    tables: string[],
+    targetProfileId: string,
     targetDatabase: string,
     includeData: boolean
   ) => Promise<void>;
+  /** Cancel the in-progress table copy (interrupts the current table and stops
+   * the batch). */
+  cancelTableCopy: () => void;
 
   openTable: (profileId: string, profileName: string, database: string, table: string) => Promise<void>;
   /** Empty a table (TRUNCATE) and refresh any open views of it. */
@@ -342,6 +361,7 @@ export const useStore = create<Store>((set, get) => ({
   activeTabId: null,
   pendingCloseTabId: null,
   sqlExport: null,
+  copyProgress: null,
   lastOpenedTables: {},
   relations: {},
 
@@ -694,30 +714,103 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  copyTableToDatabase: async (
+  copyTablesToDatabase: async (
     profileId,
     sourceDatabase,
-    table,
+    tables,
+    targetProfileId,
     targetDatabase,
     includeData
   ) => {
+    if (tables.length === 0) return;
+
+    set({
+      copyProgress: {
+        current: 1,
+        count: tables.length,
+        table: tables[0],
+        done: 0,
+        total: 0,
+        cancelling: false,
+      },
+    });
+    /* Cross-connection copies stream rows and report `table-copy-progress`;
+       same-connection copies finish server-side and never emit, leaving the bar
+       indeterminate (total stays 0). */
+    const unlisten = await listen<{ done: number; total: number }>(
+      "table-copy-progress",
+      (e) => {
+        set((s) =>
+          s.copyProgress
+            ? { copyProgress: { ...s.copyProgress, done: e.payload.done, total: e.payload.total } }
+            : {}
+        );
+      }
+    );
+
+    let copied = 0;
+    let cancelled = false;
+    let failed: string | null = null;
     try {
-      await ipc.copyTable({
-        profileId,
-        sourceDatabase,
-        sourceTable: table,
-        targetDatabase,
-        includeData,
-      });
-      await refreshFoldersEverywhere(profileId, targetDatabase, set, get);
-      notifySuccess(
-        `Copied "${table}" to "${targetDatabase}"${
-          includeData ? " with data" : " (structure only)"
-        }.`
-      );
-    } catch (e) {
-      notifyError(`Could not copy "${table}": ${String(e)}`);
+      for (let i = 0; i < tables.length; i++) {
+        const table = tables[i];
+        set((s) =>
+          s.copyProgress
+            ? { copyProgress: { ...s.copyProgress, current: i + 1, table, done: 0, total: 0 } }
+            : {}
+        );
+        try {
+          const completed = await ipc.copyTable({
+            profileId,
+            sourceDatabase,
+            sourceTable: table,
+            targetProfileId,
+            targetDatabase,
+            includeData,
+          });
+          if (!completed) {
+            cancelled = true;
+            break;
+          }
+          copied++;
+        } catch (e) {
+          failed = `Could not copy "${table}": ${String(e)}`;
+          break;
+        }
+      }
+    } finally {
+      unlisten();
+      set({ copyProgress: null });
     }
+
+    /* Any fully-copied tables are real and need the tree/DB view refreshed,
+       even when the batch was cancelled or errored partway. */
+    if (copied > 0) {
+      await refreshFoldersEverywhere(targetProfileId, targetDatabase, set, get);
+    }
+
+    if (cancelled) {
+      notifyInfo(
+        copied > 0
+          ? `Copy cancelled — ${copied} of ${tables.length} tables copied.`
+          : "Table copy cancelled."
+      );
+    } else if (copied > 0) {
+      const suffix = includeData ? " with data" : " (structure only)";
+      notifySuccess(
+        copied === 1
+          ? `Copied "${tables[0]}" to "${targetDatabase}"${suffix}.`
+          : `Copied ${copied} tables to "${targetDatabase}"${suffix}.`
+      );
+    }
+    if (failed) notifyError(failed);
+  },
+
+  cancelTableCopy: () => {
+    set((s) =>
+      s.copyProgress ? { copyProgress: { ...s.copyProgress, cancelling: true } } : {}
+    );
+    ipc.cancelTableCopy().catch(() => {});
   },
 
   openTable: async (profileId, profileName, database, table) => {

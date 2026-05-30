@@ -22,11 +22,11 @@ import {
 } from "./components/StateTransferDialog";
 import { Toaster } from "./components/Toaster";
 import { SqlExportProgress } from "./components/SqlExportProgress";
+import { CopyProgress } from "./components/CopyProgress";
 import { CopyTableMenu } from "./components/CopyTableMenu";
 import { checkForUpdate, getAppVersion, type UpdateInfo } from "./lib/updater";
 import { useUi } from "./state/ui";
 import { useStore } from "./state/store";
-import { notifyError } from "./state/notify";
 import { useZoomShortcuts } from "./hooks/useZoomShortcuts";
 
 /** What a tree row / DB-view tile carries while being dragged. */
@@ -60,7 +60,7 @@ export default function App() {
   const closeTableCopyPrompt = useUi((s) => s.closeTableCopyPrompt);
   const setTablesFolder = useStore((s) => s.setTablesFolder);
   const assignTableFolder = useStore((s) => s.assignTableFolder);
-  const copyTableToDatabase = useStore((s) => s.copyTableToDatabase);
+  const copyTablesToDatabase = useStore((s) => s.copyTablesToDatabase);
 
   const [aboutOpen, setAboutOpen] = useState(false);
   const [transferMode, setTransferMode] = useState<TransferMode | null>(null);
@@ -119,19 +119,21 @@ export default function App() {
       return;
     }
     if (o.kind === "tree-db") {
-      if (o.profileId !== a.profileId) {
-        notifyError(
-          "Copying between connections isn't supported — drop onto a database on the same connection."
-        );
-        return;
-      }
-      if (o.db === a.db) return;
+      const crossConnection = o.profileId !== a.profileId;
+      /* Same connection + same database is a no-op; cross-connection to a
+         like-named database is a legitimate copy. */
+      if (!crossConnection && o.db === a.db) return;
+      const targetConnectionName = crossConnection
+        ? useStore.getState().profiles.find((p) => p.id === o.profileId)?.name
+        : undefined;
       const rect = e.over!.rect;
       openTableCopyPrompt({
         profileId: a.profileId,
         sourceDb: a.db,
         tables: names,
+        targetProfileId: o.profileId,
         targetDb: o.db,
+        targetConnectionName,
         x: Math.round(rect.left + 16),
         y: Math.round(rect.top + rect.height),
       });
@@ -218,13 +220,19 @@ export default function App() {
           y={tableCopyPrompt.y}
           tables={tableCopyPrompt.tables}
           targetDb={tableCopyPrompt.targetDb}
+          targetConnectionName={tableCopyPrompt.targetConnectionName}
           onClose={closeTableCopyPrompt}
           onCopy={(includeData) => {
             const p = tableCopyPrompt;
             closeTableCopyPrompt();
-            for (const t of p.tables) {
-              copyTableToDatabase(p.profileId, p.sourceDb, t, p.targetDb, includeData);
-            }
+            copyTablesToDatabase(
+              p.profileId,
+              p.sourceDb,
+              p.tables,
+              p.targetProfileId,
+              p.targetDb,
+              includeData
+            );
           }}
         />
       )}
@@ -242,6 +250,7 @@ export default function App() {
       )}
       <Toaster />
       <SqlExportProgress />
+      <CopyProgress />
     </div>
   );
 }

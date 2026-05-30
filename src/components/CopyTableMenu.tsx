@@ -12,6 +12,7 @@ export function CopyTableMenu({
   y,
   tables,
   targetDb,
+  targetConnectionName,
   onCopy,
   onClose,
 }: {
@@ -19,6 +20,7 @@ export function CopyTableMenu({
   y: number;
   tables: string[];
   targetDb: string;
+  targetConnectionName?: string;
   onCopy: (includeData: boolean) => void;
   onClose: () => void;
 }) {
@@ -40,6 +42,9 @@ export function CopyTableMenu({
   const n = tables.length;
   const label = n === 1 ? `"${tables[0]}"` : `${n} tables`;
   const noun = n === 1 ? "table" : "tables";
+  const destination = targetConnectionName
+    ? `${targetConnectionName} / ${targetDb}`
+    : targetDb;
 
   return createPortal(
     <div
@@ -49,7 +54,7 @@ export function CopyTableMenu({
       className="dbs-context-menu fixed z-50 min-w-[260px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >
       <div className="px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-500 truncate">
-        Copy {label} to {targetDb}
+        Copy {label} to {destination}
       </div>
       <button
         data-el="ctx-copy-structure"

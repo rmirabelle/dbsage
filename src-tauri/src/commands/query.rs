@@ -591,21 +591,47 @@ pub async fn create_table(
     Ok(())
 }
 
-/// Copy a table to another database on the same server. `CREATE TABLE ... LIKE`
-/// reproduces the full structure (columns, indexes, primary key); when
-/// `include_data` is set, the rows are copied too. The copy keeps the source
-/// table's name and is aborted (with a clear error) if that name is already
-/// taken in the target database, so nothing existing is ever overwritten.
+/// Copy a table to another database. When the target is on the same connection,
+/// `CREATE TABLE ... LIKE` (+ `INSERT ... SELECT`) reproduces the full structure
+/// (columns, indexes, primary key) and rows entirely server-side. When the
+/// target is a different connection (possibly a different server), the structure
+/// is reproduced from `SHOW CREATE TABLE` and the rows are streamed across.
+/// Either way the copy keeps the source table's name and is aborted (with a
+/// clear error) if that name is already taken in the target database, so nothing
+/// existing is ever overwritten. Returns `false` when the user cancels mid-copy
+/// (the partially-written target table is dropped so nothing is left behind).
 #[tauri::command]
 pub async fn copy_table(
+    app: AppHandle,
     state: State<'_, AppState>,
     profile_id: String,
     source_database: String,
     source_table: String,
+    target_profile_id: Option<String>,
     target_database: String,
     include_data: bool,
-) -> AppResult<()> {
-    let pool = pool_for(&state, &profile_id).await?;
+) -> AppResult<bool> {
+    state.cancel_copy.store(false, Ordering::Relaxed);
+
+    let cross_connection = target_profile_id
+        .as_deref()
+        .is_some_and(|t| t != profile_id);
+
+    if !cross_connection {
+        return copy_table_same_connection(
+            &state,
+            &profile_id,
+            &source_database,
+            &source_table,
+            &target_database,
+            include_data,
+        )
+        .await;
+    }
+
+    let target_profile = target_profile_id.unwrap();
+    let src_pool = pool_for(&state, &profile_id).await?;
+    let dst_pool = pool_for(&state, &target_profile).await?;
 
     let exists = sqlx::query(
         "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES \
@@ -613,6 +639,136 @@ pub async fn copy_table(
     )
     .bind(&target_database)
     .bind(&source_table)
+    .fetch_one(&dst_pool)
+    .await?;
+    if exists.try_get::<i64, _>(0).unwrap_or(0) > 0 {
+        return Err(AppError::Other(format!(
+            "a table named \"{source_table}\" already exists in \"{target_database}\""
+        )));
+    }
+
+    let qualified_src = format!(
+        "{}.{}",
+        quote_ident(&source_database),
+        quote_ident(&source_table)
+    );
+
+    /* Reproduce the structure from the source's own DDL (SHOW CREATE TABLE
+       returns (Table, "Create Table") — the unqualified CREATE is column 1), then
+       run it on the target after USE so it lands in the right schema. */
+    let create_row = sqlx::query(&format!("SHOW CREATE TABLE {qualified_src}"))
+        .fetch_one(&src_pool)
+        .await?;
+    let create_sql = get_string(&create_row, 1);
+
+    let mut dst_conn = dst_pool.acquire().await?;
+    (&mut *dst_conn)
+        .execute(format!("USE {}", quote_ident(&target_database)).as_str())
+        .await?;
+    (&mut *dst_conn).execute(create_sql.as_str()).await?;
+
+    if include_data {
+        let total: u64 = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(*) FROM {qualified_src}"
+        ))
+        .fetch_one(&src_pool)
+        .await
+        .unwrap_or(0)
+        .max(0) as u64;
+        let _ = app.emit("table-copy-progress", serde_json::json!({ "done": 0, "total": total }));
+
+        let mut src_conn = src_pool.acquire().await?;
+        let select_sql = format!("SELECT * FROM {qualified_src}");
+        let mut stream = sqlx::query(&select_sql).fetch(&mut *src_conn);
+        let mut columns: Vec<(String, String)> = Vec::new();
+        let mut insert_prefix = String::new();
+        /* Batch rows into multi-row INSERTs, flushing on row count or byte size
+           to stay comfortably under the target's max_allowed_packet. */
+        let mut batch: Vec<String> = Vec::new();
+        let mut batch_bytes: usize = 0;
+        let mut done: u64 = 0;
+        let mut cancelled = false;
+        while let Some(row) = stream.try_next().await? {
+            if state.cancel_copy.load(Ordering::Relaxed) {
+                cancelled = true;
+                break;
+            }
+            if columns.is_empty() {
+                columns = result_columns(&row);
+                let col_list = columns
+                    .iter()
+                    .map(|(name, _)| quote_ident(name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                insert_prefix =
+                    format!("INSERT INTO {} ({}) VALUES", quote_ident(&source_table), col_list);
+            }
+            let values = columns
+                .iter()
+                .enumerate()
+                .map(|(i, (_, ty))| sql_literal(&row, i, ty))
+                .collect::<Vec<_>>()
+                .join(", ");
+            batch_bytes += values.len() + 4;
+            batch.push(format!("({values})"));
+            if batch.len() >= 500 || batch_bytes >= 800_000 {
+                done += batch.len() as u64;
+                let stmt = format!("{insert_prefix} {}", batch.join(", "));
+                (&mut *dst_conn).execute(stmt.as_str()).await?;
+                let _ = app
+                    .emit("table-copy-progress", serde_json::json!({ "done": done, "total": total }));
+                batch.clear();
+                batch_bytes = 0;
+            }
+        }
+        drop(stream);
+        if cancelled {
+            /* Tear down the partially-written table so a cancelled copy leaves
+               nothing behind. */
+            let qualified_dst = format!(
+                "{}.{}",
+                quote_ident(&target_database),
+                quote_ident(&source_table)
+            );
+            let _ = (&mut *dst_conn)
+                .execute(format!("DROP TABLE IF EXISTS {qualified_dst}").as_str())
+                .await;
+            return Ok(false);
+        }
+        if !batch.is_empty() {
+            done += batch.len() as u64;
+            let stmt = format!("{insert_prefix} {}", batch.join(", "));
+            (&mut *dst_conn).execute(stmt.as_str()).await?;
+        }
+        let _ = app.emit(
+            "table-copy-progress",
+            serde_json::json!({ "done": done, "total": done.max(total) }),
+        );
+    }
+    Ok(true)
+}
+
+/// Same-connection copy: structure and rows stay server-side via
+/// `CREATE TABLE ... LIKE` and `INSERT ... SELECT`. The `INSERT ... SELECT` runs
+/// as a single statement, so a cancel interrupts it with `KILL QUERY` (the copy
+/// connection's id is registered in `copy_kill` for that purpose). Returns
+/// `false` when cancelled, after dropping the (rolled-back) target table.
+async fn copy_table_same_connection(
+    state: &State<'_, AppState>,
+    profile_id: &str,
+    source_database: &str,
+    source_table: &str,
+    target_database: &str,
+    include_data: bool,
+) -> AppResult<bool> {
+    let pool = pool_for(state, profile_id).await?;
+
+    let exists = sqlx::query(
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+    )
+    .bind(target_database)
+    .bind(source_table)
     .fetch_one(&pool)
     .await?;
     if exists.try_get::<i64, _>(0).unwrap_or(0) > 0 {
@@ -621,27 +777,51 @@ pub async fn copy_table(
         )));
     }
 
-    let src = format!(
-        "{}.{}",
-        quote_ident(&source_database),
-        quote_ident(&source_table)
-    );
-    let dst = format!(
-        "{}.{}",
-        quote_ident(&target_database),
-        quote_ident(&source_table)
-    );
+    let src = format!("{}.{}", quote_ident(source_database), quote_ident(source_table));
+    let dst = format!("{}.{}", quote_ident(target_database), quote_ident(source_table));
 
     let mut conn = pool.acquire().await?;
+
+    /* Capture this connection's thread id so a cancel can target the
+       INSERT ... SELECT with KILL QUERY. */
+    let conn_id: u32 = {
+        let row = (&mut *conn).fetch_one("SELECT CONNECTION_ID()").await?;
+        row.try_get::<u64, _>(0).unwrap_or(0) as u32
+    };
+    *state.copy_kill.write().await = Some((profile_id.to_string(), conn_id));
+
     (&mut *conn)
         .execute(format!("CREATE TABLE {dst} LIKE {src}").as_str())
         .await?;
-    if include_data {
-        (&mut *conn)
-            .execute(format!("INSERT INTO {dst} SELECT * FROM {src}").as_str())
-            .await?;
+
+    if !include_data {
+        state.copy_kill.write().await.take();
+        return Ok(true);
     }
-    Ok(())
+
+    let result = (&mut *conn)
+        .execute(format!("INSERT INTO {dst} SELECT * FROM {src}").as_str())
+        .await;
+    state.copy_kill.write().await.take();
+
+    match result {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            if state.cancel_copy.load(Ordering::Relaxed) {
+                /* KILL QUERY left the connection mid-protocol; discard it and use
+                   a fresh one to drop the now-empty target table. */
+                let _ = conn.detach();
+                if let Ok(mut cleanup) = pool.acquire().await {
+                    let _ = (&mut *cleanup)
+                        .execute(format!("DROP TABLE IF EXISTS {dst}").as_str())
+                        .await;
+                }
+                Ok(false)
+            } else {
+                Err(e.into())
+            }
+        }
+    }
 }
 
 /// Create a new (empty) database/schema on the server.
@@ -1233,6 +1413,23 @@ pub async fn export_table_sql(
 #[tauri::command]
 pub async fn cancel_table_sql_export(state: State<'_, AppState>) -> AppResult<()> {
     state.cancel_sql_export.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Ask the in-progress table copy to stop. Sets the cancel flag (which the
+/// cross-connection streaming loop checks) and, if a same-connection
+/// `INSERT ... SELECT` is in flight, interrupts it with `KILL QUERY`.
+#[tauri::command]
+pub async fn cancel_table_copy(state: State<'_, AppState>) -> AppResult<()> {
+    state.cancel_copy.store(true, Ordering::Relaxed);
+    let target = state.copy_kill.read().await.clone();
+    if let Some((profile_id, conn_id)) = target {
+        let pool = pool_for(&state, &profile_id).await?;
+        let mut conn = pool.acquire().await?;
+        let _ = (&mut *conn)
+            .execute(format!("KILL QUERY {conn_id}").as_str())
+            .await;
+    }
     Ok(())
 }
 
