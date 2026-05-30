@@ -14,7 +14,7 @@ DB Sage pairs a fast, virtualized data grid with a full SQL workspace, a visual 
 - **Test before you save** — validate host / port / user / password from the profile dialog.
 - **Sidebar tree** — connection → databases → folders → tables.
 - **Client-side folders** — organize tables into custom folders per database; folders are purely a DB Sage organizational layer and don't touch the schema.
-- **Drag and drop** — drag tables into folders, or onto another database to copy them (structure-only or with data).
+- **Drag and drop** — drag tables into folders, or onto another database to copy them (structure-only or with data). Copying works **across connections** too (even to a different server); large copies show a progress bar and can be cancelled mid-flight.
 - **Right-click context menus throughout** — connections (rename / edit / new database / disconnect / delete), databases (drop), folders (rename / delete), and tables (edit / rename / truncate / drop / export SQL).
 
 ### SQL query workspace
