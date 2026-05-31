@@ -5,6 +5,7 @@ import { IconContext } from "@phosphor-icons/react";
 import App from "./App";
 import { MonitorWindow } from "./components/MonitorWindow";
 import { AdminWindow } from "./components/AdminWindow";
+import { SplashScreen } from "./components/SplashScreen";
 import "./lib/horizontalWheel";
 import "./index.css";
 
@@ -22,6 +23,7 @@ const adminProfile = label.startsWith(ADMIN_PREFIX)
   : null;
 
 function Root() {
+  if (label === "splash") return <SplashScreen />;
   if (monitorProfile) return <MonitorWindow profileId={monitorProfile} />;
   if (adminProfile) return <AdminWindow profileId={adminProfile} />;
   return <App />;

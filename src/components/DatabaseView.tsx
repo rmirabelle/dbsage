@@ -432,7 +432,10 @@ export function DatabaseView({ tab }: Props) {
           <div className="relative">
             <Search
               size={13}
-              className="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none"
+              className={clsx(
+                "absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none",
+                filter ? "text-zinc-700" : "text-zinc-500"
+              )}
             />
             <input
               ref={inputRef}
@@ -440,7 +443,12 @@ export function DatabaseView({ tab }: Props) {
               value={tab.filter}
               onChange={(e) => setDatabaseFilter(tab.id, e.target.value)}
               placeholder={currentFolder ? "Filter tables…" : "Filter folders & tables…"}
-              className="bg-zinc-900 border border-zinc-800 rounded pl-7 pr-7 py-1 w-56 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-accent-500"
+              className={clsx(
+                "border rounded pl-7 pr-7 py-1 w-56 text-[11px] font-bold",
+                filter
+                  ? "bg-lime-400 border-lime-400 text-black placeholder:text-black/60 focus:border-lime-300"
+                  : "bg-zinc-900 border-zinc-800 text-zinc-200 placeholder:text-zinc-600 focus:border-accent-500"
+              )}
             />
             {tab.filter && (
               <button
@@ -449,7 +457,7 @@ export function DatabaseView({ tab }: Props) {
                   setDatabaseFilter(tab.id, "");
                   inputRef.current?.focus();
                 }}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-700 hover:text-black"
                 aria-label="Clear filter"
               >
                 <X size={13} />

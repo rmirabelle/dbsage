@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Pause,
@@ -7,6 +7,8 @@ import {
   Prohibit,
   CircleNotch as Loader2,
   WarningCircle as AlertCircle,
+  Cpu,
+  Memory,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { ipc } from "../ipc";
@@ -17,6 +19,7 @@ import type {
   ColumnInfo,
   MonitorSample,
   ProcessRow,
+  ServerResources,
   ServerStatus,
 } from "../types";
 
@@ -27,18 +30,25 @@ const HISTORY_RANGES = [
   { value: "86400", label: "24h" },
 ];
 
-/** Per-interval rate of a cumulative counter across history samples. */
+/** One charted point: value plus the unix-second timestamp it was sampled at. */
+interface Point {
+  t: number;
+  v: number;
+}
+
+/** Per-interval rate of a cumulative counter; each point is timestamped at the
+ * later sample of the pair it was derived from. */
 function rateSeries(
   h: MonitorSample[],
   pick: (s: MonitorSample) => number | null
-): number[] {
-  const out: number[] = [];
+): Point[] {
+  const out: Point[] = [];
   for (let i = 1; i < h.length; i++) {
     const a = pick(h[i - 1]);
     const b = pick(h[i]);
     const dt = h[i].ts - h[i - 1].ts;
     if (a == null || b == null || dt <= 0) continue;
-    out.push(Math.max(0, (b - a) / dt));
+    out.push({ t: h[i].ts, v: Math.max(0, (b - a) / dt) });
   }
   return out;
 }
@@ -47,17 +57,24 @@ function rateSeries(
 function gaugeSeries(
   h: MonitorSample[],
   pick: (s: MonitorSample) => number | null
-): number[] {
-  return h.map(pick).filter((v): v is number => v != null);
+): Point[] {
+  const out: Point[] = [];
+  for (const s of h) {
+    const v = pick(s);
+    if (v != null) out.push({ t: s.ts, v });
+  }
+  return out;
 }
 
-/** Buffer-pool hit ratio (%) per interval, from read-request/read deltas. */
-function bufferHitSeries(h: MonitorSample[]): number[] {
-  const out: number[] = [];
+/** Buffer-pool miss ratio (%) per interval — share of read requests that fell
+ * through to disk — from read-request/read deltas. */
+function bufferMissSeries(h: MonitorSample[]): Point[] {
+  const out: Point[] = [];
   for (let i = 1; i < h.length; i++) {
     const rr = (h[i].bpReadRequests ?? 0) - (h[i - 1].bpReadRequests ?? 0);
     const rd = (h[i].bpReads ?? 0) - (h[i - 1].bpReads ?? 0);
-    if (rr > 0) out.push((1 - rd / rr) * 100);
+    /* No read requests in the interval → 0% miss, not a gap in the series. */
+    out.push({ t: h[i].ts, v: rr > 0 ? (rd / rr) * 100 : 0 });
   }
   return out;
 }
@@ -85,7 +102,7 @@ interface Vitals {
   qps: number | null;
   slowPerSec: number | null;
   netPerSec: number | null;
-  bufferHit: number | null;
+  bufferMiss: number | null;
 }
 
 const num = (s: ServerStatus, k: string): number => {
@@ -106,7 +123,7 @@ function computeVitals(
     qps: null,
     slowPerSec: null,
     netPerSec: null,
-    bufferHit: null,
+    bufferMiss: null,
   };
   if (!prev) return base;
   const dt = (curT - prevT) / 1000;
@@ -130,7 +147,9 @@ function computeVitals(
     qps: queries / dt,
     slowPerSec: slow / dt,
     netPerSec: net / dt,
-    bufferHit: rr > 0 ? (1 - reads / rr) * 100 : null,
+    /* No read requests in this interval means no misses — a 0% miss rate, not
+       missing data. */
+    bufferMiss: rr > 0 ? (reads / rr) * 100 : 0,
   };
 }
 
@@ -162,6 +181,21 @@ function fmtUptime(sec: number): string {
   return `${m}m`;
 }
 
+/** Color the (whole-number) slow-query rate: blue at 0, yellow at 1, red at 2+. */
+function slowTone(n: number): string {
+  if (n >= 2) return "text-rose-400";
+  if (n >= 1) return "text-amber-400";
+  return "text-sky-300";
+}
+
+/** Color the buffer-miss rate: ~0% is healthy, rising means the working set is
+ * spilling to disk. */
+function bufferMissTone(pct: number): string {
+  if (pct >= 5) return "text-rose-400";
+  if (pct >= 1) return "text-amber-400";
+  return "text-emerald-400";
+}
+
 /** Color a thread's elapsed time by how long it's been running. */
 function durationTone(seconds: number, idle: boolean): string {
   if (idle) return "text-zinc-600";
@@ -176,6 +210,7 @@ export function MonitoringView({ profileId }: { profileId: string }) {
   const [paused, setPaused] = useState(false);
   const [processes, setProcesses] = useState<ProcessRow[]>([]);
   const [vitals, setVitals] = useState<Vitals | null>(null);
+  const [resources, setResources] = useState<ServerResources | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [hideSleeping, setHideSleeping] = useState(true);
@@ -197,15 +232,34 @@ export function MonitoringView({ profileId }: { profileId: string }) {
     let timer: number | undefined;
     const tick = async () => {
       try {
-        const [procs, status] = await Promise.all([
+        const [procs, status, res] = await Promise.all([
           ipc.listProcesses(profileId),
           ipc.globalStatus(profileId),
+          ipc.serverResources(profileId),
         ]);
         if (cancelled) return;
         const now = Date.now();
         const prev = prevRef.current;
-        setVitals(computeVitals(prev?.status ?? null, prev?.t ?? 0, status, now));
+        const next = computeVitals(prev?.status ?? null, prev?.t ?? 0, status, now);
+        /* Keep the last reading for fields that have no value this interval (a
+           rate with no baseline yet, or a ratio with no activity to divide), so
+           a stat doesn't flicker to "—" and back between updates. */
+        setVitals((p) =>
+          p
+            ? {
+                ...next,
+                qps: next.qps ?? p.qps,
+                slowPerSec: next.slowPerSec ?? p.slowPerSec,
+                netPerSec: next.netPerSec ?? p.netPerSec,
+                bufferMiss: next.bufferMiss ?? p.bufferMiss,
+              }
+            : next
+        );
         prevRef.current = { status, t: now };
+        setResources((p) => ({
+          memoryBytes: res.memoryBytes ?? p?.memoryBytes ?? null,
+          cpuPercent: res.cpuPercent ?? p?.cpuPercent ?? null,
+        }));
         setProcesses(procs);
         setLastUpdated(now);
         setError(null);
@@ -270,7 +324,7 @@ export function MonitoringView({ profileId }: { profileId: string }) {
           ? null
           : (s.bytesSent ?? 0) + (s.bytesReceived ?? 0)
       ),
-      bufferHit: bufferHitSeries(history),
+      bufferMiss: bufferMissSeries(history),
     }),
     [history]
   );
@@ -357,8 +411,34 @@ export function MonitoringView({ profileId }: { profileId: string }) {
 
       <div
         data-el="monitoring-vitals"
-        className="shrink-0 flex flex-wrap gap-2 px-3 py-2 border-b border-zinc-800/60 bg-zinc-950"
+        className="shrink-0 grid grid-flow-col auto-cols-fr gap-2 px-3 py-2 border-b border-zinc-800/60 bg-zinc-950"
       >
+        <Stat
+          label="RAM"
+          tint
+          icon={<Memory size={20} weight="fill" className="text-teal-300 shrink-0" />}
+          value={
+            resources?.memoryBytes != null
+              ? fmtBytes(resources.memoryBytes)
+              : "—"
+          }
+          tip={{
+            what: "Memory currently allocated by the MySQL server, summed from performance_schema instrumentation.",
+            why: "Tracks the server's real memory footprint; steady growth can signal a leak or oversized buffers heading toward the host's limit.",
+          }}
+        />
+        {resources?.cpuPercent != null && (
+          <Stat
+            label="CPU"
+            tint
+            icon={<Cpu size={20} weight="fill" className="text-teal-300 shrink-0" />}
+            value={`${resources.cpuPercent.toFixed(0)}%`}
+            tip={{
+              what: "Overall host CPU usage, read from the local machine (shown only when the server runs on this computer).",
+              why: "Sustained high CPU points at query load or contention saturating cores — pair it with the slow-query and threads-running stats.",
+            }}
+          />
+        )}
         <Stat
           label="Uptime"
           value={vitals ? fmtUptime(vitals.uptime) : "—"}
@@ -369,7 +449,9 @@ export function MonitoringView({ profileId }: { profileId: string }) {
         />
         <Stat
           label="Queries/s"
-          value={fmtCount(vitals?.qps ?? null)}
+          value={
+            vitals?.qps != null ? Math.round(vitals.qps).toLocaleString() : "—"
+          }
           accent
           tip={{
             what: "Statements executed per second (the Queries counter), averaged over the polling interval.",
@@ -381,6 +463,7 @@ export function MonitoringView({ profileId }: { profileId: string }) {
           value={
             vitals ? `${vitals.threadsRunning} / ${vitals.threadsConnected}` : "—"
           }
+          valueClass="text-violet-400"
           tip={{
             what: "Threads actively running a statement, versus total open client connections.",
             why: "Running climbing toward your CPU core count means contention or saturation; connected nearing max_connections risks refused logins.",
@@ -388,7 +471,14 @@ export function MonitoringView({ profileId }: { profileId: string }) {
         />
         <Stat
           label="Slow/s"
-          value={fmtCount(vitals?.slowPerSec ?? null)}
+          value={
+            vitals?.slowPerSec != null ? String(Math.round(vitals.slowPerSec)) : "—"
+          }
+          valueClass={
+            vitals?.slowPerSec != null
+              ? slowTone(Math.round(vitals.slowPerSec))
+              : undefined
+          }
           tip={{
             what: `Queries per second that exceeded long_query_time, the slow-query threshold${
               slowThreshold ? ` — currently ${slowThreshold}` : ""
@@ -405,11 +495,14 @@ export function MonitoringView({ profileId }: { profileId: string }) {
           }}
         />
         <Stat
-          label="Buffer hit"
-          value={vitals?.bufferHit != null ? `${vitals.bufferHit.toFixed(1)}%` : "—"}
+          label="Buffer miss"
+          value={vitals?.bufferMiss != null ? `${vitals.bufferMiss.toFixed(1)}%` : "—"}
+          valueClass={
+            vitals?.bufferMiss != null ? bufferMissTone(vitals.bufferMiss) : undefined
+          }
           tip={{
-            what: "Share of InnoDB page reads served from the in-memory buffer pool instead of disk.",
-            why: "Below ~99% means the working set doesn't fit in memory — reads hit disk and slow down; consider raising innodb_buffer_pool_size.",
+            what: "Share of InnoDB page reads that fell through the in-memory buffer pool and had to hit disk.",
+            why: "Above ~1% means the working set doesn't fit in memory — reads hit disk and slow down; consider raising innodb_buffer_pool_size.",
           }}
         />
       </div>
@@ -434,17 +527,17 @@ export function MonitoringView({ profileId }: { profileId: string }) {
           </span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <MiniChart label="Queries/s" values={series.qps} fmt={fmtCount} color="#38bdf8" />
+          <MiniChart label="Queries/s" points={series.qps} fmt={fmtCount} color="#38bdf8" />
           <MiniChart
             label="Threads running"
-            values={series.threads}
+            points={series.threads}
             fmt={(n) => n.toFixed(0)}
             color="#a78bfa"
           />
-          <MiniChart label="Network/s" values={series.net} fmt={fmtBytes} color="#34d399" />
+          <MiniChart label="Network/s" points={series.net} fmt={fmtBytes} color="#34d399" />
           <MiniChart
-            label="Buffer hit"
-            values={series.bufferHit}
+            label="Buffer miss"
+            points={series.bufferMiss}
             fmt={(n) => `${n.toFixed(1)}%`}
             color="#fbbf24"
           />
@@ -516,7 +609,7 @@ export function MonitoringView({ profileId }: { profileId: string }) {
                           onClick={() => setInspecting(p)}
                           title="Click to view the full statement"
                           className={clsx(
-                            "block w-full truncate text-left font-mono cursor-pointer hover:underline",
+                            "block w-full truncate text-left font-mono cursor-pointer",
                             tone
                           )}
                         >
@@ -566,54 +659,112 @@ export function MonitoringView({ profileId }: { profileId: string }) {
   );
 }
 
-/** A compact, library-free line chart over a value series. */
+/** Clock label for a chart point's unix-second timestamp. */
+function fmtClock(ts: number): string {
+  return new Date(ts * 1000).toLocaleTimeString();
+}
+
+/** A compact, library-free line chart over a timestamped value series, with a
+ * hover guide that reports the value and time at the nearest point. */
 function MiniChart({
   label,
-  values,
+  points,
   fmt,
   color,
 }: {
   label: string;
-  values: number[];
+  points: Point[];
   fmt: (n: number) => string;
   color: string;
 }) {
   const W = 200;
-  const H = 44;
-  const latest = values.length ? values[values.length - 1] : null;
-  let path = "";
-  if (values.length >= 2) {
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const range = max - min || 1;
-    path = values
-      .map((v, i) => {
-        const x = (i / (values.length - 1)) * W;
-        const y = H - 2 - ((v - min) / range) * (H - 4);
-        return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
-  }
+  const H = 96;
+  const PAD = 4;
+  const ref = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<number | null>(null);
+
+  const latest = points.length ? points[points.length - 1].v : null;
+  const min = points.length ? Math.min(...points.map((p) => p.v)) : 0;
+  const max = points.length ? Math.max(...points.map((p) => p.v)) : 0;
+  const range = max - min || 1;
+  const last = Math.max(1, points.length - 1);
+
+  const xOf = (i: number) => (points.length > 1 ? (i / last) * W : W / 2);
+  const yOf = (v: number) => H - PAD - ((v - min) / range) * (H - PAD * 2);
+
+  const path =
+    points.length >= 2
+      ? points
+          .map((p, i) => `${i === 0 ? "M" : "L"}${xOf(i).toFixed(1)},${yOf(p.v).toFixed(1)}`)
+          .join(" ")
+      : "";
+
+  const onMove = (e: React.MouseEvent) => {
+    if (points.length === 0) return;
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return;
+    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setHover(Math.round(frac * last));
+  };
+
+  const hp = hover != null && hover < points.length ? points[hover] : null;
+  const hoverPct = hp ? (hover! / last) * 100 : 0;
+
   return (
     <div className="rounded-lg border border-zinc-700/60 bg-gradient-to-b from-zinc-800/60 to-zinc-950/50 px-3 py-2">
       <div className="flex items-baseline justify-between">
         <span className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</span>
         <span className="text-[13px] font-semibold tabular-nums text-zinc-100">
-          {latest != null ? fmt(latest) : "—"}
+          {hp ? fmt(hp.v) : latest != null ? fmt(latest) : "—"}
         </span>
       </div>
-      <svg
-        className="mt-1 w-full"
-        height={H}
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
+      <div
+        ref={ref}
+        className="relative mt-1"
+        style={{ height: H }}
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
       >
-        {path ? (
-          <path d={path} fill="none" stroke={color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-        ) : (
-          <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="#3f3f46" strokeWidth={1} strokeDasharray="3 3" />
+        <svg
+          className="block h-full w-full"
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+        >
+          {path ? (
+            <path d={path} fill="none" stroke={color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          ) : (
+            <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="#3f3f46" strokeWidth={1} strokeDasharray="3 3" />
+          )}
+          {hp && (
+            <line
+              x1={xOf(hover!)}
+              y1={0}
+              x2={xOf(hover!)}
+              y2={H}
+              stroke="#52525b"
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+        </svg>
+        {hp && (
+          <>
+            <div
+              className="pointer-events-none absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full"
+              style={{ left: `${hoverPct}%`, top: yOf(hp.v), background: color }}
+            />
+            <div
+              className="pointer-events-none absolute bottom-full z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded border border-zinc-700 bg-zinc-900/95 px-1.5 py-0.5 text-[10px] shadow-lg shadow-black/50"
+              style={{
+                left: `${Math.min(85, Math.max(15, hoverPct))}%`,
+              }}
+            >
+              <span className="font-semibold tabular-nums text-zinc-100">{fmt(hp.v)}</span>
+              <span className="ml-1.5 tabular-nums text-zinc-500">{fmtClock(hp.t)}</span>
+            </div>
+          </>
         )}
-      </svg>
+      </div>
     </div>
   );
 }
@@ -648,11 +799,20 @@ function Stat({
   label,
   value,
   accent,
+  tint,
+  valueClass,
+  icon,
   tip,
 }: {
   label: string;
   value: string;
   accent?: boolean;
+  /** Slightly tinted card, used to set the host-resource stats apart. */
+  tint?: boolean;
+  /** Overrides the value's text color (e.g. threshold coloring). */
+  valueClass?: string;
+  /** Optional glyph shown beside the label. */
+  icon?: ReactNode;
   tip?: StatTip;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -674,18 +834,24 @@ function Stat({
       onMouseEnter={show}
       onMouseLeave={hide}
       className={clsx(
-        "min-w-[112px] rounded-lg border border-zinc-700/60 bg-gradient-to-b from-zinc-800/60 to-zinc-950/50 px-3 py-2 shadow-sm shadow-black/30",
+        "min-w-0 rounded-lg border px-3 py-2 shadow-sm shadow-black/30",
+        tint
+          ? "border-teal-700/50 bg-gradient-to-b from-teal-900/40 to-zinc-950/50"
+          : "border-zinc-700/60 bg-gradient-to-b from-zinc-800/60 to-zinc-950/50",
         tip && "cursor-help"
       )}
     >
       <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
-      <div
-        className={clsx(
-          "text-[22px] font-semibold tabular-nums leading-tight mt-0.5",
-          accent ? "text-sky-300" : "text-zinc-100"
-        )}
-      >
-        {value}
+      <div className="mt-0.5 flex items-center gap-1.5">
+        {icon}
+        <span
+          className={clsx(
+            "text-[22px] font-semibold tabular-nums leading-tight",
+            valueClass ?? (accent ? "text-sky-300" : "text-zinc-100")
+          )}
+        >
+          {value}
+        </span>
       </div>
       {tip &&
         rect &&

@@ -57,13 +57,33 @@ export function ExpandedPanel({
   const activeMatchRef = useRef<HTMLElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  /** Reset the editor whenever the selected cell (value/column) changes, and
-   * focus the search box so the user can immediately search the new value. */
+  /** Reset the editor text whenever the inspected value changes. */
   useEffect(() => {
     setText(initialText);
-    setSearch("");
-    searchInputRef.current?.focus();
   }, [initialText]);
+
+  /** Clear the search only on a real column change. Navigating to a new row in
+   * the same column keeps the term applied. The transient null that row clicks
+   * produce (active cell is cleared on mousedown, then re-set by the cell click)
+   * is ignored, so clicking another row in the same column preserves the term. */
+  const lastColumnRef = useRef<string | null>(null);
+  useEffect(() => {
+    const name = column?.name ?? null;
+    if (name === null) return;
+    if (name !== lastColumnRef.current) {
+      setSearch("");
+      lastColumnRef.current = name;
+    }
+  }, [column?.name]);
+
+  /** Focus the search box each time the Inspector is toggled open from closed.
+   * The panel is conditionally mounted (`{expanded && <ExpandedPanel/>}`), so a
+   * mount-only effect fires exactly on each open — and crucially NOT on value
+   * changes, which would steal focus from the grid and break arrow-key row
+   * navigation while the Inspector stays open. */
+  useEffect(() => {
+    searchInputRef.current?.focus();
+  }, []);
 
   const isNull = value === null || value === undefined;
   const isJsonColumn = isJsonType(column);
@@ -279,7 +299,7 @@ export function ExpandedPanel({
               ref={backdropRef}
               aria-hidden="true"
               className={clsx(
-                "absolute inset-0 overflow-hidden text-transparent select-none pointer-events-none",
+                "absolute inset-0 overflow-hidden text-zinc-200 select-none pointer-events-none",
                 layerClass
               )}
             >
@@ -298,9 +318,11 @@ export function ExpandedPanel({
               }}
               onScroll={syncScroll}
               className={clsx(
-                "absolute inset-0 h-full w-full resize-none overflow-auto border-0 bg-transparent outline-none",
+                /* Text is transparent so the visible glyphs come from the
+                   backdrop layer (which colors search matches black on green);
+                   the caret stays visible for editing. */
+                "absolute inset-0 h-full w-full resize-none overflow-auto border-0 bg-transparent outline-none text-transparent caret-zinc-200",
                 layerClass,
-                column ? "text-zinc-200" : "text-zinc-600",
                 !canEdit && "cursor-default"
               )}
             />
@@ -332,7 +354,10 @@ export function ExpandedPanel({
         <div className="relative w-64 max-w-[55%]">
           <Search
             size={13}
-            className="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none"
+            className={clsx(
+              "absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none",
+              search ? "text-zinc-700" : "text-zinc-500"
+            )}
           />
           <input
             ref={searchInputRef}
@@ -346,7 +371,12 @@ export function ExpandedPanel({
               }
             }}
             placeholder="Search value…"
-            className="w-full bg-zinc-900 border border-zinc-800 rounded pl-7 pr-7 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-accent-500 outline-none"
+            className={clsx(
+              "w-full border rounded pl-7 pr-7 py-1 text-[11px] font-bold outline-none",
+              search
+                ? "bg-lime-400 border-lime-400 text-black placeholder:text-black/60 focus:border-lime-300"
+                : "bg-zinc-900 border-zinc-800 text-zinc-200 placeholder:text-zinc-600 focus:border-accent-500"
+            )}
           />
           {search && (
             <button
@@ -355,7 +385,7 @@ export function ExpandedPanel({
                 setSearch("");
                 searchInputRef.current?.focus();
               }}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-700 hover:text-black"
               aria-label="Clear search"
             >
               <X size={13} />
@@ -468,8 +498,8 @@ function renderHighlight(
             : undefined
         }
         className={clsx(
-          "rounded-[1px]",
-          isActive ? "bg-amber-600/80" : "bg-amber-600/40"
+          "rounded-[1px] bg-lime-400 text-black",
+          isActive && "ring-2 ring-black"
         )}
       >
         {text.slice(start, start + qLen)}

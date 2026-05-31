@@ -20,6 +20,7 @@ import type {
   Relation,
   RowsResult,
   SavedQuery,
+  ServerResources,
   ServerStatus,
   ServiceInfo,
   SortSpec,
@@ -33,6 +34,8 @@ export const ipc = {
   listProfiles: () => invoke<ProfileView[]>("list_profiles"),
   saveProfile: (input: ProfileInput) =>
     invoke<ProfileView>("save_profile", { input }),
+  reorderProfiles: (ids: string[]) =>
+    invoke<void>("reorder_profiles", { ids }),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
 
   testConnection: (input: {
@@ -240,6 +243,8 @@ export const ipc = {
   ) => invoke<void>("delete_table_preset", { profileId, database, table, name }),
   listProcesses: (profileId: string) =>
     invoke<ProcessRow[]>("list_processes", { profileId }),
+  serverResources: (profileId: string) =>
+    invoke<ServerResources>("server_resources", { profileId }),
   globalStatus: (profileId: string) =>
     invoke<ServerStatus>("global_status", { profileId }),
   globalVariables: (profileId: string) =>

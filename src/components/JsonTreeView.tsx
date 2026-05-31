@@ -61,8 +61,8 @@ function highlight(str: string, ctx: Ctx): ReactNode {
             : undefined
         }
         className={clsx(
-          "rounded-[1px]",
-          isActive ? "bg-amber-600/80 text-zinc-50" : "bg-amber-600/40"
+          "rounded-[1px] bg-lime-400 text-black",
+          isActive && "ring-2 ring-black"
         )}
       >
         {str.slice(idx, idx + ql.length)}

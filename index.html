@@ -5,9 +5,32 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DB Sage</title>
+    <style>
+      @keyframes dbsage-spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
   </head>
   <body class="bg-zinc-950 text-zinc-200 antialiased overflow-hidden" spellcheck="false">
-    <div id="root"></div>
+    <div id="root">
+      <!-- Static splash: painted the instant the webview loads the HTML, before
+           the JS bundle parses. React renders an identical <SplashScreen> on
+           top, so the handoff is seamless; both vanish once init completes. -->
+      <div style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;background:#22252f;color:#e4e4e7;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;user-select:none;">
+        <div style="display:flex;align-items:center;gap:20px;">
+          <img src="/app-icon.png" alt="DB Sage" width="120" height="120" style="display:block;flex-shrink:0;" />
+          <div style="display:flex;flex-direction:column;align-items:flex-start;max-width:270px;">
+            <div style="font-size:20px;font-weight:600;color:#a3e635;letter-spacing:0.01em;">DB Sage</div>
+            <!-- Version is filled in by the React SplashScreen; the nbsp reserves
+                 the line height so the handoff causes no reflow. -->
+            <div style="font-size:11.5px;line-height:16px;height:16px;color:#71717a;margin-top:2px;">&nbsp;</div>
+            <div style="font-size:12px;color:#a1a1aa;margin-top:4px;">by Robert Mirabelle</div>
+            <div style="font-size:11.5px;line-height:1.55;color:#71717a;margin-top:8px;">A focused, opinionated, intelligent and robust MySQL client for Windows.</div>
+          </div>
+        </div>
+        <div style="width:24px;height:24px;border-radius:9999px;border:3px solid rgba(255,255,255,0.12);border-top-color:#a3e635;animation:dbsage-spin 0.7s linear infinite;"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

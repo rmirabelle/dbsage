@@ -14,9 +14,60 @@ use state::AppState;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
-/// Show every app window (main + any monitor windows) and surface them. Used by
-/// the tray to bring the app back after a hide-to-tray. Monitor windows are
+/// Stable id for the on-demand tray icon, so it can be created and removed.
+const TRAY_ID: &str = "main-tray";
+
+/// Create the tray icon if it isn't already present (idempotent). The tray only
+/// exists while the app is hidden via "Minimize to Tray" — there's no permanent
+/// tray presence during normal use (minimize goes to the taskbar, close quits),
+/// so the app never shows in both the taskbar and the tray at once. Left-click or
+/// "Show" restores all windows (and removes the tray); "Quit" exits for real.
+fn ensure_tray(app: &AppHandle) -> tauri::Result<()> {
+    if app.tray_by_id(TRAY_ID).is_some() {
+        return Ok(());
+    }
+    let show = MenuItem::with_id(app, "show", "Show DB Sage", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+    TrayIconBuilder::with_id(TRAY_ID)
+        .icon(app.default_window_icon().unwrap().clone())
+        .tooltip("DB Sage")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_all_windows(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_all_windows(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
+/// Hide every app window to the tray and create the tray icon so the app can be
+/// restored. Used by the "Minimize to Tray" path; keeps background sampling alive.
+fn hide_all_to_tray(app: &AppHandle) {
+    let _ = ensure_tray(app);
+    for (label, win) in app.webview_windows() {
+        if label == "main" || label.starts_with("monitor-") || label.starts_with("admin-") {
+            let _ = win.hide();
+        }
+    }
+}
+
+/// Show every app window (main + any monitor windows) and surface them, then
+/// remove the tray icon (we're back to normal taskbar use). Monitor windows are
 /// focused last so they aren't left buried behind the (larger) main window.
 fn show_all_windows(app: &AppHandle) {
     let mut monitors = Vec::new();
@@ -33,6 +84,28 @@ fn show_all_windows(app: &AppHandle) {
     for win in monitors {
         let _ = win.set_focus();
     }
+    let _ = app.remove_tray_by_id(TRAY_ID);
+}
+
+/// Confirm exiting while a monitor window is still showing. The dialog is shown
+/// non-blocking (a blocking dialog from the window-event callback would stall the
+/// main event loop): "Exit" quits the app, "Minimize to Tray" hides every window
+/// so background sampling keeps running.
+fn confirm_exit_with_monitor(app: AppHandle) {
+    app.dialog()
+        .message("A monitoring window is still open. Are you sure you want to exit?")
+        .title("Exit DB Sage?")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Exit".into(),
+            "Minimize to Tray".into(),
+        ))
+        .show(move |exit| {
+            if exit {
+                app.exit(0);
+            } else {
+                hide_all_to_tray(&app);
+            }
+        });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -40,57 +113,47 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            /* Don't let the plugin manage the VISIBLE flag: the main window
+             * launches hidden (config) and is shown only once boot completes,
+             * so a restored "visible" would defeat the splash. The splash window
+             * is always centered, so skip its saved state entirely. */
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .skip_initial_state("splash")
+                .build(),
+        )
         .manage(AppState::default())
         .setup(|app| {
             /* Re-key per-connection stores from profile id to host (idempotent).
              * Best-effort: a migration hiccup must never block app launch. */
             let _ = store::migrate::host_rekey(app.handle());
 
-            /* Tray icon: lets the app keep running (and background sampling) after
-             * the main window is hidden. Left-click or "Show" restores all
-             * windows; "Quit" exits for real. */
-            let show = MenuItem::with_id(app, "show", "Show DB Sage", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
-            TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("DB Sage")
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => show_all_windows(app),
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        show_all_windows(tray.app_handle());
-                    }
-                })
-                .build(app)?;
+            /* No tray icon at startup — it's created on demand only when the user
+             * picks "Minimize to Tray" (see hide_all_to_tray) and removed again on
+             * restore, so the app never shows in both the taskbar and the tray. */
 
-            /* Closing the MAIN window hides the whole app to the tray (main + any
-             * monitor windows) instead of quitting, so background sampling keeps
-             * running. Monitor windows keep their default close (they're torn down
-             * individually — that's the "stop monitoring this connection" gesture). */
+            /* Closing the MAIN window quits the whole app. Edge case: if any
+             * monitor window is still showing, background sampling would be lost,
+             * so confirm first — offering "Exit" or "Minimize to Tray" (the old
+             * hide-everything behavior, which keeps sampling alive). Monitor
+             * windows keep their default close (they're torn down individually —
+             * that's the "stop monitoring this connection" gesture). */
             if let Some(main) = app.get_webview_window("main") {
                 let handle = app.handle().clone();
                 main.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        for (label, win) in handle.webview_windows() {
-                            if label == "main"
-                                || label.starts_with("monitor-")
-                                || label.starts_with("admin-")
-                            {
-                                let _ = win.hide();
-                            }
+                        let monitor_showing = handle.webview_windows().iter().any(|(label, win)| {
+                            label.starts_with("monitor-") && win.is_visible().unwrap_or(false)
+                        });
+                        if monitor_showing {
+                            api.prevent_close();
+                            confirm_exit_with_monitor(handle.clone());
+                        } else {
+                            handle.exit(0);
                         }
                     }
                 });
@@ -100,6 +163,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             profiles::list_profiles,
             profiles::save_profile,
+            profiles::reorder_profiles,
             profiles::delete_profile,
             connect::test_connection,
             connect::open_connection,
@@ -150,6 +214,7 @@ pub fn run() {
             query_history::delete_query_history,
             query_history::clear_query_history,
             monitoring::list_processes,
+            monitoring::server_resources,
             monitoring::global_status,
             monitoring::global_variables,
             monitoring::kill_process,

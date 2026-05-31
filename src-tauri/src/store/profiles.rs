@@ -76,6 +76,20 @@ pub fn upsert(app: &AppHandle, profile: ConnectionProfile) -> AppResult<Connecti
     }
 }
 
+/// Reorder the stored profiles to match the given id order. Ids not present in
+/// `order` keep their relative position at the end (stable sort), so a stale or
+/// partial list can never drop a profile.
+pub fn reorder(app: &AppHandle, order: &[String]) -> AppResult<()> {
+    let mut all = load_all(app)?;
+    all.sort_by_key(|p| {
+        order
+            .iter()
+            .position(|id| id == &p.id)
+            .unwrap_or(usize::MAX)
+    });
+    save_all(app, &all)
+}
+
 pub fn delete(app: &AppHandle, id: &str) -> AppResult<()> {
     let mut all = load_all(app)?;
     let before = all.len();

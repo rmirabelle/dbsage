@@ -127,6 +127,9 @@ interface Store {
   relations: Record<string, Relation[]>;
 
   loadProfiles: () => Promise<void>;
+  /** Move a connection so it sits where `targetId` is, persisting the new order.
+   * Reorders optimistically and reverts (by reloading) if the save fails. */
+  reorderProfiles: (draggedId: string, targetId: string) => Promise<void>;
   /** Refresh visible state after a bundle import (profiles, open tabs, tree folders, relations). */
   reloadAfterImport: () => Promise<void>;
   connectProfile: (profileId: string) => Promise<void>;
@@ -376,6 +379,25 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
+  reorderProfiles: async (draggedId, targetId) => {
+    const profiles = get().profiles;
+    const from = profiles.findIndex((p) => p.id === draggedId);
+    const to = profiles.findIndex((p) => p.id === targetId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = profiles.filter((p) => p.id !== draggedId);
+    let insertAt = next.findIndex((p) => p.id === targetId);
+    /* Dragging downward drops below the target; upward drops above it. */
+    if (from < to) insertAt += 1;
+    next.splice(insertAt, 0, profiles[from]);
+    set({ profiles: next });
+    try {
+      await ipc.reorderProfiles(next.map((p) => p.id));
+    } catch (e) {
+      notifyError(`Could not reorder connections: ${String(e)}`);
+      await get().loadProfiles();
+    }
+  },
+
   reloadAfterImport: async () => {
     await get().loadProfiles();
 
@@ -578,6 +600,10 @@ export const useStore = create<Store>((set, get) => ({
       return;
     }
 
+    /* Carry the current search term over to the new database view so a filter
+       stays applied while navigating between databases. */
+    const carriedFilter =
+      get().tabs.find((t) => t.kind === "database")?.filter ?? "";
     const tab: DatabaseTab = {
       id: tabId,
       kind: "database",
@@ -588,7 +614,7 @@ export const useStore = create<Store>((set, get) => ({
       error: null,
       tables: [],
       folders: [],
-      filter: "",
+      filter: carriedFilter,
       currentFolderId: null,
     };
     /* Only one database view at a time — replace the current one in place,
@@ -615,7 +641,7 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "database"
-          ? { ...t, currentFolderId: folderId, filter: "" }
+          ? { ...t, currentFolderId: folderId }
           : t
       ),
     }));
@@ -625,7 +651,7 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "database"
-          ? { ...t, currentFolderId: null, filter: "" }
+          ? { ...t, currentFolderId: null }
           : t
       ),
     }));
@@ -1260,7 +1286,9 @@ export const useStore = create<Store>((set, get) => ({
         ),
       }));
       if (wasStopped) notifyInfo("Query stopped.");
-      else notifyError(`Query failed: ${msg}`);
+      /* Keyed per tab so a new failure supersedes this pane's previous query
+         error (even with different text) — only the latest query error shows. */
+      else notifyError(`Query failed: ${msg}`, `query-error:${tabId}`);
     } finally {
       unlisten();
     }

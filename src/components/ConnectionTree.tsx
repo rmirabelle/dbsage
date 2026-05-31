@@ -82,10 +82,6 @@ export function ConnectionTree() {
   const [pendingProfileDelete, setPendingProfileDelete] =
     useState<ProfileView | null>(null);
 
-  useEffect(() => {
-    loadProfiles();
-  }, [loadProfiles]);
-
   /* Close the open tree menu on any outside click, another right-click, or
      Escape. Row right-clicks stopPropagation, so opening a menu doesn't trip
      this; opening replaces treeMenu, which closes whatever was open. */
@@ -163,19 +159,29 @@ export function ConnectionTree() {
           </div>
         )}
 
-        {profiles.map((profile) => {
+        {profiles.map((profile, index) => {
           const expanded = expandedProfiles.has(profile.id);
           const conn = connections[profile.id];
           return (
             <div
               key={profile.id}
-              className="text-xs mb-1.5"
+              className="text-xs mb-0.5"
             >
+              <ConnectionReorderRow
+                profileId={profile.id}
+                name={profile.name}
+                index={index}
+              >
+                {({ setNodeRef, attributes, listeners, dropEdge, isDragging }) => (
               <div
+                ref={setNodeRef}
+                {...attributes}
+                {...(renamingId === profile.id ? {} : listeners)}
                 data-el="connection-row"
                 className={clsx(
-                  "group flex items-center gap-1 px-2 py-1.5 cursor-pointer hover:bg-zinc-900/70",
-                  expanded && "bg-zinc-900/40"
+                  "group relative flex items-center gap-1 px-2 py-1.5 cursor-pointer hover:bg-zinc-900/70",
+                  expanded && "bg-zinc-900/40",
+                  isDragging && "opacity-50"
                 )}
                 onClick={() => toggleProfileExpanded(profile.id)}
                 onContextMenu={(e) => {
@@ -189,6 +195,14 @@ export function ConnectionTree() {
                   });
                 }}
               >
+                {dropEdge && (
+                  <div
+                    className={clsx(
+                      "pointer-events-none absolute left-0 right-0 z-10 h-0.5 bg-accent-400",
+                      dropEdge === "top" ? "-top-px" : "-bottom-px"
+                    )}
+                  />
+                )}
                 {conn?.connecting ? (
                   <Loader2 size={18} className="shrink-0 mr-1.5 animate-spin text-lime-400" />
                 ) : conn?.connected ? (
@@ -226,6 +240,8 @@ export function ConnectionTree() {
                   </span>
                 )}
               </div>
+                )}
+              </ConnectionReorderRow>
 
               {expanded && (
                 <div
@@ -596,7 +612,7 @@ function DatabaseList({
   };
 
   return (
-    <div>
+    <div className="mb-3">
       {tree.databases.map((db) => {
         const expanded = tree.expandedDbs.has(db);
         const state = tree.tablesByDb[db];
@@ -989,6 +1005,71 @@ function DbContextMenu({
       </button>
     </div>,
     document.body
+  );
+}
+
+/**
+ * Render-prop wrapper that makes a connection header row both draggable (to
+ * reorder connections) and a drop target (the row another connection lands on).
+ */
+function ConnectionReorderRow({
+  profileId,
+  name,
+  index,
+  children,
+}: {
+  profileId: string;
+  name: string;
+  index: number;
+  children: (p: {
+    setNodeRef: (el: HTMLElement | null) => void;
+    attributes: ReturnType<typeof useDraggable>["attributes"];
+    listeners: ReturnType<typeof useDraggable>["listeners"];
+    dropEdge: "top" | "bottom" | null;
+    isDragging: boolean;
+  }) => ReactNode;
+}) {
+  const profiles = useStore((s) => s.profiles);
+  const drag = useDraggable({
+    id: `conn-drag:${profileId}`,
+    data: { source: "connection", profileId, name },
+  });
+  const drop = useDroppable({
+    id: `conn-drop:${profileId}`,
+    data: { kind: "connection-row", profileId },
+  });
+  const setNodeRef = (el: HTMLElement | null) => {
+    drag.setNodeRef(el);
+    drop.setNodeRef(el);
+  };
+
+  /* Show the insertion line on the edge the drop will actually land on:
+     dragging down drops below this row, dragging up drops above it (mirrors
+     reorderProfiles). No line over the dragged row itself. */
+  const draggedId =
+    drop.active?.data.current?.source === "connection"
+      ? (drop.active.data.current.profileId as string)
+      : null;
+  const draggedIndex = draggedId
+    ? profiles.findIndex((p) => p.id === draggedId)
+    : -1;
+  const dropEdge: "top" | "bottom" | null =
+    !drop.isOver || draggedIndex < 0 || draggedIndex === index
+      ? null
+      : draggedIndex < index
+        ? "bottom"
+        : "top";
+
+  return (
+    <>
+      {children({
+        setNodeRef,
+        attributes: drag.attributes,
+        listeners: drag.listeners,
+        dropEdge,
+        isDragging: drag.isDragging,
+      })}
+    </>
   );
 }
 

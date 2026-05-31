@@ -68,6 +68,11 @@ pub async fn save_profile(app: AppHandle, input: ProfileInput) -> AppResult<Prof
 }
 
 #[tauri::command]
+pub async fn reorder_profiles(app: AppHandle, ids: Vec<String>) -> AppResult<()> {
+    profiles::reorder(&app, &ids)
+}
+
+#[tauri::command]
 pub async fn delete_profile(
     app: AppHandle,
     state: State<'_, AppState>,

@@ -55,31 +55,95 @@ pub async fn list_processes(
     profile_id: String,
 ) -> AppResult<Vec<ProcessRow>> {
     let pool = pool_for(&state, &profile_id).await?;
-    let rows = sqlx::query(
-        "SELECT ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO \
-         FROM information_schema.PROCESSLIST ORDER BY TIME DESC",
-    )
-    .fetch_all(&pool)
-    .await?;
-    Ok(rows
+    /* SHOW FULL PROCESSLIST (not information_schema.PROCESSLIST) so the INFO
+       column carries the full statement text — the server truncates it for the
+       non-FULL variants, which clipped long queries in the Inspector. It runs
+       over the simple query protocol (numeric columns arrive as text), and SHOW
+       takes no ORDER BY, so we sort busiest-first here. Column order matches the
+       old query: Id, User, Host, db, Command, Time, State, Info. */
+    let rows = pool.fetch_all("SHOW FULL PROCESSLIST").await?;
+    let mut out: Vec<ProcessRow> = rows
         .iter()
         .map(|r| ProcessRow {
-            id: r
-                .try_get::<u64, _>(0)
-                .or_else(|_| r.try_get::<i64, _>(0).map(|v| v as u64))
-                .unwrap_or(0),
+            id: opt_string(r, 0).and_then(|s| s.parse().ok()).unwrap_or(0),
             user: opt_string(r, 1),
             host: opt_string(r, 2),
             db: opt_string(r, 3),
             command: opt_string(r, 4),
-            time: r
-                .try_get::<i64, _>(5)
-                .or_else(|_| r.try_get::<i32, _>(5).map(|v| v as i64))
-                .unwrap_or(0),
+            time: opt_string(r, 5).and_then(|s| s.parse().ok()).unwrap_or(0),
             state: opt_string(r, 6),
             info: opt_string(r, 7),
         })
-        .collect())
+        .collect();
+    out.sort_by(|a, b| b.time.cmp(&a.time));
+    Ok(out)
+}
+
+/// True when a connection host points at this machine (mirrors the frontend's
+/// `isLocalHost`), so host CPU only gets reported for a server we're running on.
+fn is_local_host(host: &str) -> bool {
+    matches!(
+        host.trim().to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | ""
+    )
+}
+
+/// Overall host CPU usage (%), measured as the delta since the previous call.
+/// The `System` persists across calls so each reading reflects usage over the
+/// poll interval; the first reading after startup is ~0.
+fn host_cpu_percent() -> f64 {
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
+    static SYS: Lazy<Mutex<sysinfo::System>> = Lazy::new(|| Mutex::new(sysinfo::System::new()));
+    let mut sys = SYS.lock().unwrap();
+    sys.refresh_cpu_usage();
+    sys.global_cpu_usage() as f64
+}
+
+/// Host/server resource usage for the vitals strip: MySQL's own allocated memory
+/// (always, from performance_schema) and host CPU (only for a local server).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerResources {
+    /// Bytes currently allocated by the server, or None when performance_schema
+    /// memory instrumentation is unavailable.
+    pub memory_bytes: Option<u64>,
+    /// Host CPU usage (%), or None for a remote server (can't be read over SQL).
+    pub cpu_percent: Option<f64>,
+}
+
+#[tauri::command]
+pub async fn server_resources(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<ServerResources> {
+    let pool = pool_for(&state, &profile_id).await?;
+    /* CAST to CHAR so the SUM comes back as a text column `opt_string` can read
+       (it only decodes String/Vec<u8> — an integer-typed column reads as None
+       over the simple protocol). NULL (instrumentation off) → None, and a failed
+       query (no performance_schema) is swallowed to None rather than erroring. */
+    let memory_bytes = match pool
+        .fetch_all(
+            "SELECT CAST(SUM(CURRENT_NUMBER_OF_BYTES_USED) AS CHAR) \
+             FROM performance_schema.memory_summary_global_by_event_name",
+        )
+        .await
+    {
+        Ok(rows) => rows
+            .first()
+            .and_then(|r| opt_string(r, 0))
+            .and_then(|s| s.parse::<u64>().ok()),
+        Err(_) => None,
+    };
+
+    let host = crate::store::profiles::get(&app, &profile_id)?.host;
+    let cpu_percent = is_local_host(&host).then(host_cpu_percent);
+
+    Ok(ServerResources {
+        memory_bytes,
+        cpu_percent,
+    })
 }
 
 /// `SHOW GLOBAL STATUS` as a name→value map. The frontend picks the counters it

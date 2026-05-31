@@ -306,6 +306,14 @@ export interface ProcessRow {
 /** `SHOW GLOBAL STATUS` as a name→value map (values are numeric strings). */
 export type ServerStatus = Record<string, string>;
 
+/** Host/server resource usage for the vitals strip. */
+export interface ServerResources {
+  /** Bytes currently allocated by MySQL, or null when unavailable. */
+  memoryBytes: number | null;
+  /** Host CPU usage (%), or null for a remote server (CPU only read for local). */
+  cpuPercent: number | null;
+}
+
 /** One persisted history sample: raw cumulative counters + unix-second timestamp.
  * Rates (QPS, etc.) are derived by diffing consecutive samples. */
 export interface MonitorSample {
