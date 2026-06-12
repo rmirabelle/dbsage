@@ -66,21 +66,26 @@ export function ColumnsVisibilityMenu({
   const showAll = () => onChange([]);
   const hideAll = () => onChange(columns.map((c) => c.name));
 
+  /* Floor at 0, not 8: this menu anchors to the gutter cell whose left edge sits
+     at the window's left edge, so an 8px floor would leave a visible gap. The
+     column filter menus never hit this — their cells start past the gutter. */
   const left = Math.max(
-    8,
+    0,
     Math.min(window.innerWidth - MENU_WIDTH - 8, anchor.x)
   );
-  const top = Math.max(
-    8,
-    Math.min(window.innerHeight - MENU_MAX_HEIGHT - 8, anchor.y)
-  );
+  /* Stay anchored under the button (like ColumnHeaderMenu) rather than reserving
+     the full menu height up front — in a short window (e.g. a peek) reserving
+     MENU_MAX_HEIGHT would push `top` to the corner and detach the menu. Instead
+     cap the height to whatever space is left below the anchor. */
+  const top = Math.max(8, Math.min(window.innerHeight - 60, anchor.y));
+  const maxHeight = Math.min(MENU_MAX_HEIGHT, window.innerHeight - top - 8);
 
   return createPortal(
     <div
       ref={ref}
       data-el="columns-menu"
-      style={{ top, left, width: MENU_WIDTH, maxHeight: MENU_MAX_HEIGHT }}
-      className="fixed z-[100] flex flex-col rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[11px] text-zinc-200 select-none overflow-hidden"
+      style={{ top, left, width: MENU_WIDTH, maxHeight }}
+      className="fixed z-[100] flex flex-col rounded-b border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[11px] text-zinc-200 select-none overflow-hidden"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="px-3 py-1.5 border-b border-zinc-800 flex items-center justify-between gap-2">
@@ -135,7 +140,7 @@ export function ColumnsVisibilityMenu({
         </div>
       </div>
 
-      <div className="overflow-y-auto py-1">
+      <div className="flex-1 min-h-0 overflow-y-auto py-1">
         {columns.map((col) => {
           const hide = hiddenSet.has(col.name);
           return (

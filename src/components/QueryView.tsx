@@ -28,9 +28,15 @@ import { scanFromTables } from "../lib/sqlCompletion";
 import { SQL_KEYWORDS } from "../lib/sqlHighlight";
 import type { ColumnFilter, QueryTab, RowRecord, SortSpec } from "../types";
 
+/** Stable empty fallback so the selector never returns a fresh array (which, in
+ * a window whose store has no tree loaded, would loop useSyncExternalStore). */
+const NO_DATABASES: string[] = [];
+
 export function QueryView({ tab }: { tab: QueryTab }) {
   const profiles = useStore((s) => s.profiles);
-  const databases = useStore((s) => s.trees[tab.profileId]?.databases ?? []);
+  const databases = useStore(
+    (s) => s.trees[tab.profileId]?.databases ?? NO_DATABASES
+  );
   const setQuerySql = useStore((s) => s.setQuerySql);
   const setQueryConnection = useStore((s) => s.setQueryConnection);
   const setQueryDatabase = useStore((s) => s.setQueryDatabase);

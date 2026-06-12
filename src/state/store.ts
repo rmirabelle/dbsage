@@ -16,6 +16,7 @@ import type {
   CreateTableTab,
   DatabaseTab,
   Folder,
+  PeekDescriptor,
   ProfileView,
   QueryTab,
   Relation,
@@ -99,6 +100,12 @@ interface Store {
 
   tabs: Tab[];
   activeTabId: string | null;
+  /** True while a torn-off tab window is hovering the tab bar, so the bar can
+   * show a drop target. Set over IPC events from the dragging window. */
+  tabDropActive: boolean;
+  setTabDropActive: (active: boolean) => void;
+  /** Re-attach a tab that was torn off into its own window (the window closes). */
+  dockTab: (tab: Tab) => void;
   /** Tab awaiting an unsaved-changes confirmation before it closes; null when none. */
   pendingCloseTabId: string | null;
   /** In-progress SQL-script export with row data; null when none is running. */
@@ -362,6 +369,7 @@ export const useStore = create<Store>((set, get) => ({
   expandedProfiles: new Set(),
   tabs: [],
   activeTabId: null,
+  tabDropActive: false,
   pendingCloseTabId: null,
   sqlExport: null,
   copyProgress: null,
@@ -1591,6 +1599,16 @@ export const useStore = create<Store>((set, get) => ({
 
   setActiveTab: (tabId) => set({ activeTabId: tabId }),
 
+  setTabDropActive: (active) => set({ tabDropActive: active }),
+
+  dockTab: (tab) =>
+    set((s) => ({
+      /* Drop any stale copy with the same id, then append and focus it. */
+      tabs: [...s.tabs.filter((t) => t.id !== tab.id), tab],
+      activeTabId: tab.id,
+      tabDropActive: false,
+    })),
+
   setTabPage: async (tabId, page) => {
     await loadTabPage(tabId, page, set, get);
   },
@@ -1707,6 +1725,35 @@ export const useStore = create<Store>((set, get) => ({
     if (!tab || tab.kind !== "rows") return;
     const trimmed = name.trim();
     if (!trimmed) return;
+    /* Capture the peek windows currently open against this table, so the view
+       restores them too. Best-effort — a peek-listing hiccup must not block the
+       save. */
+    let peeks: PeekDescriptor[] = [];
+    try {
+      const open = await ipc.listOpenPeeks<PeekDescriptor>();
+      const sameDb = open.filter(
+        (p) => p.profileId === tab.profileId && p.database === tab.database
+      );
+      /* Capture the whole peek tree rooted at this table, not just its direct
+         peeks: a child peek's sourceTable is its parent peek's table, so walk
+         the reachable tables transitively (target table of any captured peek
+         becomes a valid source for the next). */
+      const reachable = new Set<string>([tab.table]);
+      const collected = new Set<PeekDescriptor>();
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const p of sameDb) {
+          if (collected.has(p) || !reachable.has(p.sourceTable)) continue;
+          collected.add(p);
+          reachable.add(p.target.table);
+          changed = true;
+        }
+      }
+      peeks = [...collected];
+    } catch {
+      /* ignore — save the rest of the view */
+    }
     const preset: TableViewPreset = {
       name: trimmed,
       setup: {
@@ -1715,6 +1762,7 @@ export const useStore = create<Store>((set, get) => ({
         sort: tab.sort,
         filters: tab.filters,
         jsonDisplay: tab.jsonDisplay,
+        ...(peeks.length > 0 && { peeks }),
       },
     };
     try {
@@ -1762,6 +1810,24 @@ export const useStore = create<Store>((set, get) => ({
     const t = get().tabs.find((x) => x.id === tabId);
     if (t && t.kind === "rows") persistColumnSetup(t);
     await loadTabPage(tabId, 1, set, get);
+
+    /* A saved view owns the peek workspace: close any peeks currently on screen
+       first, then reopen exactly the set the view captured. */
+    await ipc.closeAllPeeks().catch(() => {});
+    for (const p of preset.setup.peeks ?? []) {
+      const seed = {
+        profileId: p.profileId,
+        profileName: p.profileName,
+        database: p.database,
+        target: p.target,
+        sourceTable: p.sourceTable,
+        sourceColumn: p.sourceColumn,
+        hiddenColumns: p.hiddenColumns,
+      };
+      ipc
+        .openPeekWindow(seed, p.x ?? 120, p.y ?? 120, p.width ?? 900, p.height ?? 440)
+        .catch(() => {});
+    }
   },
 
   deleteTablePreset: async (tabId, name) => {

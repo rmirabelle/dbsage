@@ -139,6 +139,39 @@ export interface ColumnSetup {
   sort?: SortSpec | null;
 }
 
+/** The resolved target of a relation peek: a table/column and the cell value to
+ * match against it. */
+export interface PeekTarget {
+  table: string;
+  column: string;
+  value: string;
+}
+
+/** Everything needed to (re)open a peek in its own window. Stashed as the
+ * window's seed and registered so saved views can capture open peeks. */
+export interface PeekSeed {
+  profileId: string;
+  profileName: string;
+  database: string;
+  target: PeekTarget;
+  /** The table/column the peek was launched from (so a saved table view can
+   * tell which of its peeks to restore). */
+  sourceTable: string;
+  sourceColumn: string;
+  /** Columns hidden in this peek's grid. Carried so a saved view restores the
+   * peek's column visibility; absent on a freshly-launched peek (none hidden). */
+  hiddenColumns?: string[];
+}
+
+/** A peek as reported by `list_open_peeks`: its seed plus current on-screen
+ * geometry (CSS px), so a saved table view can restore it where it sat. */
+export interface PeekDescriptor extends PeekSeed {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+}
+
 /** A full, reusable table-view snapshot: everything a named preset captures and
  * restores. Like {@link ColumnSetup} but also carries the sort. */
 export interface TableViewSetup {
@@ -147,6 +180,8 @@ export interface TableViewSetup {
   sort: SortSpec | null;
   filters: ColumnFilter[];
   jsonDisplay: Record<string, string>;
+  /** Peek windows that were open against this table when the view was saved. */
+  peeks?: PeekDescriptor[];
 }
 
 /** A named, saved table-view preset (scoped to one table). */

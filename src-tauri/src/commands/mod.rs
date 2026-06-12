@@ -11,3 +11,4 @@ pub mod relations;
 pub mod saved_queries;
 pub mod state_io;
 pub mod table_view_presets;
+pub mod windows;

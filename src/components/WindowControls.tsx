@@ -1,13 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ipc } from "../ipc";
+
+type Control = "min" | "max" | "close";
 
 /**
  * Windows-style minimize / maximize-restore / close buttons, driving the current
- * Tauri window. Shared by the main titlebar and the monitor window's titlebar so
- * their controls look and behave identically.
+ * Tauri window. Shared by every window's titlebar so they look and behave
+ * identically. Buttons sit flush in the titlebar; hover is state-driven so it can
+ * be force-cleared (see the hover effect).
  */
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
+  const [hovered, setHovered] = useState<Control | null>(null);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -25,26 +31,116 @@ export function WindowControls() {
     };
   }, []);
 
+  /* Hover is state-driven, not CSS `:hover`, so it can be force-cleared: WebView2
+     drops the DOM `mouseleave` when the pointer flicks out of the window fast (no
+     exit sample lands inside the page), which would leave the close button stuck
+     red. onMouseEnter/onMouseLeave handle the in-window cases instantly; while
+     (and only while) a button is hovered, a poll asks the OS where the cursor
+     REALLY is and clears the hover once it's outside the window's client rect.
+     Unlike DOM events, GetCursorPos can't miss — the next tick sees the cursor
+     wherever it ended up.
+
+     One persistent interval gated by a ref (not torn down per hover change, so
+     rapid moves across the buttons can't race a teardown), and the window rect is
+     fetched fresh each tick alongside the cursor (both in physical px), so a
+     moved/resized window never leaves stale bounds.
+
+     Each hover carries a generation number, and a tick may only clear the
+     generation that was current when the tick STARTED. Otherwise a tick that
+     sampled the cursor just before the pointer re-entered would land its stale
+     "outside" verdict ~30ms later and kill the brand-new hover — which then
+     stays dead, because the pointer never leaves the button again to re-fire
+     mouseenter. */
+  const hoveredRef = useRef<Control | null>(null);
+  hoveredRef.current = hovered;
+  const hoverGen = useRef(0);
+  const enter = (c: Control) => {
+    hoverGen.current++;
+    setHovered(c);
+  };
+  useEffect(() => {
+    const clear = () => setHovered(null);
+    window.addEventListener("blur", clear);
+    let checking = false;
+    const id = window.setInterval(async () => {
+      if (!hoveredRef.current || checking) return;
+      checking = true;
+      const gen = hoverGen.current;
+      try {
+        const win = getCurrentWindow();
+        const [pos, size, [cx, cy]] = await Promise.all([
+          win.innerPosition(),
+          win.innerSize(),
+          ipc.cursorPosition(),
+        ]);
+        if (
+          gen === hoverGen.current &&
+          (cx < pos.x ||
+            cy < pos.y ||
+            cx >= pos.x + size.width ||
+            cy >= pos.y + size.height)
+        ) {
+          clear();
+        }
+      } catch {
+        /* ignore — a failed poll just defers the check to the next tick */
+      } finally {
+        checking = false;
+      }
+    }, 100);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("blur", clear);
+    };
+  }, []);
+
   const win = getCurrentWindow();
-  const btn =
-    "h-9 w-11 inline-flex items-center justify-center text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100 transition";
+  const base =
+    "h-full w-11 inline-flex items-center justify-center transition";
 
   return (
-    <div className="flex items-center">
-      <button aria-label="Minimize" onClick={() => win.minimize()} className={btn}>
+    <div className="flex items-stretch self-stretch">
+      {/* onMouseMove alongside onMouseEnter: after a dropped mouseleave (fast
+          flick out of the window) the DOM still thinks the pointer is on the
+          button, so re-entering it fires NO mouseenter. mousemove doesn't care
+          about that bookkeeping — it fires for any motion over the element, so
+          the first pixel of movement restores the hover. */}
+      <button
+        aria-label="Minimize"
+        onClick={() => win.minimize()}
+        onMouseEnter={() => enter("min")}
+        onMouseMove={() => enter("min")}
+        onMouseLeave={() => setHovered(null)}
+        className={clsx(
+          base,
+          hovered === "min" ? "bg-zinc-800/80 text-zinc-100" : "text-zinc-400"
+        )}
+      >
         <MinimizeIcon />
       </button>
       <button
         aria-label={maximized ? "Restore" : "Maximize"}
         onClick={() => win.toggleMaximize()}
-        className={btn}
+        onMouseEnter={() => enter("max")}
+        onMouseMove={() => enter("max")}
+        onMouseLeave={() => setHovered(null)}
+        className={clsx(
+          base,
+          hovered === "max" ? "bg-zinc-800/80 text-zinc-100" : "text-zinc-400"
+        )}
       >
         {maximized ? <RestoreIcon /> : <MaximizeIcon />}
       </button>
       <button
         aria-label="Close"
         onClick={() => win.close()}
-        className="h-9 w-11 inline-flex items-center justify-center text-zinc-400 hover:bg-red-600 hover:text-white transition"
+        onMouseEnter={() => enter("close")}
+        onMouseMove={() => enter("close")}
+        onMouseLeave={() => setHovered(null)}
+        className={clsx(
+          base,
+          hovered === "close" ? "bg-red-600 text-white" : "text-zinc-400"
+        )}
       >
         <CloseIcon />
       </button>

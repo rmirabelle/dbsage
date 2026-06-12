@@ -62,6 +62,9 @@ interface Props {
   /** Column names that participate in a relation — marked with the relation icon
    * in their header to signal a peek can be launched from them. */
   peekableColumns?: Set<string>;
+  /** Suppress the native hover tooltip showing a cell's full value (used in peek
+   * windows, where the value tooltip is noise). */
+  hideValueTooltip?: boolean;
 }
 
 const ROW_HEIGHT = 26;
@@ -105,6 +108,7 @@ export function DataGrid({
   copyTarget,
   onDeleteRows,
   peekableColumns,
+  hideValueTooltip = false,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [widths, setWidths] = useState<number[]>([]);
@@ -382,6 +386,14 @@ export function DataGrid({
      Works for both the rows view and query-results grid. */
   const handleGridKeyDown = (e: React.KeyboardEvent) => {
     if (editing) return;
+    /* Keystrokes from an editable element (e.g. the column filter menu's text
+       input, which renders through a portal) bubble up the React tree to this
+       handler. Let arrow keys move the text caret there instead of the cell. */
+    if (
+      e.target instanceof HTMLElement &&
+      e.target.closest("input, textarea, select, [contenteditable='true']")
+    )
+      return;
     if (
       e.key !== "ArrowUp" &&
       e.key !== "ArrowDown" &&
@@ -456,7 +468,7 @@ export function DataGrid({
             )
           }
           onColumnsButtonClick={(rect) =>
-            setColumnsMenu({ x: rect.right + 4, y: rect.bottom })
+            setColumnsMenu({ x: rect.left, y: rect.bottom })
           }
         />
         {rows.length === 0 ? (
@@ -532,6 +544,7 @@ export function DataGrid({
                         saving={isEditingThis && saving}
                         isActive={isActiveCell}
                         isPeekable={peekableColumns?.has(col.name) ?? false}
+                        hideValueTooltip={hideValueTooltip}
                         onActivate={() =>
                           onActiveCellChange({
                             rowIndex: vItem.index,
@@ -709,7 +722,11 @@ function HeaderRow({
         <button
           data-el="columns-toggle-btn"
           onClick={(e) => {
-            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            /* Anchor to the gutter cell, not the centered button, so the menu's
+               left edge aligns with the cell's left edge — matching how the
+               column filter menus anchor to their header cell. */
+            const cell = (e.currentTarget as HTMLElement).parentElement;
+            const rect = (cell ?? e.currentTarget).getBoundingClientRect();
             onColumnsButtonClick(rect);
           }}
           title={
@@ -846,6 +863,7 @@ function Cell({
   saving,
   isActive,
   isPeekable,
+  hideValueTooltip,
   onActivate,
   onBeginEdit,
   onCommit,
@@ -860,6 +878,7 @@ function Cell({
   saving: boolean;
   isActive: boolean;
   isPeekable: boolean;
+  hideValueTooltip: boolean;
   onActivate: () => void;
   onBeginEdit: () => void;
   onCommit: (next: string | null) => void;
@@ -914,6 +933,8 @@ function Cell({
       title={
         editable
           ? `Double-click to edit${column.key === "PRI" ? " (primary key)" : ""}`
+          : hideValueTooltip
+          ? undefined
           : showParts
           ? display
           : typeof value === "string"

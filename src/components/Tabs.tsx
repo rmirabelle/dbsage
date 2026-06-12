@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -21,9 +20,12 @@ import {
   Binoculars,
   PencilSimple,
   Code,
+  ArrowSquareOut,
   WarningCircle as AlertCircle,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { emit } from "@tauri-apps/api/event";
 import { useStore, isDesignerTabDirty } from "../state/store";
 import { notifyError, notifySuccess } from "../state/notify";
 import { CloseTabConfirmDialog } from "./CloseTabConfirmDialog";
@@ -34,10 +36,10 @@ import { RelationsView } from "./RelationsView";
 import { TableDesignerView } from "./TableDesignerView";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { TableViewPresetMenu } from "./TableViewPresetMenu";
-import { RelatedPeek, type PeekTarget } from "./RelatedPeek";
 import { InsertRowDialog } from "./InsertRowDialog";
 import appIconLarge from "../assets/app-icon-large.png";
-import type { Relation, RowsTab, Tab } from "../types";
+import { ipc } from "../ipc";
+import type { PeekSeed, Relation, RowsTab, Tab } from "../types";
 import {
   relationTargets,
   peekableColumnsFor,
@@ -49,18 +51,23 @@ import { useRelatedExistence, relKey } from "../lib/relatedExistence";
 
 const EMPTY_RELATIONS: Relation[] = [];
 
-/** An open peek window: its target plus an initial position. `sourceTable`/
- * `sourceColumn` is the grid cell it was launched from (the main table or a
- * parent peek's table), so selecting another cell there can update this
- * window's value (one window reused per relation). Array order is the stacking
- * order (last = top-most). */
-interface PeekInstance {
-  id: string;
-  sourceTable: string;
-  sourceColumn: string;
-  target: PeekTarget;
-  x: number;
-  y: number;
+/** Short display title for a tab (window title when torn off, tab-bar primary). */
+export function tabTitle(tab: Tab): string {
+  switch (tab.kind) {
+    case "database":
+      return tab.database;
+    case "relations":
+      return "Relations";
+    case "query":
+      return "Query";
+    case "create-table":
+      return (
+        tab.tableName.trim() ||
+        (tab.mode === "edit" ? tab.originalName : "New table")
+      );
+    default:
+      return tab.table;
+  }
 }
 
 export function Tabs() {
@@ -68,13 +75,89 @@ export function Tabs() {
   const activeTabId = useStore((s) => s.activeTabId);
   const setActiveTab = useStore((s) => s.setActiveTab);
   const requestCloseTab = useStore((s) => s.requestCloseTab);
+  const closeTab = useStore((s) => s.closeTab);
+  const tabDropActive = useStore((s) => s.tabDropActive);
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
+
+  /** Publish the tab bar's on-screen rectangle (screen CSS px) so a torn-off
+   * tab window can hit-test it for re-docking. Refreshed when the bar appears /
+   * disappears and whenever this window moves or resizes. When there are no tabs
+   * (the bar is hidden), accept drops on a band near the top of the window. */
+  const barRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const publish = () => {
+      const el = barRef.current;
+      const rect = el
+        ? (() => {
+            const r = el.getBoundingClientRect();
+            return {
+              left: window.screenX + r.left,
+              top: window.screenY + r.top,
+              right: window.screenX + r.right,
+              bottom: window.screenY + r.bottom,
+            };
+          })()
+        : {
+            left: window.screenX,
+            top: window.screenY + 34,
+            right: window.screenX + window.innerWidth,
+            bottom: window.screenY + 74,
+          };
+      ipc.setTabstripRect(rect).catch(() => {});
+    };
+    publish();
+    window.addEventListener("resize", publish);
+    const w = getCurrentWindow();
+    const moved = w.onMoved(publish);
+    const resized = w.onResized(publish);
+    return () => {
+      window.removeEventListener("resize", publish);
+      moved.then((f) => f());
+      resized.then((f) => f());
+    };
+  }, [tabs.length]);
+
+  /** Right-click tab menu (screen coords drive where the torn-off window opens). */
+  const [tabMenu, setTabMenu] = useState<{
+    tab: Tab;
+    x: number;
+    y: number;
+    screenX: number;
+    screenY: number;
+  } | null>(null);
+
+  /** Pop the tab out into its own window (near where it was right-clicked),
+   * then drop it from this window. */
+  const tearOff = (tab: Tab, screenX: number, screenY: number) => {
+    const live = useStore.getState().tabs.find((t) => t.id === tab.id);
+    if (!live) return;
+    ipc
+      .openTabWindow(
+        live,
+        `${tabTitle(live)} - DB Sage`,
+        Math.max(0, screenX - 120),
+        Math.max(0, screenY + 8),
+        1000,
+        680
+      )
+      .then(() => closeTab(tab.id))
+      .catch((err) => notifyError(`Could not pop out the tab: ${String(err)}`));
+  };
 
   return (
     <div className="w-full h-full flex flex-col bg-zinc-950 min-w-0">
       {tabs.length > 0 && (
-      <div data-el="tab-bar" className="flex items-stretch border-b border-zinc-800/80 bg-zinc-950 overflow-hidden">
+      <div
+        ref={barRef}
+        data-el="tab-bar"
+        className={clsx(
+          "flex items-stretch border-b bg-zinc-950 overflow-hidden",
+          tabDropActive
+            ? "border-accent-500 ring-1 ring-inset ring-accent-500/70 bg-accent-500/5"
+            : "border-zinc-800/80"
+        )}
+      >
         <div className="flex-1 flex items-stretch overflow-x-auto">
         {tabs.map((tab) => {
             let primary: string;
@@ -121,6 +204,17 @@ export function Tabs() {
                 key={tab.id}
                 data-el="tab"
                 onClick={() => setActiveTab(tab.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setActiveTab(tab.id);
+                  setTabMenu({
+                    tab,
+                    x: e.clientX,
+                    y: e.clientY,
+                    screenX: e.screenX,
+                    screenY: e.screenY,
+                  });
+                }}
                 className={clsx(
                   "group flex items-center gap-2 pl-3 pr-1.5 border-r border-zinc-800/60 cursor-pointer min-w-0 max-w-[260px] shrink-0",
                   tab.id === activeTabId
@@ -160,13 +254,27 @@ export function Tabs() {
                     {secondary}
                   </span>
                 </div>
+                {tab.kind !== "database" && (
+                  <button
+                    data-el="tab-popout-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      tearOff(tab, e.screenX, e.screenY);
+                    }}
+                    className="ml-1 p-0.5 rounded text-zinc-500 hover:text-accent-300 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition"
+                    aria-label="Open in new window"
+                    title="Open in new window"
+                  >
+                    <ArrowSquareOut size={14} />
+                  </button>
+                )}
                 <button
                   data-el="tab-close-btn"
                   onClick={(e) => {
                     e.stopPropagation();
                     requestCloseTab(tab.id);
                   }}
-                  className="ml-1 p-0.5 rounded text-zinc-500 hover:text-zinc-100 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition"
+                  className="ml-0.5 p-0.5 rounded text-zinc-500 hover:text-zinc-100 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition"
                   aria-label="Close tab"
                 >
                   <X size={14} />
@@ -182,12 +290,86 @@ export function Tabs() {
         {active ? <TabBody tab={active} /> : <EmptyState />}
       </div>
 
+      {tabMenu && (
+        <TabContextMenu
+          x={tabMenu.x}
+          y={tabMenu.y}
+          canPopOut={tabMenu.tab.kind !== "database"}
+          onPopOut={() => tearOff(tabMenu.tab, tabMenu.screenX, tabMenu.screenY)}
+          onClose={() => requestCloseTab(tabMenu.tab.id)}
+          onDismiss={() => setTabMenu(null)}
+        />
+      )}
+
       <CloseTabConfirmDialog />
     </div>
   );
 }
 
-function TabBody({ tab }: { tab: Tab }) {
+/** Right-click menu for a tab: pop it out into its own window, or close it. */
+function TabContextMenu({
+  x,
+  y,
+  canPopOut,
+  onPopOut,
+  onClose,
+  onDismiss,
+}: {
+  x: number;
+  y: number;
+  canPopOut: boolean;
+  onPopOut: () => void;
+  onClose: () => void;
+  onDismiss: () => void;
+}) {
+  useEffect(() => {
+    const down = () => onDismiss();
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onDismiss();
+    };
+    window.addEventListener("mousedown", down);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("mousedown", down);
+      window.removeEventListener("keydown", key);
+    };
+  }, [onDismiss]);
+
+  return createPortal(
+    <div
+      data-el="tab-context-menu"
+      style={{ top: y, left: x }}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
+    >
+      {canPopOut && (
+        <button
+          onClick={() => {
+            onDismiss();
+            onPopOut();
+          }}
+          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-zinc-800 whitespace-nowrap"
+        >
+          <ArrowSquareOut size={14} className="text-accent-400 shrink-0" />
+          Open in New Window
+        </button>
+      )}
+      <button
+        onClick={() => {
+          onDismiss();
+          onClose();
+        }}
+        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-zinc-800 whitespace-nowrap"
+      >
+        <X size={14} className="text-zinc-400 shrink-0" />
+        Close Tab
+      </button>
+    </div>,
+    document.body
+  );
+}
+
+export function TabBody({ tab }: { tab: Tab }) {
   if (tab.kind === "database") {
     return <DatabaseView tab={tab} />;
   }
@@ -221,7 +403,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const insertRow = useStore((s) => s.insertRow);
   const deleteRows = useStore((s) => s.deleteRows);
   const openTableEditor = useStore((s) => s.openTableEditor);
-  const openTable = useStore((s) => s.openTable);
   const loadRelations = useStore((s) => s.loadRelations);
   const setRowsActiveCell = useStore((s) => s.setRowsActiveCell);
   const relations =
@@ -234,7 +415,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     setRowsActiveCell(tab.id, cell);
   const [expanded, setExpanded] = useState(true);
   const [insertOpen, setInsertOpen] = useState(false);
-  const [peeks, setPeeks] = useState<PeekInstance[]>([]);
   const [picker, setPicker] = useState<{
     x: number;
     y: number;
@@ -256,19 +436,15 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     }
   }, [tab.data?.rows, tab.id, setRowsActiveCell]);
 
-  /** Esc closes the top-most peek first, then collapses the expanded panel. */
+  /** Esc collapses the expanded inspector panel. */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (peeks.length > 0) {
-        setPeeks((prev) => prev.slice(0, -1));
-        return;
-      }
       if (expanded) setExpanded(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [expanded, peeks.length]);
+  }, [expanded]);
 
   const estimateTotal = tab.data?.total ?? null;
   const displayTotal = tab.exactTotal ?? estimateTotal;
@@ -307,6 +483,20 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   };
 
   const peekValue = cellToFilterValue(activeValue);
+
+  /* Broadcast the selected source value so open peek windows launched from this
+     table+column live-follow the selection across windows. */
+  useEffect(() => {
+    if (!activeColumn || peekValue == null) return;
+    emit("dbsage://peek-follow", {
+      profileId: tab.profileId,
+      database: tab.database,
+      sourceTable: tab.table,
+      sourceColumn: activeColumn.name,
+      value: peekValue,
+    });
+  }, [activeColumn?.name, peekValue, tab.table, tab.profileId, tab.database]);
+
   const relMatches = useMemo(
     () =>
       activeColumn
@@ -343,113 +533,27 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         .join(", ")}`;
   const relatedBtnLabel = relatedLabel(relMatches);
 
-  /** Clamp a desired top-left (screen px) so the window opens inside the pane. */
-  const placeInPane = (x: number, y: number) => {
-    const pane = document
-      .querySelector('[data-el="main-pane"]')
-      ?.getBoundingClientRect();
-    const left = pane?.left ?? 16;
-    const top = pane?.top ?? 60;
-    const right = pane?.right ?? window.innerWidth;
-    const bottom = pane?.bottom ?? window.innerHeight;
-    return {
-      x: Math.min(Math.max(x, left), Math.max(left, right - 200)),
-      y: Math.min(Math.max(y, top), Math.max(top, bottom - 160)),
-    };
-  };
-
-  /** Open (or reuse) a peek window for a relation. Reused per
-   * source-table + source-column + target, so re-launching the same relation
-   * updates the existing window instead of stacking a duplicate. */
-  const addPeek = (args: {
-    sourceTable: string;
-    sourceColumn: string;
-    value: string;
-    target: RelationTarget;
-    x: number;
-    y: number;
-  }) => {
-    const placed = placeInPane(args.x, args.y);
-    setPeeks((prev) => {
-      const idx = prev.findIndex(
-        (p) =>
-          p.sourceTable === args.sourceTable &&
-          p.sourceColumn === args.sourceColumn &&
-          p.target.table === args.target.table &&
-          p.target.column === args.target.column
-      );
-      if (idx >= 0) {
-        const next = prev.slice();
-        const [item] = next.splice(idx, 1);
-        next.push({ ...item, target: { ...item.target, value: args.value } });
-        return next;
-      }
-      return [
-        ...prev,
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          sourceTable: args.sourceTable,
-          sourceColumn: args.sourceColumn,
-          target: { ...args.target, value: args.value },
-          x: placed.x,
-          y: placed.y,
-        },
-      ];
-    });
-  };
-
-  /** Launch a peek from the main grid's active cell (opens just below it). */
+  /** Launch a peek for a relation in its own OS window, placed just below the
+   * active cell (screen px). The window persists until closed manually. */
   const openPeek = (t: RelationTarget) => {
     if (peekValue == null || !activeColumn) return;
-    const pane = document
-      .querySelector('[data-el="main-pane"]')
-      ?.getBoundingClientRect();
     const cell = document
       .querySelector('[data-el="main-pane"] [data-active-cell]')
       ?.getBoundingClientRect();
-    addPeek({
+    const x = window.screenX + (cell ? cell.left : 80);
+    const y = window.screenY + (cell ? cell.bottom + 6 : 120);
+    const seed: PeekSeed = {
+      profileId: tab.profileId,
+      profileName: tab.profileName,
+      database: tab.database,
+      target: { table: t.table, column: t.column, value: peekValue },
       sourceTable: tab.table,
       sourceColumn: activeColumn.name,
-      value: peekValue,
-      target: t,
-      x: (pane?.left ?? 16) + 16 + peeks.length * 26,
-      y: cell ? cell.bottom + 4 : (pane?.top ?? 60) + 12,
-    });
+    };
+    ipc
+      .openPeekWindow(seed, x, y, 900, 440)
+      .catch((e) => notifyError(`Could not open peek window: ${String(e)}`));
   };
-
-  /** Launch a child peek from within a peek window (offset from its parent). */
-  const openPeekFromPeek = (
-    target: RelationTarget,
-    ctx: {
-      sourceTable: string;
-      sourceColumn: string;
-      value: string;
-      anchorX: number;
-      anchorY: number;
-    }
-  ) =>
-    addPeek({
-      sourceTable: ctx.sourceTable,
-      sourceColumn: ctx.sourceColumn,
-      value: ctx.value,
-      target,
-      x: ctx.anchorX + 28,
-      y: ctx.anchorY + 28,
-    });
-
-  const closePeek = (id: string) =>
-    setPeeks((prev) => prev.filter((p) => p.id !== id));
-
-  /** Raise a peek to the top by moving it to the end of the array. */
-  const bringPeekToFront = (id: string) =>
-    setPeeks((prev) => {
-      const idx = prev.findIndex((p) => p.id === id);
-      if (idx < 0 || idx === prev.length - 1) return prev;
-      const next = prev.slice();
-      const [item] = next.splice(idx, 1);
-      next.push(item);
-      return next;
-    });
 
   const onRelatedClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     /** A single relation on this column opens directly. When several are defined
@@ -461,45 +565,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     }
     const rect = e.currentTarget.getBoundingClientRect();
     setPicker({ x: rect.left, y: rect.bottom + 4, matches: relMatches });
-  };
-
-  /** Update any open peek launched from (sourceTable, sourceColumn) to a new
-   * value — drives live-follow as the selected cell changes, in the main grid
-   * and within peeks alike. */
-  const syncPeekValues = useCallback(
-    (sourceTable: string, sourceColumn: string, value: string) =>
-      setPeeks((prev) => {
-        let changed = false;
-        const next = prev.map((p) => {
-          if (
-            p.sourceTable === sourceTable &&
-            p.sourceColumn === sourceColumn &&
-            p.target.value !== value
-          ) {
-            changed = true;
-            return { ...p, target: { ...p.target, value } };
-          }
-          return p;
-        });
-        return changed ? next : prev;
-      }),
-    []
-  );
-
-  /* Live-reuse from the main grid's active cell. */
-  useEffect(() => {
-    if (!activeColumn || peekValue == null) return;
-    syncPeekValues(tab.table, activeColumn.name, peekValue);
-  }, [activeColumn?.name, peekValue, tab.table, syncPeekValues]);
-
-  const openAsTab = async (t: PeekTarget) => {
-    const targetTabId = `rows::${tab.profileId}::${tab.database}::${t.table}`;
-    await openTable(tab.profileId, tab.profileName, tab.database, t.table);
-    await setRowsFilter(targetTabId, t.column, {
-      column: t.column,
-      op: "equals",
-      value: t.value,
-    });
   };
 
   return (
@@ -726,28 +791,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onClose={() => setInsertOpen(false)}
         />
       )}
-
-      {peeks.map((p, i) => (
-        <RelatedPeek
-          key={p.id}
-          profileId={tab.profileId}
-          database={tab.database}
-          target={p.target}
-          initialX={p.x}
-          initialY={p.y}
-          zIndex={50 + i}
-          onFocus={() => bringPeekToFront(p.id)}
-          onOpenPeek={openPeekFromPeek}
-          onActiveValueChange={(column, value) =>
-            syncPeekValues(p.target.table, column, value)
-          }
-          onOpenAsTab={() => {
-            closePeek(p.id);
-            openAsTab(p.target);
-          }}
-          onClose={() => closePeek(p.id)}
-        />
-      ))}
 
       {picker &&
         createPortal(

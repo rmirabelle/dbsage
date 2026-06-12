@@ -255,6 +255,33 @@ export const ipc = {
     invoke<void>("kill_process", { profileId, id, queryOnly }),
   openMonitorWindow: (profileId: string) =>
     invoke<void>("open_monitor_window", { profileId }),
+  readWindowSeed: <T>(label: string) =>
+    invoke<T | null>("read_window_seed", { label }),
+  openTabWindow: (
+    seed: unknown,
+    title: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ) =>
+    invoke<void>("open_tab_window", { seed, title, x, y, width, height }),
+  openPeekWindow: (
+    seed: unknown,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ) => invoke<void>("open_peek_window", { seed, x, y, width, height }),
+  listOpenPeeks: <T>() => invoke<T[]>("list_open_peeks"),
+  setPeekColumns: (label: string, hiddenColumns: string[]) =>
+    invoke<void>("set_peek_columns", { label, hiddenColumns }),
+  closeAllPeeks: () => invoke<void>("close_all_peeks"),
+  setTabstripRect: (rect: unknown | null) =>
+    invoke<void>("set_tabstrip_rect", { rect }),
+  getTabstripRect: <T>() => invoke<T | null>("get_tabstrip_rect"),
+  mouseLeftButtonDown: () => invoke<boolean>("mouse_left_button_down"),
+  cursorPosition: () => invoke<[number, number]>("cursor_position"),
   mysqlServiceStatus: (profileId: string) =>
     invoke<ServiceInfo | null>("mysql_service_status", { profileId }),
   serviceControl: (profileId: string, action: "start" | "stop" | "restart") =>

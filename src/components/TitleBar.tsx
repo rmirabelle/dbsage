@@ -34,7 +34,7 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
     <div
       data-el="titlebar"
       data-tauri-drag-region
-      className="h-9 flex items-center justify-between bg-zinc-950 border-b border-zinc-800/80 px-3 select-none"
+      className="h-9 flex items-center justify-between bg-zinc-950 border-b border-zinc-800/80 pl-3 select-none"
     >
       <div className="flex items-center">
         <div

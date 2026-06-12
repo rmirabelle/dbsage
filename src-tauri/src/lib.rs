@@ -8,7 +8,7 @@ mod updater;
 
 use commands::{
     admin, column_setups, connect, export, folders, monitoring, profiles, query, query_history,
-    relations, saved_queries, state_io, table_view_presets,
+    relations, saved_queries, state_io, table_view_presets, windows,
 };
 use state::AppState;
 use tauri::menu::{Menu, MenuItem};
@@ -60,7 +60,7 @@ fn ensure_tray(app: &AppHandle) -> tauri::Result<()> {
 fn hide_all_to_tray(app: &AppHandle) {
     let _ = ensure_tray(app);
     for (label, win) in app.webview_windows() {
-        if label == "main" || label.starts_with("monitor-") || label.starts_with("admin-") {
+        if label != "splash" {
             let _ = win.hide();
         }
     }
@@ -85,6 +85,21 @@ fn show_all_windows(app: &AppHandle) {
         let _ = win.set_focus();
     }
     let _ = app.remove_tray_by_id(TRAY_ID);
+}
+
+/// Minimize (or restore) every secondary window to follow the main window, so
+/// peeks and torn-off tabs don't linger on screen when the app is minimized.
+fn sync_minimize_secondary(app: &AppHandle, minimized: bool) {
+    for (label, win) in app.webview_windows() {
+        if label == "main" || label == "splash" {
+            continue;
+        }
+        if minimized {
+            let _ = win.minimize();
+        } else {
+            let _ = win.unminimize();
+        }
+    }
 }
 
 /// Confirm exiting while a monitor window is still showing. The dialog is shown
@@ -144,8 +159,15 @@ pub fn run() {
              * that's the "stop monitoring this connection" gesture). */
             if let Some(main) = app.get_webview_window("main") {
                 let handle = app.handle().clone();
-                main.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
+                /* Mirror the main window's minimize/restore onto every secondary
+                 * window (peeks, torn-off tabs, monitor, admin), so they don't get
+                 * left floating when the app is sent to the taskbar. Minimize has
+                 * no dedicated event, so we read the state on resize and act only on
+                 * a transition. */
+                let was_minimized = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let main_win = main.clone();
+                main.on_window_event(move |event| match event {
+                    WindowEvent::CloseRequested { api, .. } => {
                         let monitor_showing = handle.webview_windows().iter().any(|(label, win)| {
                             label.starts_with("monitor-") && win.is_visible().unwrap_or(false)
                         });
@@ -156,6 +178,15 @@ pub fn run() {
                             handle.exit(0);
                         }
                     }
+                    WindowEvent::Resized(_) => {
+                        let minimized = main_win.is_minimized().unwrap_or(false);
+                        let prev = was_minimized
+                            .swap(minimized, std::sync::atomic::Ordering::Relaxed);
+                        if prev != minimized {
+                            sync_minimize_secondary(&handle, minimized);
+                        }
+                    }
+                    _ => {}
                 });
             }
             Ok(())
@@ -239,6 +270,16 @@ pub fn run() {
             admin::resolve_my_ini,
             admin::read_my_ini,
             admin::save_my_ini,
+            windows::read_window_seed,
+            windows::open_tab_window,
+            windows::open_peek_window,
+            windows::list_open_peeks,
+            windows::set_peek_columns,
+            windows::close_all_peeks,
+            windows::set_tabstrip_rect,
+            windows::get_tabstrip_rect,
+            windows::mouse_left_button_down,
+            windows::cursor_position,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DBSage");

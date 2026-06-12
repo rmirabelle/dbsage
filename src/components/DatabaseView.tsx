@@ -62,12 +62,14 @@ export function DatabaseView({ tab }: Props) {
     (s) => s.relations[`${tab.profileId}::${tab.database}`]
   );
   const relationCount = relations?.length ?? 0;
-  /** Tables involved in any relation (either endpoint), for the tile indicator. */
+  /** Tables that OWN a relation, for the tile indicator. Relations are
+   * forward-only (`fromTable` peeks into `toTable`), so only the `fromTable`
+   * side "has" the relation — e.g. crews → crew_members marks crews, not
+   * crew_members (which merely holds the foreign key). */
   const relatedTables = useMemo(() => {
     const s = new Set<string>();
     for (const r of relations ?? []) {
       s.add(r.fromTable);
-      s.add(r.toTable);
     }
     return s;
   }, [relations]);
