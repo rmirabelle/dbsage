@@ -12,6 +12,7 @@ import {
   WarningCircle as AlertCircle,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useStore } from "../state/store";
 import { notifyError } from "../state/notify";
 import { ipc } from "../ipc";
@@ -95,8 +96,12 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [editorHeight, setEditorHeight] = useState(180);
 
-  /* Expanded-value panel (read-only) for the active result cell. */
-  const [expanded, setExpanded] = useState(true);
+  /* Expanded-value panel (read-only) for the active result cell. Starts open in
+     the main window but closed in a torn-off window — a freshly torn tab
+     shouldn't surrender half its height to it. */
+  const [expanded, setExpanded] = useState(
+    () => getCurrentWindow().label === "main"
+  );
   useEffect(() => {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
@@ -394,7 +399,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         </div>
       </div>
 
-      <div className="shrink-0" style={{ height: editorHeight }}>
+      <div data-el="query-editor" className="shrink-0" style={{ height: editorHeight }}>
         <SqlEditor
           ref={editorRef}
           value={tab.sql}

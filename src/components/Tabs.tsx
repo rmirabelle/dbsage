@@ -43,7 +43,6 @@ import type { PeekSeed, Relation, RowsTab, Tab } from "../types";
 import {
   relationTargets,
   peekableColumnsFor,
-  relatedLabel,
   cellToFilterValue,
   type RelationTarget,
 } from "../lib/relations";
@@ -118,28 +117,55 @@ export function Tabs() {
     };
   }, [tabs.length]);
 
-  /** Right-click tab menu (screen coords drive where the torn-off window opens). */
+  /** Right-click tab menu. */
   const [tabMenu, setTabMenu] = useState<{
     tab: Tab;
     x: number;
     y: number;
-    screenX: number;
-    screenY: number;
   } | null>(null);
 
-  /** Pop the tab out into its own window (near where it was right-clicked),
-   * then drop it from this window. */
-  const tearOff = (tab: Tab, screenX: number, screenY: number) => {
+  /** Pop the tab out into its own window, then drop it from this window. The
+   * window opens 50px shorter and narrower than the on-screen data grid (for a
+   * query with no visible results, its empty-state pane instead), floored at
+   * the torn-tab window's minimum size (`min_inner_size` in `open_tab_window`),
+   * and centered over that measured element. Falls back to the tabs pane when
+   * neither is rendered (e.g. tearing off a background tab). */
+  const tearOff = (tab: Tab) => {
     const live = useStore.getState().tabs.find((t) => t.id === tab.id);
     if (!live) return;
+    const MIN_W = 480;
+    const MIN_H = 320;
+    /* The size template: the visible grid (or a query's empty-state pane) —
+       plus, for query tabs, the SQL editor above it, so the torn window fits
+       editor and results together. */
+    const grid =
+      document.querySelector('[data-el="data-grid"]') ??
+      document.querySelector('[data-el="query-empty"]') ??
+      document.querySelector('[data-el="main-pane"]');
+    const editor =
+      live.kind === "query"
+        ? document.querySelector('[data-el="query-editor"]')
+        : null;
+    const g = grid?.getBoundingClientRect();
+    const ed = editor?.getBoundingClientRect();
+    const width = Math.max(MIN_W, (g?.width ?? 1050) - 50);
+    const height = Math.max(MIN_H, (g?.height ?? 730) + (ed?.height ?? 0) - 50);
+    /* Center the window on the measured region — editor top through grid
+       bottom (screen CSS px). */
+    const top = ed ? ed.top : g?.top;
+    const cx =
+      window.screenX + (g ? g.left + g.width / 2 : window.innerWidth / 2);
+    const cy =
+      window.screenY +
+      (g && top != null ? (top + g.bottom) / 2 : window.innerHeight / 2);
     ipc
       .openTabWindow(
         live,
         `${tabTitle(live)} - DB Sage`,
-        Math.max(0, screenX - 120),
-        Math.max(0, screenY + 8),
-        1000,
-        680
+        Math.max(0, cx - width / 2),
+        Math.max(0, cy - height / 2),
+        width,
+        height
       )
       .then(() => closeTab(tab.id))
       .catch((err) => notifyError(`Could not pop out the tab: ${String(err)}`));
@@ -207,13 +233,7 @@ export function Tabs() {
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setActiveTab(tab.id);
-                  setTabMenu({
-                    tab,
-                    x: e.clientX,
-                    y: e.clientY,
-                    screenX: e.screenX,
-                    screenY: e.screenY,
-                  });
+                  setTabMenu({ tab, x: e.clientX, y: e.clientY });
                 }}
                 className={clsx(
                   "group flex items-center gap-2 pl-3 pr-1.5 border-r border-zinc-800/60 cursor-pointer min-w-0 max-w-[260px] shrink-0",
@@ -259,7 +279,7 @@ export function Tabs() {
                     data-el="tab-popout-btn"
                     onClick={(e) => {
                       e.stopPropagation();
-                      tearOff(tab, e.screenX, e.screenY);
+                      tearOff(tab);
                     }}
                     className="ml-1 p-0.5 rounded text-zinc-500 hover:text-accent-300 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition"
                     aria-label="Open in new window"
@@ -295,7 +315,7 @@ export function Tabs() {
           x={tabMenu.x}
           y={tabMenu.y}
           canPopOut={tabMenu.tab.kind !== "database"}
-          onPopOut={() => tearOff(tabMenu.tab, tabMenu.screenX, tabMenu.screenY)}
+          onPopOut={() => tearOff(tabMenu.tab)}
           onClose={() => requestCloseTab(tabMenu.tab.id)}
           onDismiss={() => setTabMenu(null)}
         />
@@ -413,13 +433,44 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const activeCell = tab.activeCell;
   const setActiveCell = (cell: { rowIndex: number; column: string } | null) =>
     setRowsActiveCell(tab.id, cell);
-  const [expanded, setExpanded] = useState(true);
+  /** The Inspector starts open in the main window but closed in a torn-off
+   * window — a freshly torn tab shouldn't surrender half its height to it. */
+  const [expanded, setExpanded] = useState(
+    () => getCurrentWindow().label === "main"
+  );
   const [insertOpen, setInsertOpen] = useState(false);
   const [picker, setPicker] = useState<{
     x: number;
     y: number;
     matches: { table: string; column: string }[];
+    /** The cell the menu is anchored to, so re-clicking it toggles closed. */
+    cell: { rowIndex: number; column: string };
   } | null>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  /** The relation menu opens as a side effect of selecting a cell, so it must
+   * never block interaction the way a backdrop would (the next cell click has
+   * to land). Dismissal is listener-based instead: mousedown outside the menu,
+   * any key (incl. arrow-key cell navigation), or scrolling the grid away. */
+  useEffect(() => {
+    if (!picker) return;
+    const close = () => setPicker(null);
+    const onDown = (e: MouseEvent) => {
+      /* Grid-cell mousedowns are arbitrated by onCellMenu on the subsequent
+         click (open / move / same-cell toggle). Closing here too would defeat
+         the toggle: the menu would close on mousedown and reopen on click. */
+      if ((e.target as HTMLElement).closest('[data-el="grid-cell"]')) return;
+      if (!pickerRef.current?.contains(e.target as Node)) close();
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [picker]);
 
   useEffect(() => {
     loadRelations(tab.profileId, tab.database).catch(() => {});
@@ -505,33 +556,18 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     [relations, tab.table, activeColumn]
   );
   const hasRelation = !!activeCell && peekValue != null && relMatches.length > 0;
-  /** Disable peeking into relation targets that have no matching rows. While the
-   * check is in flight we stay enabled (optimistic) so the button never lags. */
-  const { exists: relExists, pending: relExistPending } = useRelatedExistence(
+  /** Mark relation targets that have no matching rows, so the dropdown disables
+   * them. While the check is in flight items stay enabled (optimistic). */
+  const { exists: relExists } = useRelatedExistence(
     tab.profileId,
     tab.database,
     relMatches,
     hasRelation ? peekValue : null
   );
-  const nonEmptyMatches = relMatches.filter((m) => relExists[relKey(m)] !== false);
-  const canPeek =
-    hasRelation && (relExistPending || nonEmptyMatches.length > 0);
   const peekableColumns = useMemo(
     () => peekableColumnsFor(relations, tab.table),
     [relations, tab.table]
   );
-  const relatedTitle = !activeCell
-    ? "Select a cell to peek into a related table"
-    : peekValue == null
-    ? "This cell is NULL — nothing to match on"
-    : relMatches.length === 0
-    ? `No relation defined on ${tab.table}.${activeColumn?.name ?? ""}`
-    : !relExistPending && nonEmptyMatches.length === 0
-    ? `No related rows in ${relMatches.map((m) => m.table).join(", ")}`
-    : `Peek into ${(nonEmptyMatches.length > 0 ? nonEmptyMatches : relMatches)
-        .map((m) => m.table)
-        .join(", ")}`;
-  const relatedBtnLabel = relatedLabel(relMatches);
 
   /** Launch a peek for a relation in its own OS window, placed just below the
    * active cell (screen px). The window persists until closed manually. */
@@ -555,16 +591,38 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       .catch((e) => notifyError(`Could not open peek window: ${String(e)}`));
   };
 
-  const onRelatedClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    /** A single relation on this column opens directly. When several are defined
-     * (the "x tables" label), always show the picker so the user chooses which —
-     * never silently auto-open one. */
-    if (relMatches.length === 1) {
-      openPeek(relMatches[0]);
+  /** Single-clicking a relation cell selects it (unchanged) AND drops the
+   * relation menu just below it; clicking the same cell again toggles it
+   * closed. Clicking any non-relation (or NULL) cell dismisses the menu; a
+   * double-click (edit begins) reports null and dismisses too. Selection
+   * itself never opens a peek — the menu is the chooser. */
+  const onCellMenu = (
+    cell: { rowIndex: number; column: string; rect: DOMRect } | null
+  ) => {
+    if (!cell || !tab.data) {
+      setPicker(null);
       return;
     }
-    const rect = e.currentTarget.getBoundingClientRect();
-    setPicker({ x: rect.left, y: rect.bottom + 4, matches: relMatches });
+    if (
+      picker &&
+      picker.cell.rowIndex === cell.rowIndex &&
+      picker.cell.column === cell.column
+    ) {
+      setPicker(null);
+      return;
+    }
+    const value = cellToFilterValue(tab.data.rows[cell.rowIndex]?.[cell.column]);
+    const matches = relationTargets(relations, tab.table, cell.column);
+    if (value == null || matches.length === 0) {
+      setPicker(null);
+      return;
+    }
+    setPicker({
+      x: cell.rect.left,
+      y: cell.rect.bottom + 4,
+      matches,
+      cell: { rowIndex: cell.rowIndex, column: cell.column },
+    });
   };
 
   return (
@@ -612,22 +670,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onDelete={(name) => deleteTablePreset(tab.id, name)}
           onClear={() => clearTableView(tab.id)}
         />
-
-        <button
-          data-el="related-btn"
-          disabled={!canPeek}
-          onClick={onRelatedClick}
-          className={clsx(
-            "inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors",
-            canPeek
-              ? "bg-violet-500 text-violet-950 hover:bg-violet-400"
-              : "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-          )}
-          title={relatedTitle}
-        >
-          <ShareNetwork size={17} />
-          {relatedBtnLabel}
-        </button>
 
         <button
           data-el="refresh-btn"
@@ -685,6 +727,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           activeCell={activeCell}
           clearActiveCellOnRowSelect
           onActiveCellChange={setActiveCell}
+          onCellMenu={onCellMenu}
           onColumnWidthsChange={(w) => setColumnWidths(tab.id, w)}
           onSortChange={(sort) => setRowsSort(tab.id, sort)}
           onFilterChange={(column, filter) =>
@@ -794,34 +837,37 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
 
       {picker &&
         createPortal(
-          <>
-            <div
-              className="fixed inset-0 z-40"
-              onMouseDown={() => setPicker(null)}
-            />
-            <div
-              data-el="related-picker"
-              style={{ top: picker.y, left: picker.x }}
-              className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
-            >
-              <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-                Peek into
-              </div>
-              {picker.matches.map((m) => (
+          <div
+            ref={pickerRef}
+            data-el="related-picker"
+            style={{ top: picker.y, left: picker.x }}
+            className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
+          >
+            <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+              Peek into
+            </div>
+            {picker.matches.map((m) => {
+              const empty = relExists[relKey(m)] === false;
+              return (
                 <button
                   key={`${m.table}::${m.column}`}
+                  disabled={empty}
                   onClick={() => {
                     setPicker(null);
                     openPeek(m);
                   }}
-                  className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[12px] hover:bg-zinc-800 whitespace-nowrap"
+                  title={empty ? `No related rows in ${m.table}` : undefined}
+                  className={clsx(
+                    "flex w-full items-center gap-1 px-3 py-1.5 text-left text-[12px] whitespace-nowrap",
+                    empty ? "cursor-not-allowed opacity-40" : "hover:bg-zinc-800"
+                  )}
                 >
                   <span className="font-medium text-zinc-100">{m.table}</span>
                   <span className="font-mono text-zinc-500">.{m.column}</span>
                 </button>
-              ))}
-            </div>
-          </>,
+              );
+            })}
+          </div>,
           document.body
         )}
     </div>

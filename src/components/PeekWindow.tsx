@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ipc } from "../ipc";
+import { useZoomShortcuts } from "../hooks/useZoomShortcuts";
 import { revealWindow } from "../lib/revealWindow";
 import { setWindowGlyphIcon, GLYPHS } from "../lib/windowIcon";
 import { useStore } from "../state/store";
@@ -30,6 +31,10 @@ export function PeekWindow({ label }: { label: string }) {
   const [seed, setSeed] = useState<PeekSeed | null>(null);
   const [target, setTarget] = useState<PeekTarget | null>(null);
   const [missing, setMissing] = useState(false);
+
+  /* Ctrl+wheel / Ctrl+= zoom works here too, driving the shared tabs zoom
+     (focusedPane defaults to "tabs" in this window's own ui store). */
+  useZoomShortcuts();
 
   useEffect(() => {
     setWindowGlyphIcon(GLYPHS.relations);

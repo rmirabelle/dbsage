@@ -85,9 +85,27 @@ pub async fn open_tab_window(
     Ok(())
 }
 
+/// A peek's identity: everything but the match value. Two peeks with the same
+/// source and target are the same window — the value live-follows the source
+/// selection, so it never distinguishes them.
+fn peek_identity(v: &Value) -> Option<[String; 6]> {
+    let o = v.as_object()?;
+    let s = |k: &str| Some(o.get(k)?.as_str()?.to_string());
+    let t = |k: &str| Some(o.get("target")?.get(k)?.as_str()?.to_string());
+    Some([
+        s("profileId")?,
+        s("database")?,
+        s("sourceTable")?,
+        s("sourceColumn")?,
+        t("table")?,
+        t("column")?,
+    ])
+}
+
 /// Open an independent peek window at the given screen position (CSS px). `seed`
 /// is the peek descriptor (`{ profileId, profileName, database, target,
 /// sourceTable, sourceColumn }`). Registered in `AppState.peeks` until closed.
+/// If an identical peek is already open it is focused instead of duplicated.
 #[tauri::command]
 pub async fn open_peek_window(
     app: AppHandle,
@@ -98,6 +116,23 @@ pub async fn open_peek_window(
     width: f64,
     height: f64,
 ) -> AppResult<()> {
+    if let Some(key) = peek_identity(&seed) {
+        let existing = state
+            .peeks
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|(label, desc)| {
+                (peek_identity(desc).as_ref() == Some(&key)).then(|| label.clone())
+            });
+        if let Some(label) = existing {
+            if let Some(win) = app.get_webview_window(&label) {
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+                return Ok(());
+            }
+        }
+    }
     let label = next_label(&state, "peek");
     state
         .window_seeds

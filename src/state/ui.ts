@@ -160,6 +160,46 @@ export const useUi = create<UiState>((set, get) => ({
   },
 }));
 
+/**
+ * Live-sync persisted prefs across windows. Every DBSage window (main, peeks,
+ * torn-off tabs) has its own store instance over the same localStorage; the
+ * `storage` event fires in every OTHER window when one of them persists, so
+ * zooming in the main window immediately re-zooms an open peek (and a stale
+ * window can't clobber newer prefs with its startup snapshot).
+ */
+window.addEventListener("storage", (e) => {
+  if (e.key !== KEY || !e.newValue) return;
+  try {
+    const p = JSON.parse(e.newValue) as Persisted;
+    useUi.setState({
+      ...(p.sidebarWidth != null && {
+        sidebarWidth: clamp(p.sidebarWidth, SIDEBAR_MIN, SIDEBAR_MAX),
+      }),
+      ...(p.treeZoom != null && {
+        treeZoom: clamp(p.treeZoom, ZOOM_MIN, ZOOM_MAX),
+      }),
+      ...(p.tabsZoom != null && {
+        tabsZoom: clamp(p.tabsZoom, ZOOM_MIN, ZOOM_MAX),
+      }),
+      ...(p.expandedPanelHeight != null && {
+        expandedPanelHeight: clamp(p.expandedPanelHeight, PANEL_MIN, PANEL_MAX),
+      }),
+      ...(p.relationsEditorWidth != null && {
+        relationsEditorWidth: clamp(
+          p.relationsEditorWidth,
+          RELATIONS_EDITOR_MIN,
+          RELATIONS_EDITOR_MAX
+        ),
+      }),
+      ...(p.sqlPaneHeight != null && {
+        sqlPaneHeight: clamp(p.sqlPaneHeight, SQL_PANE_MIN, SQL_PANE_MAX),
+      }),
+    });
+  } catch {
+    /* malformed payload — ignore */
+  }
+});
+
 export const ZOOM_BOUNDS = { MIN: ZOOM_MIN, MAX: ZOOM_MAX, STEP: ZOOM_STEP };
 export const SIDEBAR_BOUNDS = { MIN: SIDEBAR_MIN, MAX: SIDEBAR_MAX };
 export const PANEL_BOUNDS = { MIN: PANEL_MIN, MAX: PANEL_MAX };

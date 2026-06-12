@@ -1,21 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowSquareOut,
   CircleNotch,
   ShareNetwork,
-  Stack,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { emit } from "@tauri-apps/api/event";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
+import { useUi } from "../state/ui";
 import { DataGrid } from "./DataGrid";
 import { WindowControls } from "./WindowControls";
 import {
   relationTargets,
   peekableColumnsFor,
-  relatedLabel,
   cellToFilterValue,
   type RelationTarget,
 } from "../lib/relations";
@@ -55,6 +54,7 @@ export function PeekPanel({
   /** Promote this peek's table to a full, filtered tab in the main window. */
   onOpenAsTab: () => void;
 }) {
+  const tabsZoom = useUi((s) => s.tabsZoom);
   const [sort, setSort] = useState<SortSpec | null>(null);
   const [extraFilters, setExtraFilters] = useState<ColumnFilter[]>([]);
   const [hiddenColumns, setHiddenColumns] = useState<string[]>(
@@ -168,52 +168,84 @@ export function PeekPanel({
     [relations, target.table, activeColumnName]
   );
   const hasRelation = !!activeCell && peekValue != null && relMatches.length > 0;
-  /** Disable peeking into relation targets with no matching rows (optimistically
-   * enabled while the check is in flight). */
-  const { exists: relExists, pending: relExistPending } = useRelatedExistence(
+  /** Mark relation targets with no matching rows so the dropdown disables them
+   * (optimistically enabled while the check is in flight). */
+  const { exists: relExists } = useRelatedExistence(
     profileId,
     database,
     relMatches,
     hasRelation ? peekValue : null
   );
-  const nonEmptyMatches = relMatches.filter((m) => relExists[relKey(m)] !== false);
-  const canPeek =
-    hasRelation && (relExistPending || nonEmptyMatches.length > 0);
-  const peekBtnLabel = relatedLabel(relMatches);
-  const relatedTitle = !activeCell
-    ? "Select a cell to peek into a related table"
-    : peekValue == null
-    ? "This cell is NULL — nothing to match on"
-    : relMatches.length === 0
-    ? `No relation defined on ${target.table}.${activeColumnName ?? ""}`
-    : !relExistPending && nonEmptyMatches.length === 0
-    ? `No related rows in ${relMatches.map((m) => m.table).join(", ")}`
-    : `Peek into ${(nonEmptyMatches.length > 0 ? nonEmptyMatches : relMatches)
-        .map((m) => m.table)
-        .join(", ")}`;
 
   const [picker, setPicker] = useState<{
     x: number;
     y: number;
     matches: RelationTarget[];
+    /** The cell the menu is anchored to, so re-clicking it toggles closed. */
+    cell: { rowIndex: number; column: string };
   } | null>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
   const openChild = (t: RelationTarget) => {
     if (peekValue == null || !activeColumnName) return;
     onOpenChildPeek(t, activeColumnName, peekValue);
   };
 
-  const onRelatedClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    /** A single relation on this column opens directly. When several are defined
-     * (the "x tables" label), always show the picker so the user chooses which —
-     * never silently auto-open one. */
-    if (relMatches.length === 1) {
-      openChild(relMatches[0]);
+  /** Single-clicking a relation cell selects it (unchanged) AND drops the
+   * relation menu just below it — same treatment as the main table view —
+   * and clicking the same cell again toggles it closed. Non-relation/NULL
+   * cells dismiss the menu. (Peek grids are read-only, so there's no
+   * double-click-edit case here.) */
+  const onCellMenu = (
+    cell: { rowIndex: number; column: string; rect: DOMRect } | null
+  ) => {
+    if (!cell || !data) {
+      setPicker(null);
       return;
     }
-    const rect = e.currentTarget.getBoundingClientRect();
-    setPicker({ x: rect.left, y: rect.bottom + 4, matches: relMatches });
+    if (
+      picker &&
+      picker.cell.rowIndex === cell.rowIndex &&
+      picker.cell.column === cell.column
+    ) {
+      setPicker(null);
+      return;
+    }
+    const value = cellToFilterValue(data.rows[cell.rowIndex]?.[cell.column]);
+    const matches = relationTargets(relations, target.table, cell.column);
+    if (value == null || matches.length === 0) {
+      setPicker(null);
+      return;
+    }
+    setPicker({
+      x: cell.rect.left,
+      y: cell.rect.bottom + 4,
+      matches,
+      cell: { rowIndex: cell.rowIndex, column: cell.column },
+    });
   };
+
+  /** Listener-based dismissal (no backdrop, so the next cell click lands):
+   * mousedown outside the menu, any key, or scrolling the grid away. */
+  useEffect(() => {
+    if (!picker) return;
+    const close = () => setPicker(null);
+    const onDown = (e: MouseEvent) => {
+      /* Grid-cell mousedowns are arbitrated by onCellMenu on the subsequent
+         click (open / move / same-cell toggle) — closing here too would defeat
+         the toggle. */
+      if ((e.target as HTMLElement).closest('[data-el="grid-cell"]')) return;
+      if (!pickerRef.current?.contains(e.target as Node)) close();
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [picker]);
 
   /* Clear a stale active cell when the rows change (re-fetch / sort / filter). */
   useEffect(() => {
@@ -249,21 +281,6 @@ export function PeekPanel({
         </span>
 
         <button
-          data-el="peek-related-btn"
-          disabled={!canPeek}
-          onClick={onRelatedClick}
-          className={clsx(
-            "shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors",
-            canPeek
-              ? "bg-violet-500 text-violet-950 hover:bg-violet-400"
-              : "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-          )}
-          title={relatedTitle}
-        >
-          <ShareNetwork size={14} />
-          {peekBtnLabel}
-        </button>
-        <button
           data-el="peek-open-tab-btn"
           onClick={onOpenAsTab}
           className="shrink-0 inline-flex items-center justify-center p-1 rounded bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
@@ -272,16 +289,7 @@ export function PeekPanel({
         >
           <ArrowSquareOut size={15} />
         </button>
-        <button
-          data-el="peek-close-all-btn"
-          onClick={() => ipc.closeAllPeeks().catch(() => {})}
-          className="shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold text-zinc-400 hover:text-rose-300 hover:bg-zinc-800 transition-colors"
-          title="Close all peek windows"
-        >
-          <Stack size={14} />
-          Close all
-        </button>
-        <WindowControls />
+        <WindowControls onCloseAll={() => ipc.closeAllPeeks().catch(() => {})} />
       </div>
 
       {error && (
@@ -295,7 +303,13 @@ export function PeekPanel({
           <CircleNotch size={16} className="animate-spin" /> Loading related rows…
         </div>
       ) : data ? (
-        <div className="relative flex-1 min-h-0 flex flex-col">
+        /* The grid zooms with the shared tabs zoom (same scale as the main
+           window's table views); the titlebar above is window chrome and stays
+           fixed, mirroring the main window's layout. */
+        <div
+          className="relative flex-1 min-h-0 flex flex-col"
+          style={tabsZoom !== 1 ? { zoom: tabsZoom } : undefined}
+        >
           <DataGrid
             readOnly
             hideValueTooltip
@@ -311,6 +325,7 @@ export function PeekPanel({
             activeCell={activeCell}
             clearActiveCellOnRowSelect
             onActiveCellChange={setActiveCell}
+            onCellMenu={onCellMenu}
             onColumnWidthsChange={setColumnWidths}
             onSortChange={setSort}
             onFilterChange={onFilterChange}
@@ -336,34 +351,37 @@ export function PeekPanel({
 
       {picker &&
         createPortal(
-          <>
-            <div
-              className="fixed inset-0 z-40"
-              onMouseDown={() => setPicker(null)}
-            />
-            <div
-              data-el="peek-related-picker"
-              style={{ top: picker.y, left: picker.x }}
-              className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
-            >
-              <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-                Peek into
-              </div>
-              {picker.matches.map((m) => (
+          <div
+            ref={pickerRef}
+            data-el="peek-related-picker"
+            style={{ top: picker.y, left: picker.x }}
+            className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
+          >
+            <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+              Peek into
+            </div>
+            {picker.matches.map((m) => {
+              const empty = relExists[relKey(m)] === false;
+              return (
                 <button
                   key={`${m.table}::${m.column}`}
+                  disabled={empty}
                   onClick={() => {
                     setPicker(null);
                     openChild(m);
                   }}
-                  className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[12px] hover:bg-zinc-800 whitespace-nowrap"
+                  title={empty ? `No related rows in ${m.table}` : undefined}
+                  className={clsx(
+                    "flex w-full items-center gap-1 px-3 py-1.5 text-left text-[12px] whitespace-nowrap",
+                    empty ? "cursor-not-allowed opacity-40" : "hover:bg-zinc-800"
+                  )}
                 >
                   <span className="font-medium text-zinc-100">{m.table}</span>
                   <span className="font-mono text-zinc-500">.{m.column}</span>
                 </button>
-              ))}
-            </div>
-          </>,
+              );
+            })}
+          </div>,
           document.body
         )}
     </div>

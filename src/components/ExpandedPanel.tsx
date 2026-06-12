@@ -9,7 +9,7 @@ import {
   MagnifyingGlass as Search,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
-import { useUi } from "../state/ui";
+import { useUi, PANEL_BOUNDS } from "../state/ui";
 import { JsonTreeView } from "./JsonTreeView";
 import type { ColumnInfo } from "../types";
 
@@ -34,8 +34,25 @@ export function ExpandedPanel({
   onClose,
   readOnly = false,
 }: Props) {
-  const height = useUi((s) => s.expandedPanelHeight);
-  const setHeight = useUi((s) => s.setExpandedPanelHeight);
+  const storedHeight = useUi((s) => s.expandedPanelHeight);
+  const setStoredHeight = useUi((s) => s.setExpandedPanelHeight);
+  /**
+   * Display height vs. stored height: the persisted height is shared by every
+   * window (localStorage), so a tall Inspector resized on a big main window
+   * would fill a small secondary window entirely. On open, clamp the display
+   * to half the window's height — but don't write that back, so the big
+   * window's preference survives. Dragging past 50% afterwards is still
+   * allowed (deliberate, in THIS window) and persists as before.
+   */
+  const [height, setDisplayHeight] = useState(() =>
+    Math.min(storedHeight, Math.round(window.innerHeight / 2))
+  );
+  const setHeight = (px: number) => {
+    setDisplayHeight(
+      Math.max(PANEL_BOUNDS.MIN, Math.min(PANEL_BOUNDS.MAX, Math.round(px)))
+    );
+    setStoredHeight(px);
+  };
   const dragStateRef = useRef<{ startY: number; startHeight: number } | null>(
     null
   );

@@ -65,6 +65,13 @@ interface Props {
   /** Suppress the native hover tooltip showing a cell's full value (used in peek
    * windows, where the value tooltip is noise). */
   hideValueTooltip?: boolean;
+  /** Reports a single-click on a cell (after it becomes active) with the cell's
+   * on-screen rect, so the host can anchor a menu to it — e.g. the relation
+   * dropdown on peekable cells. Called with null on double-click (edit begins),
+   * so an open menu can be dismissed. */
+  onCellMenu?: (
+    cell: { rowIndex: number; column: string; rect: DOMRect } | null
+  ) => void;
 }
 
 const ROW_HEIGHT = 26;
@@ -109,6 +116,7 @@ export function DataGrid({
   onDeleteRows,
   peekableColumns,
   hideValueTooltip = false,
+  onCellMenu,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [widths, setWidths] = useState<number[]>([]);
@@ -551,6 +559,13 @@ export function DataGrid({
                             column: col.name,
                           })
                         }
+                        onMenu={(rect) =>
+                          onCellMenu?.(
+                            rect
+                              ? { rowIndex: vItem.index, column: col.name, rect }
+                              : null
+                          )
+                        }
                         onBeginEdit={() => beginEdit(vItem.index, col)}
                         onCommit={commitEdit}
                         onCancel={() => setEditing(null)}
@@ -865,6 +880,7 @@ function Cell({
   isPeekable,
   hideValueTooltip,
   onActivate,
+  onMenu,
   onBeginEdit,
   onCommit,
   onCancel,
@@ -880,6 +896,9 @@ function Cell({
   isPeekable: boolean;
   hideValueTooltip: boolean;
   onActivate: () => void;
+  /** Single-click reports the cell rect (anchor a menu); double-click reports
+   * null (dismiss it — editing starts). */
+  onMenu?: (rect: DOMRect | null) => void;
   onBeginEdit: () => void;
   onCommit: (next: string | null) => void;
   onCancel: () => void;
@@ -919,10 +938,12 @@ function Cell({
       onClick={(e) => {
         e.stopPropagation();
         onActivate();
+        onMenu?.(e.currentTarget.getBoundingClientRect());
       }}
       onDoubleClick={(e) => {
         if (!editable) return;
         e.stopPropagation();
+        onMenu?.(null);
         onBeginEdit();
       }}
       className={clsx(

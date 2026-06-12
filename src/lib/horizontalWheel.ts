@@ -31,6 +31,10 @@ function isHorizontallyScrollable(el: HTMLElement): boolean {
 }
 
 function onWheel(e: WheelEvent) {
+  /* Ctrl/Cmd+wheel is the ZOOM gesture (useZoomShortcuts), never a scroll —
+     without this bail, a Ctrl+wheel over a wide grid would horizontal-scroll
+     and swallow the zoom. */
+  if (e.ctrlKey || e.metaKey) return;
   let node: Element | null = e.target as Element | null;
   while (
     node &&

@@ -26,18 +26,29 @@ export function useZoomShortcuts() {
       }
     };
 
+    /* Ctrl+Scroll is THE zoom gesture. High-resolution wheels (MX Master
+       free-spin) fire many small-delta events per notch, so accumulate and
+       convert to one zoom step per fixed amount of travel instead of stepping
+       on every event. */
+    let acc = 0;
+    const WHEEL_PER_STEP = 50;
     const onWheel = (e: WheelEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
-      /* Scale the pane under the cursor (falling back to the focused one). */
+      acc += e.deltaY;
+      const steps = Math.trunc(acc / WHEEL_PER_STEP);
+      if (steps === 0) return;
+      acc -= steps * WHEEL_PER_STEP;
+      /* Scale the pane under the cursor (falling back to the focused one —
+         secondary windows have no panes and fall through to "tabs"). */
       const target = e.target as HTMLElement;
       const pane: PaneId = target.closest('[data-el="sidebar-pane"]')
         ? "tree"
         : target.closest('[data-el="main-pane"]')
         ? "tabs"
         : useUi.getState().focusedPane;
-      const direction = e.deltaY > 0 ? -1 : 1;
-      useUi.getState().bumpZoom(pane, direction * ZOOM_BOUNDS.STEP);
+      /* Scroll up (negative deltaY) zooms in. */
+      useUi.getState().bumpZoom(pane, -steps * ZOOM_BOUNDS.STEP);
     };
 
     window.addEventListener("keydown", onKey);

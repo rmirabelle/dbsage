@@ -89,7 +89,7 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                     <MagnifyingGlassPlus size={14} className={MENU_ICON_CLASS} />
                     Zoom In
                   </span>
-                  <span className="text-[10px] text-zinc-500">Ctrl +</span>
+                  <span className="text-[10px] text-zinc-500">Ctrl+Scroll ↑</span>
                 </button>
                 <button
                   data-el="menu-zoom-out"
@@ -100,7 +100,7 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
                     <MagnifyingGlassMinus size={14} className={MENU_ICON_CLASS} />
                     Zoom Out
                   </span>
-                  <span className="text-[10px] text-zinc-500">Ctrl −</span>
+                  <span className="text-[10px] text-zinc-500">Ctrl+Scroll ↓</span>
                 </button>
                 <button
                   data-el="menu-zoom-reset"

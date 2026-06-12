@@ -12,6 +12,8 @@ import { ipc } from "../ipc";
 import { revealWindow } from "../lib/revealWindow";
 import { setWindowGlyphIcon, GLYPHS, type Glyph } from "../lib/windowIcon";
 import { useStore } from "../state/store";
+import { useUi } from "../state/ui";
+import { useZoomShortcuts } from "../hooks/useZoomShortcuts";
 import { TabBody, tabTitle } from "./Tabs";
 import { TabDndProvider } from "./TabDndProvider";
 import { WindowControls } from "./WindowControls";
@@ -123,6 +125,10 @@ export function TornTabWindow({ label }: { label: string }) {
   const activeTabId = useStore((s) => s.activeTabId);
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
   const title = active ? tabTitle(active) : null;
+  const tabsZoom = useUi((s) => s.tabsZoom);
+
+  /* Ctrl+wheel / Ctrl+= zoom works here too, driving the shared tabs zoom. */
+  useZoomShortcuts();
 
   /* Taskbar/window title reads "{content} - DB Sage"; tracks renames (query /
      designer) since it's keyed on the live tab title. */
@@ -159,7 +165,12 @@ export function TornTabWindow({ label }: { label: string }) {
   return (
     <div className="h-screen flex flex-col bg-zinc-950 text-zinc-200 overflow-hidden">
       <TornTabTitleBar tab={active} />
-      <div className="flex-1 min-h-0 flex flex-col">
+      {/* The tab body zooms with the shared tabs zoom, same as the main
+          window's tabs pane; the titlebar above is chrome and stays fixed. */}
+      <div
+        className="flex-1 min-h-0 flex flex-col"
+        style={tabsZoom !== 1 ? { zoom: tabsZoom } : undefined}
+      >
         {active ? (
           <TabDndProvider>
             <TabBody tab={active} />
