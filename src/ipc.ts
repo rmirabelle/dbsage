@@ -114,6 +114,34 @@ export const ipc = {
     pk: { column: string; value: string | null }[];
   }) => invoke<number>("delete_row", args),
 
+  /** Server-side row copy: re-inserts the row identified by `pk`, skipping
+   * auto-increment/generated columns. Returns a structured outcome — "conflict"
+   * means a unique/PK violation the caller can offer to edit-and-retry. */
+  duplicateRow: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    pk: { column: string; value: string | null }[];
+  }) =>
+    invoke<{ status: "ok" | "conflict" | "error"; message: string | null }>(
+      "duplicate_row",
+      args
+    ),
+
+  /** Check a candidate row against every unique index; returns the indexes that
+   * already have a matching row, so the duplicate-edit dialog can highlight all
+   * colliding columns at once. */
+  checkRowConflicts: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    values: { column: string; value: string | null }[];
+  }) =>
+    invoke<{ indexName: string; columns: string[] }[]>(
+      "check_row_conflicts",
+      args
+    ),
+
   listQueryHistory: (profileId: string, database: string) =>
     invoke<QueryHistoryItem[]>("list_query_history", { profileId, database }),
   addQueryHistory: (profileId: string, database: string, sql: string) =>

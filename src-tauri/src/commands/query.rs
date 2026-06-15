@@ -1617,3 +1617,223 @@ pub async fn insert_row(
     let result = q.execute(&pool).await?;
     Ok(result.rows_affected())
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateOutcome {
+    /// "ok" | "conflict" | "error"
+    pub status: String,
+    /// Database message for the "conflict"/"error" cases (None when "ok").
+    pub message: Option<String>,
+}
+
+/// Duplicate one existing row (identified by its primary key) via
+/// `INSERT INTO t (cols…) SELECT cols… FROM t WHERE pk… LIMIT 1`, omitting
+/// auto-increment and generated columns so the server assigns fresh values.
+/// The copy is performed entirely server-side, so every value is byte-exact —
+/// BLOBs, decimals, JSON, etc. are never round-tripped (and possibly mangled)
+/// through the client.
+///
+/// Rather than erroring on a constraint violation, this returns a structured
+/// outcome: a duplicate-key / integrity conflict (SQLSTATE 23000) comes back as
+/// `status: "conflict"` so the caller can offer an edit-and-retry, while other
+/// statement failures surface as `status: "error"`. Only connection-level
+/// problems are returned as `Err`.
+#[tauri::command]
+pub async fn duplicate_row(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    pk: Vec<PkValue>,
+) -> AppResult<DuplicateOutcome> {
+    if pk.is_empty() {
+        return Err(AppError::Other(
+            "cannot duplicate: table has no primary key columns provided".into(),
+        ));
+    }
+
+    let pool = pool_for(&state, &profile_id).await?;
+
+    /* Column metadata including EXTRA, so auto-increment and generated columns
+       can be dropped from the INSERT — the server fills those itself. */
+    let meta = sqlx::query(
+        "SELECT COLUMN_NAME, EXTRA \
+         FROM INFORMATION_SCHEMA.COLUMNS \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+         ORDER BY ORDINAL_POSITION",
+    )
+    .bind(&database)
+    .bind(&table)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut column_names: HashSet<String> = HashSet::new();
+    let mut insertable: Vec<String> = Vec::new();
+    for r in &meta {
+        let name = get_string(r, 0);
+        let extra = get_string(r, 1).to_lowercase();
+        column_names.insert(name.clone());
+        if extra.contains("auto_increment") || extra.contains("generated") {
+            continue;
+        }
+        insertable.push(name);
+    }
+
+    for p in &pk {
+        if !column_names.contains(&p.column) {
+            return Err(AppError::Other(format!("unknown pk column: {}", p.column)));
+        }
+    }
+
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    let where_clause = pk
+        .iter()
+        .map(|p| {
+            if p.value.is_none() {
+                format!("{} IS NULL", quote_ident(&p.column))
+            } else {
+                format!("{} = ?", quote_ident(&p.column))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ");
+
+    let sql = if insertable.is_empty() {
+        /* Every column is auto-increment/generated — there's nothing to copy, so
+           just materialise a fresh all-defaults row. */
+        format!("INSERT INTO {qualified} () VALUES ()")
+    } else {
+        let cols = insertable
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "INSERT INTO {qualified} ({cols}) SELECT {cols} FROM {qualified} WHERE {where_clause} LIMIT 1"
+        )
+    };
+
+    let mut q = sqlx::query(&sql);
+    if !insertable.is_empty() {
+        for p in &pk {
+            if let Some(v) = &p.value {
+                q = q.bind(v.clone());
+            }
+        }
+    }
+
+    match q.execute(&pool).await {
+        Ok(res) if res.rows_affected() == 0 => Ok(DuplicateOutcome {
+            status: "error".into(),
+            message: Some("source row not found - it may have been deleted or changed".into()),
+        }),
+        Ok(_) => Ok(DuplicateOutcome {
+            status: "ok".into(),
+            message: None,
+        }),
+        Err(e) => match e.as_database_error() {
+            Some(db) => {
+                let conflict = db.code().as_deref() == Some("23000");
+                Ok(DuplicateOutcome {
+                    status: if conflict { "conflict" } else { "error" }.into(),
+                    message: Some(db.message().to_string()),
+                })
+            }
+            None => Err(e.into()),
+        },
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UniqueConflict {
+    /// Name of the violated unique index (e.g. "PRIMARY", "uq_email").
+    pub index_name: String,
+    /// The columns making up that index — all should be highlighted.
+    pub columns: Vec<String>,
+}
+
+/// Check a candidate row's values against every UNIQUE index on the table and
+/// report which ones already have a matching row. Used by the duplicate-row
+/// edit dialog to surface *all* colliding columns at once (a real INSERT only
+/// raises the first duplicate-key error), so the user can fix them in one pass.
+///
+/// An index is skipped when any of its columns is absent from `values` or NULL
+/// (NULLs never collide in a MySQL unique index).
+#[tauri::command]
+pub async fn check_row_conflicts(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    values: Vec<PkValue>,
+) -> AppResult<Vec<UniqueConflict>> {
+    let pool = pool_for(&state, &profile_id).await?;
+
+    let provided: std::collections::HashMap<String, Option<String>> =
+        values.into_iter().map(|v| (v.column, v.value)).collect();
+
+    /* Unique indexes and their ordered columns (NON_UNIQUE = 0). */
+    let rows = sqlx::query(
+        "SELECT INDEX_NAME, COLUMN_NAME \
+         FROM INFORMATION_SCHEMA.STATISTICS \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND NON_UNIQUE = 0 \
+         ORDER BY INDEX_NAME, SEQ_IN_INDEX",
+    )
+    .bind(&database)
+    .bind(&table)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut indexes: Vec<(String, Vec<String>)> = Vec::new();
+    for r in &rows {
+        let idx = get_string(r, 0);
+        let col = get_string(r, 1);
+        match indexes.last_mut() {
+            Some(last) if last.0 == idx => last.1.push(col),
+            _ => indexes.push((idx, vec![col])),
+        }
+    }
+
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    let mut conflicts: Vec<UniqueConflict> = Vec::new();
+
+    for (index_name, cols) in indexes {
+        let mut binds: Vec<String> = Vec::new();
+        let mut checkable = true;
+        for c in &cols {
+            match provided.get(c) {
+                Some(Some(val)) => binds.push(val.clone()),
+                _ => {
+                    checkable = false;
+                    break;
+                }
+            }
+        }
+        if !checkable {
+            continue;
+        }
+
+        let where_clause = cols
+            .iter()
+            .map(|c| format!("{} = ?", quote_ident(c)))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let sql = format!("SELECT EXISTS(SELECT 1 FROM {qualified} WHERE {where_clause})");
+        let mut q = sqlx::query(&sql);
+        for b in &binds {
+            q = q.bind(b);
+        }
+        let row = q.fetch_one(&pool).await?;
+        let exists: i64 = row.try_get(0).unwrap_or(0);
+        if exists != 0 {
+            conflicts.push(UniqueConflict {
+                index_name,
+                columns: cols,
+            });
+        }
+    }
+
+    Ok(conflicts)
+}

@@ -110,6 +110,15 @@ select {
 }
 
 /**
+ * Hide the native format hint (e.g. "mm/dd/yyyy") on empty date / datetime
+ * inputs while they're idle, so an unset picker reads clean. The format
+ * reappears on focus so keyboard entry still works.
+ */
+.dbs-date-empty:not(:focus)::-webkit-datetime-edit {
+  color: transparent;
+}
+
+/**
  * Custom checkbox so the unchecked box reads dark in the theme (native ones are
  * light). Unchecked bg is the columns-list bg (#2c303c) nudged a tad lighter;
  * checked fills with the accent and shows a dark check.

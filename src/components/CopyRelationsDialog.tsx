@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import {
   CheckCircle,
   CircleNotch as Loader2,
@@ -197,10 +198,12 @@ export function CopyRelationsDialog({
 
   if (!open) return null;
 
+  const backdrop = useBackdropDismiss(onClose, !copying);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={() => !copying && onClose()}
+      {...backdrop}
     >
       <div
         data-el="copy-relations-dialog"

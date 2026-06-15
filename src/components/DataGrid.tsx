@@ -13,6 +13,7 @@ import {
   ShareNetwork,
   Key,
   Trash,
+  Copy,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type {
@@ -24,6 +25,7 @@ import type {
 } from "../types";
 import { ColumnHeaderMenu } from "./ColumnHeaderMenu";
 import { ColumnsVisibilityMenu } from "./ColumnsVisibilityMenu";
+import { RowDeleteConfirmDialog } from "./RowDeleteConfirmDialog";
 import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
 import { buildCopyText, COPY_AS_OPTIONS, type CopyAsFormat } from "../lib/copyAs";
 import { notifyError, notifySuccess } from "../state/notify";
@@ -59,6 +61,9 @@ interface Props {
   /** When set, the row-gutter context menu shows a Delete item that calls this
    * with the right-clicked row's selection. The grid handles the confirmation. */
   onDeleteRows?: (indices: number[]) => Promise<void>;
+  /** When set, the row-gutter context menu shows a Duplicate item. The host
+   * performs the copy and owns all result messaging (success/conflict/error). */
+  onDuplicateRows?: (indices: number[]) => Promise<void>;
   /** Column names that participate in a relation — marked with the relation icon
    * in their header to signal a peek can be launched from them. */
   peekableColumns?: Set<string>;
@@ -114,6 +119,7 @@ export function DataGrid({
   onColumnWidthsChange,
   copyTarget,
   onDeleteRows,
+  onDuplicateRows,
   peekableColumns,
   hideValueTooltip = false,
   onCellMenu,
@@ -131,6 +137,8 @@ export function DataGrid({
   );
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
+  /** Row indices pending a delete confirmation (null = dialog closed). */
+  const [deleteConfirm, setDeleteConfirm] = useState<number[] | null>(null);
   const draggingRef = useRef(false);
   const [editing, setEditing] = useState<{ rowIndex: number; column: string } | null>(
     null
@@ -259,7 +267,7 @@ export function DataGrid({
      Operate on the whole selection when the clicked row is part of it;
      otherwise select just that row and operate on it. */
   const handleRowContextMenu = (index: number, e: React.MouseEvent) => {
-    if (!copyTarget && !onDeleteRows) return;
+    if (!copyTarget && !onDeleteRows && !onDuplicateRows) return;
     e.preventDefault();
     e.stopPropagation();
     let indices: number[];
@@ -273,23 +281,29 @@ export function DataGrid({
     setRowMenu({ x: e.clientX, y: e.clientY, indices });
   };
 
-  const deleteRows = async (indices: number[]) => {
+  /* Open the in-app confirmation; the actual delete runs from confirmDelete. */
+  const deleteRows = (indices: number[]) => {
     setRowMenu(null);
     if (!onDeleteRows || indices.length === 0) return;
-    const n = indices.length;
-    const ok = confirm(
-      n === 1
-        ? "Delete this row? This cannot be undone."
-        : `Delete ${n} rows? This cannot be undone.`
-    );
-    if (!ok) return;
+    setDeleteConfirm(indices);
+  };
+
+  const confirmDelete = async () => {
+    const indices = deleteConfirm;
+    if (!onDeleteRows || !indices || indices.length === 0) return;
+    await onDeleteRows(indices);
+    setSelectedRows(new Set());
+    setAnchor(null);
+    notifySuccess(`Deleted ${indices.length} row${indices.length === 1 ? "" : "s"}`);
+  };
+
+  const duplicateRows = async (indices: number[]) => {
+    setRowMenu(null);
+    if (!onDuplicateRows || indices.length === 0) return;
     try {
-      await onDeleteRows(indices);
-      setSelectedRows(new Set());
-      setAnchor(null);
-      notifySuccess(`Deleted ${n} row${n === 1 ? "" : "s"}`);
+      await onDuplicateRows(indices);
     } catch (e) {
-      notifyError(`Delete failed: ${String(e)}`);
+      notifyError(`Duplicate failed: ${String(e)}`);
     }
   };
 
@@ -621,9 +635,19 @@ export function DataGrid({
           count={rowMenu.indices.length}
           canCopy={!!copyTarget}
           canDelete={!!onDeleteRows}
+          canDuplicate={!!onDuplicateRows}
           onPick={(format, label) => copyRowsAs(format, label, rowMenu.indices)}
           onDelete={() => deleteRows(rowMenu.indices)}
+          onDuplicate={() => duplicateRows(rowMenu.indices)}
           onClose={() => setRowMenu(null)}
+        />
+      )}
+
+      {deleteConfirm && (
+        <RowDeleteConfirmDialog
+          count={deleteConfirm.length}
+          onConfirm={confirmDelete}
+          onClose={() => setDeleteConfirm(null)}
         />
       )}
     </div>
@@ -636,8 +660,10 @@ function RowContextMenu({
   count,
   canCopy,
   canDelete,
+  canDuplicate,
   onPick,
   onDelete,
+  onDuplicate,
   onClose,
 }: {
   x: number;
@@ -645,8 +671,10 @@ function RowContextMenu({
   count: number;
   canCopy: boolean;
   canDelete: boolean;
+  canDuplicate: boolean;
   onPick: (format: CopyAsFormat, label: string) => void;
   onDelete: () => void;
+  onDuplicate: () => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -669,6 +697,20 @@ function RowContextMenu({
       onMouseDown={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
     >
+      {canDuplicate && (
+        <>
+          <button
+            onClick={onDuplicate}
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-emerald-200 hover:bg-emerald-950/50 whitespace-nowrap"
+          >
+            <Copy size={14} className="text-emerald-400 shrink-0" />
+            Duplicate {count} row{count === 1 ? "" : "s"}
+          </button>
+          {(canDelete || canCopy) && (
+            <div className="my-1 border-t border-zinc-800" />
+          )}
+        </>
+      )}
       {canDelete && (
         <>
           <button

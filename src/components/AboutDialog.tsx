@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -96,10 +97,12 @@ export function AboutDialog({ open, version, initialUpdateInfo, onClose }: Props
 
   const overlayClickable = state.kind !== "downloading";
 
+  const backdrop = useBackdropDismiss(onClose, overlayClickable);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={() => overlayClickable && onClose()}
+      {...backdrop}
     >
       <div
         data-el="about-dialog"

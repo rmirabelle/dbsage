@@ -343,6 +343,26 @@ interface Store {
     values: { column: string; value: string | null }[]
   ) => Promise<void>;
   deleteRows: (tabId: string, rowIndices: number[]) => Promise<void>;
+  /** Duplicate the given rows server-side (skipping auto-increment columns).
+   * Rows that violate a unique/PK constraint come back in `conflicts` carrying a
+   * snapshot of their values, so the caller can offer an edit-and-retry. */
+  duplicateRows: (
+    tabId: string,
+    rowIndices: number[]
+  ) => Promise<DuplicateRowsResult>;
+}
+
+export interface DuplicateConflict {
+  /** The source row's values, as IPC strings, for seeding an edit dialog. */
+  seed: Record<string, string | null>;
+  /** The database conflict message, e.g. "Duplicate entry 'x' for key '…'". */
+  message: string;
+}
+
+export interface DuplicateRowsResult {
+  okCount: number;
+  conflicts: DuplicateConflict[];
+  errors: string[];
 }
 
 const defaultTree = (): DbTree => ({
@@ -1943,6 +1963,59 @@ export const useStore = create<Store>((set, get) => ({
       ),
     }));
     await loadTabPage(tabId, tab.page, set, get);
+  },
+
+  duplicateRows: async (tabId, rowIndices) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows" || !tab.data) {
+      return { okCount: 0, conflicts: [], errors: [] };
+    }
+    const pkColumns = tab.data.columns.filter((c) => c.key === "PRI");
+    if (pkColumns.length === 0) {
+      throw new Error("Table has no primary key - row duplication is disabled.");
+    }
+    const columns = tab.data.columns;
+
+    let okCount = 0;
+    const conflicts: DuplicateConflict[] = [];
+    const errors: string[] = [];
+
+    for (const rowIndex of rowIndices) {
+      const row = tab.data.rows[rowIndex];
+      if (!row) continue;
+      const pk = pkColumns.map((c) => ({
+        column: c.name,
+        value: toIpcString(row[c.name]),
+      }));
+      const outcome = await ipc.duplicateRow({
+        profileId: tab.profileId,
+        database: tab.database,
+        table: tab.table,
+        pk,
+      });
+      if (outcome.status === "ok") {
+        okCount++;
+      } else if (outcome.status === "conflict") {
+        /* Snapshot the displayed row now — the page reloads below, after which
+           this index may point at a different row. */
+        const seed: Record<string, string | null> = {};
+        for (const c of columns) seed[c.name] = toIpcString(row[c.name]);
+        conflicts.push({ seed, message: outcome.message ?? "Constraint violation" });
+      } else {
+        errors.push(outcome.message ?? "Could not duplicate the row");
+      }
+    }
+
+    if (okCount > 0) {
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: null } : t
+        ),
+      }));
+      await loadTabPage(tabId, tab.page, set, get);
+    }
+
+    return { okCount, conflicts, errors };
   },
 }));
 

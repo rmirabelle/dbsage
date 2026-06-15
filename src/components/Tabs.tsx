@@ -27,6 +27,7 @@ import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { useStore, isDesignerTabDirty } from "../state/store";
+import type { DuplicateConflict } from "../state/store";
 import { notifyError, notifySuccess } from "../state/notify";
 import { CloseTabConfirmDialog } from "./CloseTabConfirmDialog";
 import { DataGrid } from "./DataGrid";
@@ -422,6 +423,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const updateCell = useStore((s) => s.updateCell);
   const insertRow = useStore((s) => s.insertRow);
   const deleteRows = useStore((s) => s.deleteRows);
+  const duplicateRows = useStore((s) => s.duplicateRows);
   const openTableEditor = useStore((s) => s.openTableEditor);
   const loadRelations = useStore((s) => s.loadRelations);
   const setRowsActiveCell = useStore((s) => s.setRowsActiveCell);
@@ -439,6 +441,22 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     () => getCurrentWindow().label === "main"
   );
   const [insertOpen, setInsertOpen] = useState(false);
+  /** Rows whose duplicate hit a unique/PK conflict, awaiting edit-and-retry.
+   * Shown one at a time; submitting or cancelling advances to the next. */
+  const [dupQueue, setDupQueue] = useState<DuplicateConflict[]>([]);
+
+  const handleDuplicateRows = async (indices: number[]) => {
+    const { okCount, conflicts, errors } = await duplicateRows(tab.id, indices);
+    if (okCount > 0) {
+      notifySuccess(
+        `Duplicated ${okCount} row${okCount === 1 ? "" : "s"} in "${tab.table}"`
+      );
+    }
+    for (const message of errors) {
+      notifyError(`Couldn't duplicate a row: ${message}`);
+    }
+    if (conflicts.length > 0) setDupQueue(conflicts);
+  };
   const [picker, setPicker] = useState<{
     x: number;
     y: number;
@@ -739,6 +757,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             updateCell(tab.id, rowIndex, column, value)
           }
           onDeleteRows={hasPrimaryKey ? (indices) => deleteRows(tab.id, indices) : undefined}
+          onDuplicateRows={hasPrimaryKey ? handleDuplicateRows : undefined}
         />
       ) : (
         <div className="flex-1" />
@@ -832,6 +851,51 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             notifySuccess(`Inserted a row into "${tab.table}"`);
           }}
           onClose={() => setInsertOpen(false)}
+        />
+      )}
+
+      {dupQueue.length > 0 && (
+        <InsertRowDialog
+          key={dupQueue.length}
+          profileId={tab.profileId}
+          database={tab.database}
+          table={tab.table}
+          heading={
+            dupQueue.length > 1
+              ? `Duplicate row (${dupQueue.length} conflicts left)`
+              : "Duplicate row"
+          }
+          submitText="Insert copy"
+          seed={dupQueue[0].seed}
+          validate={async (values) => {
+            const conflicts = await ipc.checkRowConflicts({
+              profileId: tab.profileId,
+              database: tab.database,
+              table: tab.table,
+              values,
+            });
+            if (conflicts.length === 0) return null;
+            const columns = conflicts.flatMap((c) => c.columns);
+            const groups = conflicts.map((c) =>
+              c.columns.length === 1
+                ? `"${c.columns[0]}"`
+                : `(${c.columns.map((x) => `"${x}"`).join(", ")})`
+            );
+            const message =
+              `A row already exists with the same ${groups.join(" and ")}. ` +
+              `Change at least one highlighted value${
+                conflicts.length > 1 ? " in each group" : ""
+              } to insert a copy.`;
+            return { columns, message };
+          }}
+          onSubmit={async (values) => {
+            await insertRow(tab.id, values);
+            notifySuccess(`Duplicated a row into "${tab.table}"`);
+          }}
+          onClose={() => setDupQueue((q) => q.slice(1))}
+          onAbort={
+            dupQueue.length > 1 ? () => setDupQueue([]) : undefined
+          }
         />
       )}
 

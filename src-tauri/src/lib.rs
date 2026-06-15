@@ -212,6 +212,8 @@ pub fn run() {
             query::update_cell,
             query::insert_row,
             query::delete_row,
+            query::duplicate_row,
+            query::check_row_conflicts,
             query::table_exists,
             query::create_table,
             query::copy_table,

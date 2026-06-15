@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import { Warning, Trash, CircleNotch as Loader2, X } from "@phosphor-icons/react";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
@@ -65,10 +66,12 @@ export function DropDatabaseDialog({
         : "…"
       : tableCount.toLocaleString();
 
+  const backdrop = useBackdropDismiss(onClose, !busy);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={() => !busy && onClose()}
+      {...backdrop}
     >
       <div
         data-el="drop-database-dialog"

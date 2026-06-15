@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import { Database, CircleNotch as Loader2, X } from "@phosphor-icons/react";
 
 export function NewDatabaseDialog({
@@ -36,10 +37,12 @@ export function NewDatabaseDialog({
     }
   };
 
+  const backdrop = useBackdropDismiss(onClose, !busy);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={() => !busy && onClose()}
+      {...backdrop}
     >
       <div
         data-el="new-database-dialog"
