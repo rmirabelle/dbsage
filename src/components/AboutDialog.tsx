@@ -68,8 +68,6 @@ export function AboutDialog({ open, version, initialUpdateInfo, onClose }: Props
     };
   }, [state.kind]);
 
-  if (!open) return null;
-
   async function handleCheck() {
     setState({ kind: "checking" });
     try {
@@ -98,6 +96,8 @@ export function AboutDialog({ open, version, initialUpdateInfo, onClose }: Props
   const overlayClickable = state.kind !== "downloading";
 
   const backdrop = useBackdropDismiss(onClose, overlayClickable);
+
+  if (!open) return null;
 
   return (
     <div

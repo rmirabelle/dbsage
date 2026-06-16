@@ -196,9 +196,9 @@ export function CopyRelationsDialog({
     }
   };
 
-  if (!open) return null;
-
   const backdrop = useBackdropDismiss(onClose, !copying);
+
+  if (!open) return null;
 
   return (
     <div
