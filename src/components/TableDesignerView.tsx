@@ -19,7 +19,7 @@ import clsx from "clsx";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { useStore, isDesignerTabDirty } from "../state/store";
 import { useUi } from "../state/ui";
-import { buildCreateTableSql, buildAlterTableSql } from "../lib/tableSql";
+import { buildCreateTableSql, buildAlterTableSql, typeSupportsScale } from "../lib/tableSql";
 import type {
   ColumnDraft,
   CreateTableTab,
@@ -94,7 +94,6 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
   const updateCreateTable = useStore((s) => s.updateCreateTable);
   const saveDesignerTab = useStore((s) => s.saveDesignerTab);
   const [activeSubTab, setActiveSubTab] = useState<string>("columns");
-  const [error, setError] = useState<string | null>(null);
   const [sqlExpanded, setSqlExpanded] = useState(true);
   const [saving, setSaving] = useState(false);
   const [focusColumnId, setFocusColumnId] = useState<string | null>(null);
@@ -191,10 +190,8 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
   const handleSave = async () => {
     if (saving) return;
     setSqlExpanded(true);
-    setError(null);
     setSaving(true);
-    const res = await saveDesignerTab(tab.id);
-    if (!res.ok && res.error) setError(res.error);
+    await saveDesignerTab(tab.id);
     setSaving(false);
   };
 
@@ -294,7 +291,6 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
         {activeSubTab === "columns" && (
           <ColumnsEditor
             columns={tab.columns}
-            error={error}
             focusColumnId={focusColumnId}
             onColumnFocused={() => setFocusColumnId(null)}
             onAddColumn={addColumn}
@@ -307,7 +303,6 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
           <IndexesEditor
             indexes={tab.indexes}
             availableColumns={availableColumns}
-            error={error}
             onAddIndex={addIndex}
             onPatchIndex={patchIndex}
             onRemoveIndex={removeIndex}
@@ -342,7 +337,6 @@ function columnHasAdvanced(col: ColumnDraft): boolean {
 
 function ColumnsEditor({
   columns,
-  error,
   focusColumnId,
   onColumnFocused,
   onAddColumn,
@@ -351,7 +345,6 @@ function ColumnsEditor({
   onMoveColumn,
 }: {
   columns: ColumnDraft[];
-  error: string | null;
   focusColumnId: string | null;
   onColumnFocused: () => void;
   onAddColumn: () => void;
@@ -395,12 +388,6 @@ function ColumnsEditor({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      {error && (
-        <div className="shrink-0 mx-3 mt-3 rounded bg-rose-950/40 border border-rose-900/60 px-3 py-2 text-[11px] text-rose-300">
-          {error}
-        </div>
-      )}
-
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto px-3 py-3 bg-[#2c303c]">
         <div className="flex items-center gap-1 px-1 pb-3">
           <button
@@ -461,7 +448,12 @@ function ColumnsEditor({
                     <select
                       data-el="col-type"
                       value={col.type}
-                      onChange={(e) => onPatchColumn(col.id, { type: e.target.value })}
+                      onChange={(e) =>
+                        onPatchColumn(col.id, {
+                          type: e.target.value,
+                          ...(typeSupportsScale(e.target.value) ? {} : { decimals: "" }),
+                        })
+                      }
                       className={inputClass}
                     >
                       {(COLUMN_TYPES.includes(col.type)
@@ -484,17 +476,21 @@ function ColumnsEditor({
                       }
                       className={clsx(inputClass, "text-right font-mono")}
                     />
-                    <input
-                      data-el="col-decimals"
-                      inputMode="numeric"
-                      value={col.decimals}
-                      onChange={(e) =>
-                        onPatchColumn(col.id, {
-                          decimals: e.target.value.replace(/[^0-9]/g, ""),
-                        })
-                      }
-                      className={clsx(inputClass, "text-right font-mono")}
-                    />
+                    {typeSupportsScale(col.type) ? (
+                      <input
+                        data-el="col-decimals"
+                        inputMode="numeric"
+                        value={col.decimals}
+                        onChange={(e) =>
+                          onPatchColumn(col.id, {
+                            decimals: e.target.value.replace(/[^0-9]/g, ""),
+                          })
+                        }
+                        className={clsx(inputClass, "text-right font-mono")}
+                      />
+                    ) : (
+                      <div />
+                    )}
                     <div className="flex items-center justify-center">
                       <input
                         data-el="col-notnull"
@@ -572,7 +568,6 @@ const INDEX_GRID =
 function IndexesEditor({
   indexes,
   availableColumns,
-  error,
   onAddIndex,
   onPatchIndex,
   onRemoveIndex,
@@ -580,7 +575,6 @@ function IndexesEditor({
 }: {
   indexes: IndexDraft[];
   availableColumns: string[];
-  error: string | null;
   onAddIndex: () => void;
   onPatchIndex: (id: string, patch: Partial<IndexDraft>) => void;
   onRemoveIndex: (id: string) => void;
@@ -591,11 +585,6 @@ function IndexesEditor({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      {error && (
-        <div className="shrink-0 mx-3 mt-3 rounded bg-rose-950/40 border border-rose-900/60 px-3 py-2 text-[11px] text-rose-300">
-          {error}
-        </div>
-      )}
 
       <div className="flex-1 min-h-0 overflow-auto px-3 py-3 bg-[#2c303c]">
         <div className="flex items-center gap-1 px-1 pb-3">

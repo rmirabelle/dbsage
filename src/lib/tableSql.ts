@@ -108,12 +108,19 @@ function defaultLiteral(value: string): string {
   return quoteString(v);
 }
 
+/** Types whose parenthesized argument is (precision, scale); everything else takes a single length/display-width. */
+const SCALE_TYPES = new Set(["DECIMAL", "NUMERIC", "FIXED", "FLOAT", "DOUBLE", "REAL", "DOUBLE PRECISION"]);
+
+/** Whether a column type accepts a second (scale/decimals) argument. */
+export const typeSupportsScale = (type: string): boolean =>
+  SCALE_TYPES.has(type.trim().toUpperCase());
+
 /** The type + modifiers portion of a column definition (no name, no key). */
 export function columnSpec(col: ColumnDraft): string {
   let typePart = col.type;
   const len = col.length.trim();
   const dec = col.decimals.trim();
-  if (len && dec) typePart += `(${len}, ${dec})`;
+  if (len && dec && SCALE_TYPES.has(col.type.trim().toUpperCase())) typePart += `(${len}, ${dec})`;
   else if (len) typePart += `(${len})`;
   if (col.unsigned) typePart += " UNSIGNED";
   if (col.zerofill) typePart += " ZEROFILL";
