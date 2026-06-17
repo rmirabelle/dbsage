@@ -50,6 +50,20 @@ pub fn get_string(row: &MySqlRow, i: usize) -> String {
     String::new()
 }
 
+/// Like `get_string`, but preserves SQL NULL as `None`. Needed for columns where
+/// NULL is semantically distinct from an empty/zero value (e.g. COLUMN_DEFAULT,
+/// where NULL means "no default" but a present default of `0` arrives as bytes
+/// and would be lost by a plain `try_get::<Option<String>>`).
+pub fn get_opt_string(row: &MySqlRow, i: usize) -> Option<String> {
+    if let Ok(s) = row.try_get::<Option<String>, _>(i) {
+        return s;
+    }
+    if let Ok(b) = row.try_get::<Option<Vec<u8>>, _>(i) {
+        return b.map(|b| String::from_utf8_lossy(&b).into_owned());
+    }
+    None
+}
+
 /// Decode a MySQL row into a JSON object, mapping column types to portable JSON values.
 pub fn row_to_json(row: &MySqlRow) -> Value {
     let mut obj = serde_json::Map::with_capacity(row.columns().len());

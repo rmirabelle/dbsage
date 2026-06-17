@@ -1,4 +1,4 @@
-use crate::db::mysql::{get_string, quote_ident, result_columns, row_to_json};
+use crate::db::mysql::{get_opt_string, get_string, quote_ident, result_columns, row_to_json};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use futures_util::TryStreamExt;
@@ -893,7 +893,7 @@ pub async fn column_definitions(
             column_type: get_string(r, 1),
             nullable: get_string(r, 2) == "YES",
             key: get_string(r, 3),
-            default_value: r.try_get::<Option<String>, _>(4).ok().flatten(),
+            default_value: get_opt_string(r, 4),
             extra: get_string(r, 5),
             comment: get_string(r, 6),
         })
