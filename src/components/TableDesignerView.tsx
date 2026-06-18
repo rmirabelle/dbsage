@@ -235,7 +235,9 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
         </div>
         <Asterisk size={9} weight="bold" className="text-red-500 shrink-0 self-start mt-2 -ml-1" />
 
-        {isEdit && tab.originalAutoIncrementValue !== "" && (
+        {isEdit &&
+          (tab.originalAutoIncrementValue !== "" ||
+            tab.columns.some((c) => c.autoIncrement)) && (
           <div className="flex items-center gap-2 ml-5">
             <span className="text-[13px] text-zinc-400 shrink-0">Auto-increment</span>
             <input

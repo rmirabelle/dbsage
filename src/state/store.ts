@@ -1034,12 +1034,36 @@ export const useStore = create<Store>((set, get) => ({
         );
         if (!ok) return { ok: false };
       }
+      const requestedAi = tab.autoIncrementValue.trim();
+      const originalAi = tab.originalAutoIncrementValue.trim();
       try {
         await ipc.runDdl(tab.profileId, tab.database, alterSql);
         notifySuccess(`Table "${tab.originalName}" updated.`);
         /* Stay in the designer after saving: re-seed the tab from the now-saved
            table so the dirty baseline resets, rather than closing the tab. */
         await reloadDesignerTab(tab.id, name, set, get);
+        /* InnoDB silently refuses to set AUTO_INCREMENT below the highest value
+           already present in the column (it would mint colliding ids), clamping it
+           back to max+1. The reload above reads the live counter, so if it differs
+           from what we asked for, the engine ignored our value — surface why rather
+           than letting it look like a no-op bug. */
+        const saved = get().tabs.find((t) => t.id === tab.id);
+        const actualAi =
+          saved && saved.kind === "create-table"
+            ? saved.autoIncrementValue.trim()
+            : "";
+        if (
+          /^\d+$/.test(requestedAi) &&
+          requestedAi !== originalAi &&
+          actualAi !== "" &&
+          actualAi !== requestedAi
+        ) {
+          notifyError(
+            `Auto-increment couldn't be lowered to ${requestedAi}. The table already ` +
+              `contains rows with values up to ${Number(actualAi) - 1}, so MySQL kept ` +
+              `it at ${actualAi}. Remove those rows (or TRUNCATE the table) to reset lower.`
+          );
+        }
         /* Keep an open DB view in sync (e.g. after a rename) without switching
            away from the editor. */
         const dbTabId = `db::${tab.profileId}::${tab.database}`;

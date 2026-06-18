@@ -909,15 +909,34 @@ pub async fn table_auto_increment(
     table: String,
 ) -> AppResult<Option<u64>> {
     let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+    /* MySQL 8.0 caches the dynamic INFORMATION_SCHEMA.TABLES columns (AUTO_INCREMENT,
+       DATA_LENGTH, ...) for `information_schema_stats_expiry` seconds (default 24h), so a
+       read right after an ALTER returns the stale pre-change value. Force a live read for
+       this session; the variable is absent on MariaDB / MySQL 5.7 (which don't cache it),
+       so a failure there is benign and ignored. */
+    let _ = sqlx::query("SET SESSION information_schema_stats_expiry = 0")
+        .execute(&mut *conn)
+        .await;
     let row = sqlx::query(
         "SELECT AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
     )
     .bind(&database)
     .bind(&table)
-    .fetch_optional(&pool)
+    .fetch_optional(&mut *conn)
     .await?;
-    Ok(row.and_then(|r| r.try_get::<Option<u64>, _>(0).ok().flatten()))
+    Ok(row.and_then(|r| {
+        if let Ok(v) = r.try_get::<Option<u64>, _>(0) {
+            return v;
+        }
+        if let Ok(v) = r.try_get::<Option<i64>, _>(0) {
+            return v.map(|n| n as u64);
+        }
+        /* INFORMATION_SCHEMA sometimes hands numeric columns back as a string or
+           bytes (e.g. NEWDECIMAL collation), which the typed decodes above reject. */
+        get_opt_string(&r, 0).and_then(|s| s.trim().parse::<u64>().ok())
+    }))
 }
 
 /// The table's COMMENT (empty string when none), used to seed the designer.
