@@ -424,6 +424,26 @@ export interface ColumnDef {
   comment: string;
 }
 
+/** Result of inspecting a JSON file for the import wizard. */
+export interface JsonImportPreview {
+  rowCount: number;
+  /** Union of property names across the first records, in first-seen order. */
+  keys: string[];
+  /** First few records verbatim, for the preview. */
+  sampleRows: unknown[];
+}
+
+/** One property→column mapping for a JSON import (only mapped columns are sent). */
+export interface JsonColumnMapping {
+  column: string;
+  jsonKey: string;
+}
+
+export interface JsonImportResult {
+  inserted: number;
+  cancelled: boolean;
+}
+
 export type IndexDirection = "ASC" | "DESC";
 export type IndexType = "NORMAL" | "UNIQUE" | "FULLTEXT" | "SPATIAL";
 export type IndexMethod = "BTREE" | "HASH";

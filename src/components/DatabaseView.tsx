@@ -21,6 +21,7 @@ import { notifyError } from "../state/notify";
 import { ipc } from "../ipc";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
+import { ImportJsonDialog } from "./ImportJsonDialog";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { ViewsIcon } from "./TableViewPresetMenu";
 import { Tooltip } from "./Tooltip";
@@ -45,6 +46,7 @@ interface ContextMenuState {
 export function DatabaseView({ tab }: Props) {
   const setDatabaseFilter = useStore((s) => s.setDatabaseFilter);
   const refreshTab = useStore((s) => s.refreshTab);
+  const refreshTableData = useStore((s) => s.refreshTableData);
   const openTable = useStore((s) => s.openTable);
   const enterFolder = useStore((s) => s.enterFolder);
   const exitFolder = useStore((s) => s.exitFolder);
@@ -162,6 +164,7 @@ export function DatabaseView({ tab }: Props) {
     kind: TableAction;
     table: string;
   } | null>(null);
+  const [importTable, setImportTable] = useState<string | null>(null);
   const [pendingFolderDelete, setPendingFolderDelete] = useState<{
     folderId: string;
     folderName: string;
@@ -800,6 +803,22 @@ export function DatabaseView({ tab }: Props) {
               setTableMenu(null);
               exportTableSql(tab.profileId, tab.database, table, includeData);
             }}
+            onImportJson={() => {
+              setImportTable(tableMenu.table);
+              setTableMenu(null);
+            }}
+          />
+        )}
+
+        {importTable && (
+          <ImportJsonDialog
+            profileId={tab.profileId}
+            database={tab.database}
+            table={importTable}
+            onClose={() => setImportTable(null)}
+            onImported={() =>
+              refreshTableData(tab.profileId, tab.database, importTable)
+            }
           />
         )}
 

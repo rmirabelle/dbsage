@@ -33,6 +33,7 @@ import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { ConnectionDeleteDialog } from "./ConnectionDeleteDialog";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
+import { ImportJsonDialog } from "./ImportJsonDialog";
 import { NewDatabaseDialog } from "./NewDatabaseDialog";
 import { DropDatabaseDialog } from "./DropDatabaseDialog";
 import { ipc } from "../ipc";
@@ -511,6 +512,7 @@ function DatabaseList({
   const openTableEditor = useStore((s) => s.openTableEditor);
   const exportTableSql = useStore((s) => s.exportTableSql);
   const renameTable = useStore((s) => s.renameTable);
+  const refreshTableData = useStore((s) => s.refreshTableData);
   const renameFolderInDb = useStore((s) => s.renameFolderInDb);
   const deleteFolderInDb = useStore((s) => s.deleteFolderInDb);
 
@@ -527,6 +529,10 @@ function DatabaseList({
     table: string;
   } | null>(null);
   const [renamingTable, setRenamingTable] = useState<{
+    db: string;
+    table: string;
+  } | null>(null);
+  const [importTarget, setImportTarget] = useState<{
     db: string;
     table: string;
   } | null>(null);
@@ -885,6 +891,22 @@ function DatabaseList({
             setTreeMenu(null);
             exportTableSql(profile.id, db, table, includeData);
           }}
+          onImportJson={() => {
+            setImportTarget({ db: tableMenu.db, table: tableMenu.table });
+            setTreeMenu(null);
+          }}
+        />
+      )}
+
+      {importTarget && (
+        <ImportJsonDialog
+          profileId={profile.id}
+          database={importTarget.db}
+          table={importTarget.table}
+          onClose={() => setImportTarget(null)}
+          onImported={() =>
+            refreshTableData(profile.id, importTarget.db, importTarget.table)
+          }
         />
       )}
 

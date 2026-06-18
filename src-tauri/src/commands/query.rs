@@ -1639,6 +1639,269 @@ pub async fn insert_row(
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JsonImportPreview {
+    pub row_count: u64,
+    /// Union of property names across the first rows, in first-seen order.
+    pub keys: Vec<String>,
+    /// The first few records verbatim, for the wizard's preview.
+    pub sample_rows: Vec<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JsonColumnMapping {
+    /// Target table column.
+    pub column: String,
+    /// Source JSON property feeding it.
+    pub json_key: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JsonImportResult {
+    pub inserted: u64,
+    pub cancelled: bool,
+}
+
+/// Read a JSON file and require a top-level array (of objects). The whole file is
+/// read into memory — fine for Rust even at large sizes, and it keeps the payload
+/// out of the webview (the frontend only ever passes the path).
+fn read_json_array(path: &str) -> AppResult<Vec<Value>> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| AppError::Other(format!("Could not read file: {e}")))?;
+    let parsed: Value = serde_json::from_str(&text)
+        .map_err(|e| AppError::Other(format!("Invalid JSON: {e}")))?;
+    match parsed {
+        Value::Array(a) => Ok(a),
+        _ => Err(AppError::Other(
+            "Expected a JSON array of objects at the top level.".into(),
+        )),
+    }
+}
+
+/// Coerce a JSON value to the string DBSage binds for one column. SQL NULL covers
+/// both an explicit `null` and a missing key (the caller passes `Null` then);
+/// booleans become `1`/`0`; numbers and strings pass through; nested arrays and
+/// objects are stored as JSON text. For datetime/timestamp targets the JSON `T`
+/// separator is normalized to the space MySQL expects.
+fn json_value_to_bind(value: &Value, target_type: &str) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::Bool(b) => Some(if *b { "1".into() } else { "0".into() }),
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => {
+            let base = target_type
+                .split(|c| c == '(' || c == ' ')
+                .next()
+                .unwrap_or("")
+                .to_lowercase();
+            if base == "datetime" || base == "timestamp" {
+                Some(s.replacen('T', " ", 1))
+            } else {
+                Some(s.clone())
+            }
+        }
+        other => serde_json::to_string(other).ok(),
+    }
+}
+
+fn db_message(e: &sqlx::Error) -> String {
+    match e.as_database_error() {
+        Some(db) => db.message().to_string(),
+        None => e.to_string(),
+    }
+}
+
+/// Insert one batch of rows as a single multi-row INSERT. On failure the batch is
+/// replayed row-by-row to pinpoint the offending record (returned as its 0-based
+/// global index + the DB message); the surrounding transaction is rolled back by
+/// the caller, so these probe inserts never persist.
+async fn flush_import_batch(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::MySql>,
+    insert_prefix: &str,
+    single_sql: &str,
+    row_placeholder: &str,
+    batch: &[(usize, Vec<Option<String>>)],
+) -> Result<(), (usize, String)> {
+    let rows_sql = std::iter::repeat(row_placeholder)
+        .take(batch.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!("{insert_prefix} {rows_sql}");
+    let mut q = sqlx::query(&sql);
+    for (_, vals) in batch {
+        for v in vals {
+            q = q.bind(v.clone());
+        }
+    }
+    if q.execute(&mut **conn).await.is_ok() {
+        return Ok(());
+    }
+    for (idx, vals) in batch {
+        let mut sq = sqlx::query(single_sql);
+        for v in vals {
+            sq = sq.bind(v.clone());
+        }
+        if let Err(e) = sq.execute(&mut **conn).await {
+            return Err((*idx, db_message(&e)));
+        }
+    }
+    Err((batch[0].0, "insert failed".to_string()))
+}
+
+/// Inspect a JSON file for the import wizard: total record count, the union of
+/// property names (first-seen order), and a few sample records.
+#[tauri::command]
+pub async fn json_import_preview(path: String) -> AppResult<JsonImportPreview> {
+    let rows = read_json_array(&path)?;
+    let mut keys: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for v in rows.iter().take(200) {
+        if let Value::Object(map) = v {
+            for k in map.keys() {
+                if seen.insert(k.clone()) {
+                    keys.push(k.clone());
+                }
+            }
+        }
+    }
+    let sample_rows = rows.iter().take(3).cloned().collect();
+    Ok(JsonImportPreview {
+        row_count: rows.len() as u64,
+        keys,
+        sample_rows,
+    })
+}
+
+/// Import rows from a JSON file into a table using a property→column mapping.
+/// Only mapped columns are written, so unmapped columns fall back to their DB
+/// default / auto-increment. The whole import runs in one transaction: any error
+/// (e.g. a duplicate primary key when the id column is mapped) rolls everything
+/// back and reports the offending row. Returns `cancelled: true` (nothing
+/// written) when the user stops it mid-run.
+#[tauri::command]
+pub async fn import_json_rows(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    path: String,
+    mappings: Vec<JsonColumnMapping>,
+) -> AppResult<JsonImportResult> {
+    state.cancel_import.store(false, Ordering::Relaxed);
+    if mappings.is_empty() {
+        return Err(AppError::Other("No columns mapped to import.".into()));
+    }
+
+    let rows = read_json_array(&path)?;
+    let total = rows.len() as u64;
+
+    let pool = pool_for(&state, &profile_id).await?;
+    let columns = fetch_columns(&pool, &database, &table).await?;
+    let type_of: std::collections::HashMap<&str, &str> = columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
+        .collect();
+    for m in &mappings {
+        if !type_of.contains_key(m.column.as_str()) {
+            return Err(AppError::Other(format!("Unknown column: {}", m.column)));
+        }
+    }
+
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    let col_list = mappings
+        .iter()
+        .map(|m| quote_ident(&m.column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let row_placeholder = format!(
+        "({})",
+        mappings.iter().map(|_| "?").collect::<Vec<_>>().join(", ")
+    );
+    let insert_prefix = format!("INSERT INTO {qualified} ({col_list}) VALUES");
+    let single_sql = format!("{insert_prefix} {row_placeholder}");
+
+    let mut conn = pool.acquire().await?;
+    (&mut *conn).execute("START TRANSACTION").await?;
+    let _ = app.emit(
+        "json-import-progress",
+        serde_json::json!({ "done": 0, "total": total }),
+    );
+
+    let mut batch: Vec<(usize, Vec<Option<String>>)> = Vec::new();
+    let mut batch_bytes: usize = 0;
+    let mut inserted: u64 = 0;
+
+    for (idx, row) in rows.iter().enumerate() {
+        if state.cancel_import.load(Ordering::Relaxed) {
+            let _ = (&mut *conn).execute("ROLLBACK").await;
+            return Ok(JsonImportResult {
+                inserted: 0,
+                cancelled: true,
+            });
+        }
+        let obj = row.as_object();
+        let mut vals: Vec<Option<String>> = Vec::with_capacity(mappings.len());
+        for m in &mappings {
+            let ty = type_of.get(m.column.as_str()).copied().unwrap_or("");
+            let bound = match obj.and_then(|o| o.get(&m.json_key)) {
+                Some(val) => json_value_to_bind(val, ty),
+                None => None,
+            };
+            batch_bytes += bound.as_ref().map(|s| s.len()).unwrap_or(4) + 4;
+            vals.push(bound);
+        }
+        batch.push((idx, vals));
+
+        if batch.len() >= 500 || batch_bytes >= 800_000 {
+            if let Err((row_index, msg)) =
+                flush_import_batch(&mut conn, &insert_prefix, &single_sql, &row_placeholder, &batch)
+                    .await
+            {
+                let _ = (&mut *conn).execute("ROLLBACK").await;
+                return Err(AppError::Other(format!("Row {}: {}", row_index + 1, msg)));
+            }
+            inserted += batch.len() as u64;
+            let _ = app.emit(
+                "json-import-progress",
+                serde_json::json!({ "done": inserted, "total": total }),
+            );
+            batch.clear();
+            batch_bytes = 0;
+        }
+    }
+
+    if !batch.is_empty() {
+        if let Err((row_index, msg)) =
+            flush_import_batch(&mut conn, &insert_prefix, &single_sql, &row_placeholder, &batch).await
+        {
+            let _ = (&mut *conn).execute("ROLLBACK").await;
+            return Err(AppError::Other(format!("Row {}: {}", row_index + 1, msg)));
+        }
+        inserted += batch.len() as u64;
+    }
+
+    (&mut *conn).execute("COMMIT").await?;
+    let _ = app.emit(
+        "json-import-progress",
+        serde_json::json!({ "done": inserted, "total": total.max(inserted) }),
+    );
+    Ok(JsonImportResult {
+        inserted,
+        cancelled: false,
+    })
+}
+
+/// Ask the in-progress JSON import to stop (checked per batch; rolls back).
+#[tauri::command]
+pub async fn cancel_json_import(state: State<'_, AppState>) -> AppResult<()> {
+    state.cancel_import.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DuplicateOutcome {
     /// "ok" | "conflict" | "error"
     pub status: String,

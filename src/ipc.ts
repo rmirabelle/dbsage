@@ -9,6 +9,9 @@ import type {
   ImportSummary,
   IndexDef,
   IniResolution,
+  JsonColumnMapping,
+  JsonImportPreview,
+  JsonImportResult,
   LogConfig,
   LogTail,
   ProfileInput,
@@ -170,6 +173,19 @@ export const ipc = {
     includeData: boolean;
   }) => invoke<boolean>("copy_table", args),
   cancelTableCopy: () => invoke<void>("cancel_table_copy"),
+  /** Inspect a JSON file (row count, property keys, sample) for the import wizard. */
+  jsonImportPreview: (path: string) =>
+    invoke<JsonImportPreview>("json_import_preview", { path }),
+  /** Import rows from a JSON file using a property→column mapping. Resolves with
+   * the inserted count, or `cancelled: true` when stopped mid-run. */
+  importJsonRows: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    path: string;
+    mappings: JsonColumnMapping[];
+  }) => invoke<JsonImportResult>("import_json_rows", args),
+  cancelJsonImport: () => invoke<void>("cancel_json_import"),
   truncateTable: (profileId: string, database: string, table: string) =>
     invoke<void>("truncate_table", { profileId, database, table }),
   dropTable: (profileId: string, database: string, table: string) =>

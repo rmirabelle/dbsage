@@ -8,6 +8,7 @@ import {
   CaretRight,
   Table,
   Database,
+  BracketsCurly,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 
@@ -20,6 +21,7 @@ export function TableContextMenu({
   onEdit,
   onRename,
   onSaveSql,
+  onImportJson,
 }: {
   x: number;
   y: number;
@@ -29,6 +31,8 @@ export function TableContextMenu({
   onRename: () => void;
   /** Save a `.sql` script; `includeData` adds INSERTs that restore the rows. */
   onSaveSql: (includeData: boolean) => void;
+  /** Open the JSON import wizard for this table. */
+  onImportJson: () => void;
 }) {
   const itemClass =
     "flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800";
@@ -86,6 +90,15 @@ export function TableContextMenu({
           </div>
         </div>
       </div>
+
+      <button
+        data-el="ctx-import-json"
+        className={clsx(itemClass, "text-zinc-200")}
+        onClick={onImportJson}
+      >
+        <BracketsCurly size={14} className="text-sky-400 shrink-0" />
+        Import JSON
+      </button>
 
       <div className="my-1 border-t border-zinc-800" />
       <button

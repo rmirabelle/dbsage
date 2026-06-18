@@ -308,6 +308,14 @@ interface Store {
   setTabPage: (tabId: string, page: number) => Promise<void>;
   setPageSize: (tabId: string, pageSize: number) => Promise<void>;
   refreshTab: (tabId: string) => Promise<void>;
+  /** Reload any open views of a table whose data changed out-of-band (e.g. a JSON
+   * import launched from the tree/DB-view context menu): matching rows tabs and
+   * the database tab whose tile shows its row count. */
+  refreshTableData: (
+    profileId: string,
+    database: string,
+    table: string
+  ) => Promise<void>;
   countExactRows: (tabId: string) => Promise<void>;
 
   setRowsSort: (tabId: string, sort: SortSpec | null) => Promise<void>;
@@ -1695,6 +1703,22 @@ export const useStore = create<Store>((set, get) => ({
     } else {
       await loadDatabaseTab(tabId, set, get);
     }
+  },
+
+  refreshTableData: async (profileId, database, table) => {
+    const ids = get()
+      .tabs.filter(
+        (t) =>
+          (t.kind === "rows" &&
+            t.profileId === profileId &&
+            t.database === database &&
+            t.table === table) ||
+          (t.kind === "database" &&
+            t.profileId === profileId &&
+            t.database === database)
+      )
+      .map((t) => t.id);
+    for (const id of ids) await get().refreshTab(id);
   },
 
   setRowsSort: async (tabId, sort) => {

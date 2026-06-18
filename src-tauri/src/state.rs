@@ -16,6 +16,9 @@ pub struct AppState {
     /// Set true to ask the in-progress table copy to stop. Only one copy runs at
     /// a time (the UI blocks behind a modal).
     pub cancel_copy: AtomicBool,
+    /// Set true to ask the in-progress JSON row import to stop. Only one import
+    /// runs at a time (the UI blocks behind the import wizard's progress step).
+    pub cancel_import: AtomicBool,
     /// Profile id + connection id of the statement a same-connection copy is
     /// currently running, so a cancel can `KILL QUERY` it (the cross-connection
     /// path stops via the `cancel_copy` flag instead). None when no copy
