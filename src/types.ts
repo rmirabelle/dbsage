@@ -444,6 +444,48 @@ export interface JsonImportResult {
   cancelled: boolean;
 }
 
+/** One table's entry in a backup manifest. */
+export interface BackupTableInfo {
+  name: string;
+  rowCount: number;
+  /** Base filename of this table's `schema/` and `data/` archive entries. */
+  entry: string;
+}
+
+/** Counts of the DB Sage app metadata captured in a backup. */
+export interface BackupMetadataCounts {
+  relations: number;
+  savedQueries: number;
+  viewPresets: number;
+}
+
+/** The `manifest.json` inside a `.dbbak` archive (mirrors the Rust struct). */
+export interface BackupManifest {
+  format: number;
+  database: string;
+  serverVersion: string;
+  appVersion: string;
+  createdAt: string;
+  charset: string;
+  collation: string;
+  tables: BackupTableInfo[];
+  views: string[];
+  routines: string[];
+  triggers: string[];
+  events: string[];
+  metadata: BackupMetadataCounts;
+}
+
+/** What to restore from a backup (mirrors the Rust `RestoreOptions`). */
+export interface RestoreOptions {
+  tables: string[];
+  includeSchema: boolean;
+  includeData: boolean;
+  dropExisting: boolean;
+  includeObjects: boolean;
+  includeMetadata: boolean;
+}
+
 export type IndexDirection = "ASC" | "DESC";
 export type IndexType = "NORMAL" | "UNIQUE" | "FULLTEXT" | "SPATIAL";
 export type IndexMethod = "BTREE" | "HASH";

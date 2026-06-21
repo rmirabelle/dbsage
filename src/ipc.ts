@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BackupManifest,
   CellValue,
   ColumnDef,
   ColumnFilter,
@@ -21,6 +22,7 @@ import type {
   QueryHistoryItem,
   QueryResult,
   Relation,
+  RestoreOptions,
   RowsResult,
   SavedQuery,
   ServerResources,
@@ -221,6 +223,35 @@ export const ipc = {
   cancelTableSqlExport: () => invoke<void>("cancel_table_sql_export"),
   runDdl: (profileId: string, database: string, sql: string) =>
     invoke<void>("run_ddl", { profileId, database, sql }),
+
+  backupDatabase: (profileId: string, database: string, path: string) =>
+    invoke<boolean>("backup_database", { profileId, database, path }),
+  cancelBackup: () => invoke<void>("cancel_backup"),
+  inspectBackup: (path: string) =>
+    invoke<BackupManifest>("inspect_backup", { path }),
+  restoreDatabase: (
+    profileId: string,
+    targetDatabase: string,
+    path: string,
+    options: RestoreOptions
+  ) =>
+    invoke<boolean>("restore_database", {
+      profileId,
+      targetDatabase,
+      path,
+      options,
+    }),
+  cancelRestore: () => invoke<void>("cancel_restore"),
+  swapDatabase: (
+    profileId: string,
+    liveDatabase: string,
+    restoredDatabase: string
+  ) =>
+    invoke<string>("swap_database", {
+      profileId,
+      liveDatabase,
+      restoredDatabase,
+    }),
 
   listRelations: (profileId: string, database: string) =>
     invoke<Relation[]>("list_relations", { profileId, database }),

@@ -128,6 +128,28 @@ interface Store {
     total: number;
     cancelling: boolean;
   } | null;
+  /** In-progress database backup; null when none is running. */
+  backupProgress: {
+    database: string;
+    table: string;
+    /** 1-based index of the table currently being dumped. */
+    tableIndex: number;
+    tableCount: number;
+    done: number;
+    total: number;
+    cancelling: boolean;
+  } | null;
+  /** Database the restore wizard is open for; null when closed. */
+  restoreTarget: { profileId: string; database: string } | null;
+  /** A restored copy awaiting a "make live" swap, kept after the wizard closes so
+   * the user can review the copy and finish the swap from its context menu. */
+  pendingSwap: {
+    profileId: string;
+    /** The original database name the copy will replace. */
+    liveName: string;
+    /** The restored copy's database name. */
+    restoredName: string;
+  } | null;
   /** Last table opened per `${profileId}::${database}`, for re-selecting in the DB view. */
   lastOpenedTables: Record<string, string>;
   /** Defined relations per `${profileId}::${database}`. */
@@ -147,6 +169,8 @@ interface Store {
   /** Permanently drop a database: removes it from the tree and closes any of
    * its open tabs. */
   dropDatabase: (profileId: string, database: string) => Promise<void>;
+  /** Re-list a profile's databases into the tree (after a restore/swap). */
+  refreshDatabases: (profileId: string) => Promise<void>;
   toggleProfileExpanded: (profileId: string) => Promise<void>;
   toggleDbExpanded: (profileId: string, db: string) => Promise<void>;
   toggleFolderExpandedInTree: (profileId: string, db: string, folderId: string) => void;
@@ -260,6 +284,27 @@ interface Store {
   ) => Promise<void>;
   /** Request cancellation of the in-progress SQL-script export. */
   cancelSqlExport: () => void;
+  /** Back up a whole database to a `.dbbak` archive (opens a save dialog). */
+  backupDatabase: (profileId: string, database: string) => Promise<void>;
+  /** Request cancellation of the in-progress database backup. */
+  cancelBackup: () => void;
+  /** Open the restore wizard for a database. */
+  openRestore: (profileId: string, database: string) => void;
+  /** Close the restore wizard. */
+  closeRestore: () => void;
+  /** Record a restored copy that can be swapped live later (survives wizard close). */
+  setPendingSwap: (swap: {
+    profileId: string;
+    liveName: string;
+    restoredName: string;
+  }) => void;
+  /** Forget the pending swap without acting on it. */
+  clearPendingSwap: () => void;
+  /** Swap the pending restored copy into its original name (keeps the old as a
+   * `_old_<ts>` stash). No-op when there's no pending swap. */
+  makeLive: () => Promise<void>;
+  /** Drop the pending restored copy without swapping. */
+  discardRestoredCopy: () => Promise<void>;
   updateCreateTable: (
     tabId: string,
     patch: Partial<
@@ -401,6 +446,9 @@ export const useStore = create<Store>((set, get) => ({
   pendingCloseTabId: null,
   sqlExport: null,
   copyProgress: null,
+  backupProgress: null,
+  restoreTarget: null,
+  pendingSwap: null,
   lastOpenedTables: {},
   relations: {},
 
@@ -507,6 +555,14 @@ export const useStore = create<Store>((set, get) => ({
       };
     });
     notifySuccess(`Database "${name}" created.`);
+  },
+
+  refreshDatabases: async (profileId) => {
+    const databases = await ipc.listDatabases(profileId);
+    set((s) => {
+      const t = s.trees[profileId] ?? defaultTree();
+      return { trees: { ...s.trees, [profileId]: { ...t, databases } } };
+    });
   },
 
   dropDatabase: async (profileId, database) => {
@@ -1588,6 +1644,99 @@ export const useStore = create<Store>((set, get) => ({
       s.sqlExport ? { sqlExport: { ...s.sqlExport, cancelling: true } } : {}
     );
     ipc.cancelTableSqlExport().catch(() => {});
+  },
+
+  backupDatabase: async (profileId, database) => {
+    const path = await save({
+      defaultPath: `${database}.dbbak`,
+      filters: [{ name: "DB Sage Backup", extensions: ["dbbak"] }],
+    });
+    if (!path) return;
+
+    set({
+      backupProgress: {
+        database,
+        table: "",
+        tableIndex: 0,
+        tableCount: 0,
+        done: 0,
+        total: 0,
+        cancelling: false,
+      },
+    });
+    const unlisten = await listen<{
+      table: string;
+      tableIndex: number;
+      tableCount: number;
+      done: number;
+      total: number;
+    }>("db-backup-progress", (e) => {
+      set((s) =>
+        s.backupProgress
+          ? { backupProgress: { ...s.backupProgress, ...e.payload } }
+          : {}
+      );
+    });
+
+    try {
+      const completed = await ipc.backupDatabase(profileId, database, path);
+      if (completed) {
+        notifySuccess(`Backed up "${database}".`);
+      } else {
+        notifyInfo(`Backup of "${database}" cancelled.`);
+      }
+    } catch (e) {
+      notifyError(`Could not back up "${database}": ${String(e)}`);
+    } finally {
+      unlisten();
+      set({ backupProgress: null });
+    }
+  },
+
+  cancelBackup: () => {
+    set((s) =>
+      s.backupProgress
+        ? { backupProgress: { ...s.backupProgress, cancelling: true } }
+        : {}
+    );
+    ipc.cancelBackup().catch(() => {});
+  },
+
+  openRestore: (profileId, database) =>
+    set({ restoreTarget: { profileId, database } }),
+  closeRestore: () => set({ restoreTarget: null }),
+
+  setPendingSwap: (swap) => set({ pendingSwap: swap }),
+  clearPendingSwap: () => set({ pendingSwap: null }),
+
+  makeLive: async () => {
+    const ps = get().pendingSwap;
+    if (!ps) return;
+    try {
+      const stash = await ipc.swapDatabase(
+        ps.profileId,
+        ps.liveName,
+        ps.restoredName
+      );
+      await get().refreshDatabases(ps.profileId);
+      set({ pendingSwap: null });
+      notifySuccess(
+        `"${ps.liveName}" is now live. Previous version kept as "${stash}".`
+      );
+    } catch (e) {
+      notifyError(`Swap failed: ${String(e)}`);
+    }
+  },
+
+  discardRestoredCopy: async () => {
+    const ps = get().pendingSwap;
+    if (!ps) return;
+    try {
+      await get().dropDatabase(ps.profileId, ps.restoredName);
+      set({ pendingSwap: null });
+    } catch (e) {
+      notifyError(`Could not discard "${ps.restoredName}": ${String(e)}`);
+    }
   },
 
   updateCreateTable: (tabId, patch) => {

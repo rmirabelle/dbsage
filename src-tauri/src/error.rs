@@ -11,6 +11,9 @@ pub enum AppError {
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
 
+    #[error("archive error: {0}")]
+    Zip(#[from] zip::result::ZipError),
+
     #[error("keyring error: {0}")]
     Keyring(#[from] keyring::Error),
 

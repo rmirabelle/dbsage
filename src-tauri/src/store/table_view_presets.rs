@@ -105,6 +105,33 @@ pub fn export_all(app: &AppHandle) -> AppResult<PresetsFile> {
     load_file(app)
 }
 
+/// Move all of a database's table-view presets from `from_db` to `to_db` (within
+/// one host), re-keying each `host::db::table` entry. Overwrites destination
+/// entries for the same table.
+pub fn move_database(app: &AppHandle, host: &str, from_db: &str, to_db: &str) -> AppResult<()> {
+    if from_db == to_db {
+        return Ok(());
+    }
+    let from_prefix = format!("{host}::{from_db}::");
+    let to_prefix = format!("{host}::{to_db}::");
+    let mut file = load_file(app)?;
+    let keys: Vec<String> = file
+        .keys()
+        .filter(|k| k.starts_with(&from_prefix))
+        .cloned()
+        .collect();
+    if keys.is_empty() {
+        return Ok(());
+    }
+    for key in keys {
+        let table = key[from_prefix.len()..].to_string();
+        if let Some(value) = file.remove(&key) {
+            file.insert(format!("{to_prefix}{table}"), value);
+        }
+    }
+    save_file(app, &file)
+}
+
 /// Merge imported presets into the store, upserting each preset by name within
 /// its table key. Returns the number of presets processed.
 pub fn import_merge(app: &AppHandle, incoming: &PresetsFile) -> AppResult<usize> {

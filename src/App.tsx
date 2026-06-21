@@ -11,6 +11,8 @@ import {
 } from "./components/StateTransferDialog";
 import { Toaster } from "./components/Toaster";
 import { SqlExportProgress } from "./components/SqlExportProgress";
+import { BackupProgress } from "./components/BackupProgress";
+import { RestoreWizard } from "./components/RestoreWizard";
 import { CopyProgress } from "./components/CopyProgress";
 import { CopyTableMenu } from "./components/CopyTableMenu";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
@@ -31,6 +33,8 @@ export default function App() {
   const tableCopyPrompt = useUi((s) => s.tableCopyPrompt);
   const closeTableCopyPrompt = useUi((s) => s.closeTableCopyPrompt);
   const copyTablesToDatabase = useStore((s) => s.copyTablesToDatabase);
+  const restoreTarget = useStore((s) => s.restoreTarget);
+  const closeRestore = useStore((s) => s.closeRestore);
 
   const [aboutOpen, setAboutOpen] = useState(false);
   const [transferMode, setTransferMode] = useState<TransferMode | null>(null);
@@ -218,7 +222,14 @@ export default function App() {
       )}
       <Toaster />
       <SqlExportProgress />
+      <BackupProgress />
       <CopyProgress />
+      {restoreTarget && (
+        <RestoreWizard
+          profileId={restoreTarget.profileId}
+          onClose={closeRestore}
+        />
+      )}
     </div>
   );
 }

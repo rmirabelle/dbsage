@@ -7,8 +7,8 @@ mod store;
 mod updater;
 
 use commands::{
-    admin, column_setups, connect, export, folders, monitoring, profiles, query, query_history,
-    relations, saved_queries, state_io, table_view_presets, windows,
+    admin, backup, column_setups, connect, export, folders, monitoring, profiles, query,
+    query_history, relations, saved_queries, state_io, table_view_presets, windows,
 };
 use state::AppState;
 use tauri::menu::{Menu, MenuItem};
@@ -231,6 +231,12 @@ pub fn run() {
             query::export_table_sql,
             query::cancel_table_sql_export,
             query::run_ddl,
+            backup::backup_database,
+            backup::cancel_backup,
+            backup::inspect_backup,
+            backup::restore_database,
+            backup::cancel_restore,
+            backup::swap_database,
             folders::list_folders,
             folders::create_folder,
             folders::rename_folder,

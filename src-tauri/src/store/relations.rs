@@ -149,6 +149,23 @@ pub fn export_all(app: &AppHandle) -> AppResult<RelationsFile> {
     load_file(app)
 }
 
+/// Move a database's relations from `from_db` to `to_db` (within one host),
+/// overwriting any existing entry at the destination. Used by the backup swap so
+/// app metadata follows the data into its new schema name.
+pub fn move_database(app: &AppHandle, host: &str, from_db: &str, to_db: &str) -> AppResult<()> {
+    if from_db == to_db {
+        return Ok(());
+    }
+    let mut file = load_file(app)?;
+    if let Some(by_db) = file.get_mut(host) {
+        if let Some(list) = by_db.remove(from_db) {
+            by_db.insert(to_db.to_string(), list);
+            save_file(app, &file)?;
+        }
+    }
+    Ok(())
+}
+
 /// Merge an imported relations tree into the store, upserting each relation by
 /// id within its (host, database) bucket. Returns the number of relations
 /// processed.

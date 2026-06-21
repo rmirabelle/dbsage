@@ -1332,6 +1332,33 @@ fn sql_literal(row: &MySqlRow, i: usize, ty: &str) -> String {
     }
 }
 
+/// Remove the table-level `AUTO_INCREMENT=<n>` option from a `SHOW CREATE TABLE`
+/// DDL string. The next inserted row should pick its own counter, so the script
+/// shouldn't pin it to the source table's current value. Only the table option
+/// (`AUTO_INCREMENT=`, with `=`) is touched; the column-level `AUTO_INCREMENT`
+/// flag has no `=` and is left intact.
+fn strip_auto_increment_option(ddl: &str) -> String {
+    let needle = "AUTO_INCREMENT=";
+    let Some(start) = ddl.find(needle) else {
+        return ddl.to_string();
+    };
+    /* Skip past the digits that follow the `=`. */
+    let after = start + needle.len();
+    let digits_end = ddl[after..]
+        .find(|c: char| !c.is_ascii_digit())
+        .map(|i| after + i)
+        .unwrap_or(ddl.len());
+    /* Also drop one trailing space so we don't leave a double space. */
+    let mut end = digits_end;
+    if ddl[end..].starts_with(' ') {
+        end += 1;
+    }
+    let mut result = String::with_capacity(ddl.len());
+    result.push_str(&ddl[..start]);
+    result.push_str(&ddl[end..]);
+    result
+}
+
 /// Write a `.sql` script for a table: its `CREATE TABLE` statement and,
 /// optionally, `INSERT` statements that restore every row. When data is
 /// included, emits `table-sql-progress` ({ done, total }) so the UI can show a
@@ -1355,7 +1382,7 @@ pub async fn export_table_sql(
         .fetch_one(&pool)
         .await?;
     /* SHOW CREATE TABLE returns (Table, "Create Table"); the DDL is column 1. */
-    let create_sql = get_string(&create_row, 1);
+    let create_sql = strip_auto_increment_option(&get_string(&create_row, 1));
 
     let mut out = String::new();
     out.push_str(&format!("-- DB Sage export of `{database}`.`{table}`\n\n"));

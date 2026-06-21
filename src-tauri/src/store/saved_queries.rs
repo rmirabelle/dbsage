@@ -87,6 +87,20 @@ pub fn export_all(app: &AppHandle) -> AppResult<SavedQueriesFile> {
     load_file(app)
 }
 
+/// Move a database's saved queries from `from_db` to `to_db` (within one host),
+/// overwriting any existing entry at the destination.
+pub fn move_database(app: &AppHandle, host: &str, from_db: &str, to_db: &str) -> AppResult<()> {
+    if from_db == to_db {
+        return Ok(());
+    }
+    let mut file = load_file(app)?;
+    if let Some(value) = file.remove(&format!("{host}::{from_db}")) {
+        file.insert(format!("{host}::{to_db}"), value);
+        save_file(app, &file)?;
+    }
+    Ok(())
+}
+
 /// Merge imported saved queries into the store, upserting each query by name
 /// within its database key. Returns the number of queries processed.
 pub fn import_merge(app: &AppHandle, incoming: &SavedQueriesFile) -> AppResult<usize> {

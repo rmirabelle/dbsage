@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { useBackdropDismiss } from "../lib/useBackdropDismiss";
-import { Warning, Trash, CircleNotch as Loader2, X } from "@phosphor-icons/react";
+import {
+  Warning,
+  Trash,
+  CircleNotch as Loader2,
+  X,
+  Copy,
+  Check,
+} from "@phosphor-icons/react";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
 import { notifyError } from "../state/notify";
@@ -19,6 +26,17 @@ export function DropDatabaseDialog({
   const [countError, setCountError] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const copyName = () => {
+    navigator.clipboard
+      .writeText(database)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -129,10 +147,31 @@ export function DropDatabaseDialog({
           <div className="space-y-1.5 pt-1">
             <label
               htmlFor="drop-db-confirm"
-              className="block text-[11px] text-zinc-400"
+              className="flex items-center gap-1.5 text-[11px] text-zinc-400"
             >
-              Type <span className="font-mono text-zinc-200">{database}</span> to
-              confirm:
+              <span>
+                Type{" "}
+                <span className="select-text font-mono text-zinc-200">
+                  {database}
+                </span>{" "}
+                to confirm:
+              </span>
+              <button
+                type="button"
+                onClick={copyName}
+                title="Copy database name"
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300 bg-zinc-800 hover:bg-zinc-700"
+              >
+                {copied ? (
+                  <>
+                    <Check size={11} className="text-emerald-400" /> Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy size={11} /> Copy
+                  </>
+                )}
+              </button>
             </label>
             <input
               id="drop-db-confirm"

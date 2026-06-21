@@ -22,6 +22,8 @@ import {
   Code,
   Pulse,
   GearSix,
+  DownloadSimple,
+  UploadSimple,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useStore } from "../state/store";
@@ -511,6 +513,11 @@ function DatabaseList({
   const openTable = useStore((s) => s.openTable);
   const openTableEditor = useStore((s) => s.openTableEditor);
   const exportTableSql = useStore((s) => s.exportTableSql);
+  const backupDatabase = useStore((s) => s.backupDatabase);
+  const openRestore = useStore((s) => s.openRestore);
+  const pendingSwap = useStore((s) => s.pendingSwap);
+  const makeLive = useStore((s) => s.makeLive);
+  const discardRestoredCopy = useStore((s) => s.discardRestoredCopy);
   const renameTable = useStore((s) => s.renameTable);
   const refreshTableData = useStore((s) => s.refreshTableData);
   const renameFolderInDb = useStore((s) => s.renameFolderInDb);
@@ -928,6 +935,30 @@ function DatabaseList({
             openQuery(profile.id, profile.name, dbMenu.db);
             setTreeMenu(null);
           }}
+          onBackup={() => {
+            const db = dbMenu.db;
+            setTreeMenu(null);
+            backupDatabase(profile.id, db);
+          }}
+          onRestore={() => {
+            openRestore(profile.id, dbMenu.db);
+            setTreeMenu(null);
+          }}
+          pendingSwap={
+            pendingSwap &&
+            pendingSwap.profileId === profile.id &&
+            pendingSwap.restoredName === dbMenu.db
+              ? { liveName: pendingSwap.liveName }
+              : null
+          }
+          onMakeLive={() => {
+            setTreeMenu(null);
+            makeLive();
+          }}
+          onDiscardCopy={() => {
+            setTreeMenu(null);
+            discardRestoredCopy();
+          }}
           onDrop={() => {
             setPendingDbDrop(dbMenu.db);
             setTreeMenu(null);
@@ -994,11 +1025,22 @@ function DbContextMenu({
   x,
   y,
   onNewQuery,
+  onBackup,
+  onRestore,
+  pendingSwap,
+  onMakeLive,
+  onDiscardCopy,
   onDrop,
 }: {
   x: number;
   y: number;
   onNewQuery: () => void;
+  onBackup: () => void;
+  onRestore: () => void;
+  /** Set when this database is a restored copy awaiting a make-live swap. */
+  pendingSwap: { liveName: string } | null;
+  onMakeLive: () => void;
+  onDiscardCopy: () => void;
   onDrop: () => void;
 }) {
   return createPortal(
@@ -1008,6 +1050,27 @@ function DbContextMenu({
       onClick={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >
+      {pendingSwap && (
+        <>
+          <button
+            data-el="ctx-make-live"
+            className="flex w-full items-center gap-2.5 text-left px-3 py-1.5 hover:bg-zinc-800 text-zinc-200"
+            onClick={onMakeLive}
+          >
+            <UploadSimple size={14} className="text-emerald-400 shrink-0" />
+            Make Live (replace {pendingSwap.liveName})
+          </button>
+          <button
+            data-el="ctx-discard-copy"
+            className="flex w-full items-center gap-2.5 text-left px-3 py-1.5 hover:bg-zinc-800 text-zinc-200"
+            onClick={onDiscardCopy}
+          >
+            <Trash size={14} className="text-amber-400 shrink-0" />
+            Discard Restored Copy
+          </button>
+          <div className="my-1 border-t border-zinc-800" />
+        </>
+      )}
       <button
         data-el="ctx-new-query"
         className="flex w-full items-center gap-2.5 text-left px-3 py-1.5 hover:bg-zinc-800 text-zinc-200"
@@ -1015,6 +1078,23 @@ function DbContextMenu({
       >
         <Code size={14} className="text-accent-400 shrink-0" />
         New Query
+      </button>
+      <div className="my-1 border-t border-zinc-800" />
+      <button
+        data-el="ctx-backup-database"
+        className="flex w-full items-center gap-2.5 text-left px-3 py-1.5 hover:bg-zinc-800 text-zinc-200"
+        onClick={onBackup}
+      >
+        <DownloadSimple size={14} className="text-accent-400 shrink-0" />
+        Backup Database
+      </button>
+      <button
+        data-el="ctx-restore-database"
+        className="flex w-full items-center gap-2.5 text-left px-3 py-1.5 hover:bg-zinc-800 text-zinc-200"
+        onClick={onRestore}
+      >
+        <UploadSimple size={14} className="text-sky-400 shrink-0" />
+        Restore Database…
       </button>
       <div className="my-1 border-t border-zinc-800" />
       <button
