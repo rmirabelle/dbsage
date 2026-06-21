@@ -4,9 +4,12 @@ import {
   ArrowSquareOut,
   CircleNotch,
   ShareNetwork,
+  Warning,
+  X,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { emit } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
 import { useUi } from "../state/ui";
@@ -16,10 +19,24 @@ import {
   relationTargets,
   peekableColumnsFor,
   cellToFilterValue,
+  peekIdentity,
+  openPeekIdentities,
   type RelationTarget,
 } from "../lib/relations";
-import { useRelatedExistence, relKey } from "../lib/relatedExistence";
-import type { ColumnFilter, PeekTarget, Relation, RowsResult, SortSpec } from "../types";
+import {
+  useRelatedExistence,
+  relKey,
+  checkRelatedExistence,
+} from "../lib/relatedExistence";
+import { useBackdropDismiss } from "../lib/useBackdropDismiss";
+import type {
+  ColumnFilter,
+  PeekDescriptor,
+  PeekTarget,
+  Relation,
+  RowsResult,
+  SortSpec,
+} from "../types";
 
 const EMPTY_RELATIONS: Relation[] = [];
 const PEEK_LIMIT = 1000;
@@ -186,9 +203,37 @@ export function PeekPanel({
   } | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
+  /** Number of open peek windows the close-all confirmation will close; null when
+   * the confirmation isn't showing. */
+  const [confirmCloseAll, setConfirmCloseAll] = useState<number | null>(null);
+  const closeConfirmBackdrop = useBackdropDismiss(
+    () => setConfirmCloseAll(null),
+    true
+  );
+  useEffect(() => {
+    if (confirmCloseAll == null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setConfirmCloseAll(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmCloseAll]);
+
   const openChild = (t: RelationTarget) => {
     if (peekValue == null || !activeColumnName) return;
     onOpenChildPeek(t, activeColumnName, peekValue);
+  };
+
+  /** Closing every peek at once is easy to hit by accident (it's the corner-flush
+   * button), so confirm first via a themed modal — and say how many it'll close. */
+  const requestCloseAll = async () => {
+    let count = 0;
+    try {
+      count = (await ipc.listOpenPeeks()).length;
+    } catch {
+      /* fall back to a generic prompt */
+    }
+    setConfirmCloseAll(count);
   };
 
   /** Single-clicking a relation cell selects it (unchanged) AND drops the
@@ -196,7 +241,7 @@ export function PeekPanel({
    * and clicking the same cell again toggles it closed. Non-relation/NULL
    * cells dismiss the menu. (Peek grids are read-only, so there's no
    * double-click-edit case here.) */
-  const onCellMenu = (
+  const onCellMenu = async (
     cell: { rowIndex: number; column: string; rect: DOMRect } | null
   ) => {
     if (!cell || !data) {
@@ -217,10 +262,46 @@ export function PeekPanel({
       setPicker(null);
       return;
     }
+    /* Hide targets whose peek window is already open (re-picking would just
+       refocus it); show no menu if that leaves nothing. */
+    let open = new Set<string>();
+    try {
+      open = openPeekIdentities(await ipc.listOpenPeeks<PeekDescriptor>());
+    } catch {
+      /* On failure, fall back to showing every target. */
+    }
+    const visible = matches.filter(
+      (m) =>
+        !open.has(
+          peekIdentity(
+            profileId,
+            database,
+            target.table,
+            cell.column,
+            m.table,
+            m.column
+          )
+        )
+    );
+    if (visible.length === 0) {
+      setPicker(null);
+      return;
+    }
+    /* Skip the menu if every remaining target is disabled (no related rows). */
+    const existence = await checkRelatedExistence(
+      profileId,
+      database,
+      visible,
+      value
+    );
+    if (visible.every((m) => existence[relKey(m)] === false)) {
+      setPicker(null);
+      return;
+    }
     setPicker({
       x: cell.rect.left,
       y: cell.rect.bottom + 4,
-      matches,
+      matches: visible,
       cell: { rowIndex: cell.rowIndex, column: cell.column },
     });
   };
@@ -289,7 +370,7 @@ export function PeekPanel({
         >
           <ArrowSquareOut size={15} />
         </button>
-        <WindowControls onCloseAll={() => ipc.closeAllPeeks().catch(() => {})} />
+        <WindowControls onCloseAll={requestCloseAll} />
       </div>
 
       {error && (
@@ -381,6 +462,80 @@ export function PeekPanel({
                 </button>
               );
             })}
+          </div>,
+          document.body
+        )}
+
+      {confirmCloseAll != null &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            {...closeConfirmBackdrop}
+          >
+            <div
+              data-el="close-all-peeks-dialog"
+              role="dialog"
+              aria-modal="true"
+              onClick={(e) => e.stopPropagation()}
+              className="w-[400px] max-w-[90vw] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+                <div className="flex items-center gap-2">
+                  <Warning size={18} weight="fill" className="text-amber-400" />
+                  <h2 className="text-sm font-semibold text-zinc-100">
+                    Close peek windows
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setConfirmCloseAll(null)}
+                  className="text-zinc-500 hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="px-4 py-4 text-[12px] leading-relaxed text-zinc-300">
+                {confirmCloseAll > 1 ? (
+                  <>
+                    There are{" "}
+                    <span className="font-semibold text-zinc-100">
+                      {confirmCloseAll} open peek windows
+                    </span>
+                    . Close just this one, or all of them?
+                  </>
+                ) : (
+                  "Close this peek window?"
+                )}
+              </div>
+              <div className="flex justify-end gap-2 border-t border-zinc-800 px-4 py-3">
+                <button
+                  onClick={() => setConfirmCloseAll(null)}
+                  className="mr-auto px-3 py-1.5 rounded text-[12px] text-zinc-200 bg-zinc-800 hover:bg-zinc-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  data-el="close-this-peek-btn"
+                  onClick={() => {
+                    setConfirmCloseAll(null);
+                    getCurrentWindow().close();
+                  }}
+                  className="px-3 py-1.5 rounded text-[12px] font-semibold bg-zinc-700 text-zinc-100 hover:bg-zinc-600 transition-colors"
+                >
+                  Close this
+                </button>
+                <button
+                  data-el="close-all-peeks-confirm-btn"
+                  onClick={() => {
+                    setConfirmCloseAll(null);
+                    ipc.closeAllPeeks().catch(() => {});
+                  }}
+                  className="px-3 py-1.5 rounded text-[12px] font-semibold bg-rose-500 text-white hover:bg-rose-400 transition-colors"
+                >
+                  Close all
+                </button>
+              </div>
+            </div>
           </div>,
           document.body
         )}

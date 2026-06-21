@@ -40,14 +40,20 @@ import { TableViewPresetMenu } from "./TableViewPresetMenu";
 import { InsertRowDialog } from "./InsertRowDialog";
 import appIconLarge from "../assets/app-icon-large.png";
 import { ipc } from "../ipc";
-import type { PeekSeed, Relation, RowsTab, Tab } from "../types";
+import type { PeekDescriptor, PeekSeed, Relation, RowsTab, Tab } from "../types";
 import {
   relationTargets,
   peekableColumnsFor,
   cellToFilterValue,
+  peekIdentity,
+  openPeekIdentities,
   type RelationTarget,
 } from "../lib/relations";
-import { useRelatedExistence, relKey } from "../lib/relatedExistence";
+import {
+  useRelatedExistence,
+  relKey,
+  checkRelatedExistence,
+} from "../lib/relatedExistence";
 
 const EMPTY_RELATIONS: Relation[] = [];
 
@@ -614,7 +620,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
    * closed. Clicking any non-relation (or NULL) cell dismisses the menu; a
    * double-click (edit begins) reports null and dismisses too. Selection
    * itself never opens a peek — the menu is the chooser. */
-  const onCellMenu = (
+  const onCellMenu = async (
     cell: { rowIndex: number; column: string; rect: DOMRect } | null
   ) => {
     if (!cell || !tab.data) {
@@ -635,10 +641,48 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       setPicker(null);
       return;
     }
+    /* Drop targets that already have a peek window open — re-picking them would
+       just refocus the existing window. If that leaves nothing, show no menu. */
+    let open = new Set<string>();
+    try {
+      open = openPeekIdentities(await ipc.listOpenPeeks<PeekDescriptor>());
+    } catch {
+      /* If the lookup fails, fall back to showing every target. */
+    }
+    const visible = matches.filter(
+      (m) =>
+        !open.has(
+          peekIdentity(
+            tab.profileId,
+            tab.database,
+            tab.table,
+            cell.column,
+            m.table,
+            m.column
+          )
+        )
+    );
+    if (visible.length === 0) {
+      setPicker(null);
+      return;
+    }
+    /* Skip the menu if every remaining target is disabled (no related rows) —
+       leaving only greyed-out items. Disabled items still show when at least one
+       target is actionable. */
+    const existence = await checkRelatedExistence(
+      tab.profileId,
+      tab.database,
+      visible,
+      value
+    );
+    if (visible.every((m) => existence[relKey(m)] === false)) {
+      setPicker(null);
+      return;
+    }
     setPicker({
       x: cell.rect.left,
       y: cell.rect.bottom + 4,
-      matches,
+      matches: visible,
       cell: { rowIndex: cell.rowIndex, column: cell.column },
     });
   };
