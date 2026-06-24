@@ -24,6 +24,7 @@ import type {
   SortSpec,
 } from "../types";
 import { ColumnHeaderMenu } from "./ColumnHeaderMenu";
+import { Tooltip } from "./Tooltip";
 import { ColumnsVisibilityMenu } from "./ColumnsVisibilityMenu";
 import { RowDeleteConfirmDialog } from "./RowDeleteConfirmDialog";
 import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
@@ -809,7 +810,8 @@ function HeaderRow({
         const isFiltered =
           filterByColumn.has(col.name) || !!jsonDisplay[col.name];
         const isPeekable = peekableColumns?.has(col.name) ?? false;
-        return (
+        const comment = col.comment?.trim();
+        const cell = (
           <div
             key={col.name}
             data-column-header={col.name}
@@ -818,9 +820,6 @@ function HeaderRow({
               "relative shrink-0 px-3 py-1.5 border-r border-zinc-800 flex flex-col justify-center cursor-pointer hover:bg-zinc-800/60",
               (isSorted || isFiltered) && "bg-zinc-800/40"
             )}
-            title={`${col.name} · ${col.dataType}${
-              col.key === "PRI" ? " · PK" : ""
-            }${isPeekable ? " · has a relation" : ""}\nClick to sort or filter`}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest("[data-resize-handle]"))
                 return;
@@ -862,6 +861,23 @@ function HeaderRow({
               onEnd={onResizeEnd}
             />
           </div>
+        );
+        if (!comment) return cell;
+        return (
+          <Tooltip
+            key={col.name}
+            className="flex shrink-0"
+            label={
+              <div>
+                <div className="text-[11px] font-mono text-accent-400 mb-1">
+                  {col.name}
+                </div>
+                <div className="whitespace-pre-wrap">{comment}</div>
+              </div>
+            }
+          >
+            {cell}
+          </Tooltip>
         );
       })}
     </div>

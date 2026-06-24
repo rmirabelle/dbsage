@@ -26,6 +26,10 @@ pub struct ColumnInfo {
     pub data_type: String,
     pub nullable: bool,
     pub key: String,
+    /// The column's COMMENT, if any (empty string when none). Surfaced as a
+    /// styled tooltip on the table-view column header.
+    #[serde(default)]
+    pub comment: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -414,7 +418,7 @@ async fn fetch_columns(
     table: &str,
 ) -> AppResult<Vec<ColumnInfo>> {
     let rows = sqlx::query(
-        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY \
+        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT \
          FROM INFORMATION_SCHEMA.COLUMNS \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
          ORDER BY ORDINAL_POSITION",
@@ -430,6 +434,7 @@ async fn fetch_columns(
             data_type: get_string(r, 1),
             nullable: get_string(r, 2) == "YES",
             key: get_string(r, 3),
+            comment: get_string(r, 4),
         })
         .collect())
 }
@@ -1174,6 +1179,7 @@ pub async fn execute_query(
                         data_type,
                         nullable: true,
                         key: String::new(),
+                        comment: String::new(),
                     })
                     .collect()
             })
