@@ -27,6 +27,7 @@ import { ColumnHeaderMenu } from "./ColumnHeaderMenu";
 import { ColumnsVisibilityMenu } from "./ColumnsVisibilityMenu";
 import { RowDeleteConfirmDialog } from "./RowDeleteConfirmDialog";
 import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
+import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { buildCopyText, COPY_AS_OPTIONS, type CopyAsFormat } from "../lib/copyAs";
 import { notifyError, notifySuccess } from "../state/notify";
 
@@ -690,10 +691,12 @@ function RowContextMenu({
     };
   }, [onClose]);
 
+  const { ref: menuRef, style: menuStyle } = useAnchoredPosition(x, y);
   return createPortal(
     <div
+      ref={menuRef}
       data-el="row-context-menu"
-      style={{ top: y, left: x }}
+      style={menuStyle}
       onMouseDown={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
     >

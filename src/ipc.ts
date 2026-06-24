@@ -34,6 +34,7 @@ import type {
   TableInfo,
   TableViewPreset,
 } from "./types";
+import type { QueryAnalysisInput } from "./lib/queryAnalysis/types";
 
 export const ipc = {
   listProfiles: () => invoke<ProfileView[]>("list_profiles"),
@@ -92,6 +93,13 @@ export const ipc = {
     token: string;
     maxRows: number | null;
   }) => invoke<QueryResult>("execute_query", args),
+
+  analyzeQuery: (args: {
+    profileId: string;
+    database: string;
+    sql: string;
+    runAnalyze: boolean;
+  }) => invoke<QueryAnalysisInput>("analyze_query", args),
 
   cancelQuery: (profileId: string, token: string) =>
     invoke<void>("cancel_query", { profileId, token }),
@@ -172,6 +180,8 @@ export const ipc = {
     sourceTable: string;
     targetProfileId?: string;
     targetDatabase: string;
+    /** New table name; omit to keep the source name (cross-database copy). */
+    targetTable?: string;
     includeData: boolean;
   }) => invoke<boolean>("copy_table", args),
   cancelTableCopy: () => invoke<void>("cancel_table_copy"),
@@ -209,14 +219,14 @@ export const ipc = {
   exportTableSql: (
     profileId: string,
     database: string,
-    table: string,
+    tables: string[],
     path: string,
     includeData: boolean
   ) =>
     invoke<boolean>("export_table_sql", {
       profileId,
       database,
-      table,
+      tables,
       path,
       includeData,
     }),

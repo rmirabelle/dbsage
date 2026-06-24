@@ -596,10 +596,12 @@ pub async fn create_table(
 /// (columns, indexes, primary key) and rows entirely server-side. When the
 /// target is a different connection (possibly a different server), the structure
 /// is reproduced from `SHOW CREATE TABLE` and the rows are streamed across.
-/// Either way the copy keeps the source table's name and is aborted (with a
-/// clear error) if that name is already taken in the target database, so nothing
-/// existing is ever overwritten. Returns `false` when the user cancels mid-copy
-/// (the partially-written target table is dropped so nothing is left behind).
+/// The copy is named `target_table` when given (used by same-database "duplicate
+/// as `{name}_copy`"), otherwise it keeps the source table's name (used when
+/// copying into a different database). It is aborted (with a clear error) if that
+/// name is already taken in the target database, so nothing existing is ever
+/// overwritten. Returns `false` when the user cancels mid-copy (the
+/// partially-written target table is dropped so nothing is left behind).
 #[tauri::command]
 pub async fn copy_table(
     app: AppHandle,
@@ -609,9 +611,12 @@ pub async fn copy_table(
     source_table: String,
     target_profile_id: Option<String>,
     target_database: String,
+    target_table: Option<String>,
     include_data: bool,
 ) -> AppResult<bool> {
     state.cancel_copy.store(false, Ordering::Relaxed);
+
+    let dest_table = target_table.unwrap_or_else(|| source_table.clone());
 
     let cross_connection = target_profile_id
         .as_deref()
@@ -624,6 +629,7 @@ pub async fn copy_table(
             &source_database,
             &source_table,
             &target_database,
+            &dest_table,
             include_data,
         )
         .await;
@@ -759,6 +765,7 @@ async fn copy_table_same_connection(
     source_database: &str,
     source_table: &str,
     target_database: &str,
+    dest_table: &str,
     include_data: bool,
 ) -> AppResult<bool> {
     let pool = pool_for(state, profile_id).await?;
@@ -768,17 +775,17 @@ async fn copy_table_same_connection(
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
     )
     .bind(target_database)
-    .bind(source_table)
+    .bind(dest_table)
     .fetch_one(&pool)
     .await?;
     if exists.try_get::<i64, _>(0).unwrap_or(0) > 0 {
         return Err(AppError::Other(format!(
-            "a table named \"{source_table}\" already exists in \"{target_database}\""
+            "a table named \"{dest_table}\" already exists in \"{target_database}\""
         )));
     }
 
     let src = format!("{}.{}", quote_ident(source_database), quote_ident(source_table));
-    let dst = format!("{}.{}", quote_ident(target_database), quote_ident(source_table));
+    let dst = format!("{}.{}", quote_ident(target_database), quote_ident(dest_table));
 
     let mut conn = pool.acquire().await?;
 
@@ -1195,6 +1202,461 @@ pub async fn execute_query(
     outcome
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeIndexInfo {
+    pub name: String,
+    pub non_unique: bool,
+    /// Columns in key order (SEQ_IN_INDEX).
+    pub columns: Vec<String>,
+    /// Estimated distinct values (selectivity proxy); None when unknown.
+    pub cardinality: Option<i64>,
+    /// "BTREE" | "FULLTEXT" | "HASH" | "SPATIAL".
+    pub index_type: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeTableInfo {
+    /// The name the plan uses (the alias when the query aliases the table).
+    pub name: String,
+    /// The real base-table name (for generating DDL).
+    pub real_name: String,
+    pub schema: String,
+    /// INFORMATION_SCHEMA.TABLES.TABLE_ROWS — an estimate for InnoDB.
+    pub table_rows: Option<u64>,
+    pub engine: Option<String>,
+    pub columns: Vec<ColumnDef>,
+    pub indexes: Vec<AnalyzeIndexInfo>,
+}
+
+/// Everything the frontend analysis engine needs to grade a query: the raw
+/// plan (rich JSON + traditional grid), the optimizer's rewrite warnings,
+/// optional measured timings, and schema facts for the referenced tables.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryAnalysisInput {
+    pub server_version: String,
+    pub read_only: bool,
+    /// `EXPLAIN FORMAT=JSON` output (the engine's primary input); None if unsupported.
+    pub explain_json: Option<String>,
+    /// Traditional `EXPLAIN` grid for display.
+    pub explain_columns: Vec<String>,
+    pub explain_rows: Vec<Value>,
+    /// `SHOW WARNINGS` messages after the JSON EXPLAIN (reveals the rewritten query).
+    pub warnings: Vec<String>,
+    /// `EXPLAIN ANALYZE` tree text when opted in for a read-only query (8.0.18+).
+    pub analyze_tree: Option<String>,
+    pub tables: Vec<AnalyzeTableInfo>,
+}
+
+/// Returns true when `s` begins a word boundary (whitespace or end of input).
+fn at_word_boundary(s: &str) -> bool {
+    s.chars().next().map(|c| c.is_whitespace()).unwrap_or(true)
+}
+
+/// Strip a leading `EXPLAIN [ANALYZE] [FORMAT[=]xxx]` so we can re-wrap the inner
+/// statement ourselves. Conservative — only removes recognized leading keywords.
+fn strip_leading_explain(sql: &str) -> String {
+    let s = sql.trim_start();
+    if !s.to_ascii_lowercase().starts_with("explain") || !at_word_boundary(&s[7..]) {
+        return s.to_string();
+    }
+    let mut rest = s[7..].trim_start();
+    if rest.to_ascii_lowercase().starts_with("analyze") && at_word_boundary(&rest[7..]) {
+        rest = rest[7..].trim_start();
+    }
+    if rest.to_ascii_lowercase().starts_with("format") {
+        let after = rest[6..].trim_start();
+        let after = after.strip_prefix('=').unwrap_or(after).trim_start();
+        let tok_end = after.find(char::is_whitespace).unwrap_or(after.len());
+        rest = after[tok_end..].trim_start();
+    }
+    rest.to_string()
+}
+
+/// Whether a statement is safe to EXPLAIN ANALYZE (it actually runs the query).
+fn is_read_only(sql: &str) -> bool {
+    let s = sql.trim_start().to_ascii_lowercase();
+    s.starts_with("select")
+        || s.starts_with("with")
+        || s.starts_with("table ")
+        || s.starts_with("values")
+        || s.starts_with("(select")
+}
+
+/// Recursively collect every `table_name` string in the EXPLAIN JSON tree.
+fn collect_table_names(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::Object(map) => {
+            if let Some(Value::String(name)) = map.get("table_name") {
+                if !out.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+            for val in map.values() {
+                collect_table_names(val, out);
+            }
+        }
+        Value::Array(arr) => {
+            for val in arr {
+                collect_table_names(val, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Remove comments and string literals (→ spaces) and pad `, ( )` so the result
+/// tokenizes cleanly for alias parsing. Backtick identifiers pass through.
+fn scrub_sql(sql: &str) -> String {
+    let b = sql.as_bytes();
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'-' && i + 1 < b.len() && b[i + 1] == b'-' {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            out.push(' ');
+        } else if c == b'#' {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            out.push(' ');
+        } else if c == b'/' && i + 1 < b.len() && b[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            i += 2;
+            out.push(' ');
+        } else if c == b'\'' || c == b'"' {
+            let q = c;
+            i += 1;
+            while i < b.len() {
+                if b[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if b[i] == q {
+                    if i + 1 < b.len() && b[i + 1] == q {
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            out.push(' ');
+        } else if c == b',' || c == b'(' || c == b')' {
+            out.push(' ');
+            out.push(c as char);
+            out.push(' ');
+            i += 1;
+        } else {
+            out.push(c as char);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn normalize_ident(tok: &str) -> String {
+    tok.trim().trim_matches('`').to_string()
+}
+
+/// Strip backticks and any schema qualifier: `db`.`tbl` → tbl.
+fn normalize_table(tok: &str) -> String {
+    let last = tok.rsplit('.').next().unwrap_or(tok);
+    normalize_ident(last)
+}
+
+fn is_plain_ident(tok: &str) -> bool {
+    let t = tok.trim_matches('`');
+    !t.is_empty() && t.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
+fn is_clause_keyword(s: &str) -> bool {
+    matches!(
+        s.to_ascii_lowercase().as_str(),
+        "on" | "where"
+            | "group" | "order" | "limit" | "join" | "left" | "right" | "inner"
+            | "outer" | "cross" | "natural" | "using" | "set" | "having" | "union"
+            | "straight_join" | "force" | "use" | "ignore" | "for" | "as" | "and"
+            | "or" | "select" | "window" | "into" | "(" | ")" | "," | ";"
+    )
+}
+
+/// Best-effort map of base tables and their aliases from a query's FROM/JOIN
+/// clauses, e.g. `FROM pcrs p LEFT JOIN epatient04` → [(pcrs, Some(p)),
+/// (epatient04, None)]. Heuristic (not a full parser); derived-table subqueries
+/// (a `(` after FROM/JOIN) are skipped.
+fn parse_table_aliases(sql: &str) -> Vec<(String, Option<String>)> {
+    let scrubbed = scrub_sql(sql);
+    let tokens: Vec<&str> = scrubbed.split_whitespace().collect();
+    let mut out: Vec<(String, Option<String>)> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let kw = tokens[i].to_ascii_lowercase();
+        if kw == "from" || kw == "join" {
+            let comma_list = kw == "from";
+            i += 1;
+            loop {
+                if i >= tokens.len() || tokens[i] == "(" {
+                    break;
+                }
+                let real = normalize_table(tokens[i]);
+                i += 1;
+                if real.is_empty() {
+                    break;
+                }
+                let mut alias: Option<String> = None;
+                if i < tokens.len() {
+                    let nx = tokens[i].to_ascii_lowercase();
+                    if nx == "as" {
+                        i += 1;
+                        if i < tokens.len() {
+                            alias = Some(normalize_ident(tokens[i]));
+                            i += 1;
+                        }
+                    } else if !is_clause_keyword(&nx) && is_plain_ident(tokens[i]) {
+                        alias = Some(normalize_ident(tokens[i]));
+                        i += 1;
+                    }
+                }
+                out.push((real, alias));
+                if comma_list && i < tokens.len() && tokens[i] == "," {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Schema facts (row estimate, columns, indexes + cardinality) for one base
+/// table. Returns None for derived/aliased/materialized tables not in I_S.
+async fn gather_table_info(
+    pool: &MySqlPool,
+    database: &str,
+    table: &str,
+) -> Option<AnalyzeTableInfo> {
+    let trow = sqlx::query(
+        "SELECT TABLE_ROWS, ENGINE FROM INFORMATION_SCHEMA.TABLES \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+    )
+    .bind(database)
+    .bind(table)
+    .fetch_optional(pool)
+    .await
+    .ok()??;
+    let table_rows = trow
+        .try_get::<Option<u64>, _>(0)
+        .ok()
+        .flatten()
+        .or_else(|| trow.try_get::<Option<i64>, _>(0).ok().flatten().map(|n| n as u64));
+    let engine = get_opt_string(&trow, 1);
+
+    let crows = sqlx::query(
+        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT \
+         FROM INFORMATION_SCHEMA.COLUMNS \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+    )
+    .bind(database)
+    .bind(table)
+    .fetch_all(pool)
+    .await
+    .ok()?;
+    let columns: Vec<ColumnDef> = crows
+        .iter()
+        .map(|r| ColumnDef {
+            name: get_string(r, 0),
+            column_type: get_string(r, 1),
+            nullable: get_string(r, 2) == "YES",
+            key: get_string(r, 3),
+            default_value: get_opt_string(r, 4),
+            extra: get_string(r, 5),
+            comment: get_string(r, 6),
+        })
+        .collect();
+
+    let irows = sqlx::query(
+        "SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME, CARDINALITY, INDEX_TYPE \
+         FROM INFORMATION_SCHEMA.STATISTICS \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX",
+    )
+    .bind(database)
+    .bind(table)
+    .fetch_all(pool)
+    .await
+    .ok()?;
+    let mut indexes: Vec<AnalyzeIndexInfo> = Vec::new();
+    for r in &irows {
+        let name = get_string(r, 0);
+        let non_unique = r
+            .try_get::<i64, _>(1)
+            .or_else(|_| r.try_get::<i32, _>(1).map(i64::from))
+            .or_else(|_| r.try_get::<u64, _>(1).map(|v| v as i64))
+            .unwrap_or(1)
+            != 0;
+        let column = get_string(r, 2);
+        let cardinality = r
+            .try_get::<Option<i64>, _>(3)
+            .ok()
+            .flatten()
+            .or_else(|| r.try_get::<Option<u64>, _>(3).ok().flatten().map(|v| v as i64));
+        let index_type = get_string(r, 4).to_uppercase();
+        match indexes.iter_mut().find(|i| i.name == name) {
+            Some(existing) => existing.columns.push(column),
+            None => indexes.push(AnalyzeIndexInfo {
+                name,
+                non_unique,
+                columns: vec![column],
+                cardinality,
+                index_type,
+            }),
+        }
+    }
+
+    Some(AnalyzeTableInfo {
+        name: table.to_string(),
+        real_name: table.to_string(),
+        schema: database.to_string(),
+        table_rows,
+        engine,
+        columns,
+        indexes,
+    })
+}
+
+/// Build the analysis bundle for a query: run EXPLAIN (rich JSON + grid), capture
+/// the optimizer's rewrite warnings, optionally EXPLAIN ANALYZE a read-only query
+/// for measured timings, and gather schema facts for every referenced base table.
+/// The grading/suggestions are computed frontend-side from this bundle.
+#[tauri::command]
+pub async fn analyze_query(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    sql: String,
+    run_analyze: bool,
+) -> AppResult<QueryAnalysisInput> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut conn = pool.acquire().await?;
+
+    if !database.trim().is_empty() {
+        (&mut *conn)
+            .execute(format!("USE {}", quote_ident(&database)).as_str())
+            .await?;
+    }
+
+    let server_version = {
+        let row = (&mut *conn).fetch_one("SELECT VERSION()").await?;
+        get_string(&row, 0)
+    };
+
+    let core_sql = strip_leading_explain(&sql);
+    let read_only = is_read_only(&core_sql);
+
+    /* Rich JSON plan — the engine's primary input. Tolerate failure (older/odd
+       servers) and fall back to the traditional grid. */
+    let explain_json = match (&mut *conn)
+        .fetch_one(format!("EXPLAIN FORMAT=JSON {core_sql}").as_str())
+        .await
+    {
+        Ok(row) => Some(get_string(&row, 0)),
+        Err(_) => None,
+    };
+
+    /* Capture the optimizer's rewrite/notes right after the JSON EXPLAIN (the
+       next statement resets the warning list). */
+    let warnings = match (&mut *conn).fetch_all("SHOW WARNINGS").await {
+        Ok(rows) => rows.iter().map(|r| get_string(r, 2)).collect(),
+        Err(_) => Vec::new(),
+    };
+
+    /* Traditional grid. A failure here is the real syntax/permission error, so
+       surface it. */
+    let trad = (&mut *conn)
+        .fetch_all(format!("EXPLAIN {core_sql}").as_str())
+        .await?;
+    let explain_columns = trad
+        .first()
+        .map(|r| result_columns(r).into_iter().map(|(n, _)| n).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let explain_rows: Vec<Value> = trad.iter().map(row_to_json).collect();
+
+    let analyze_tree = if run_analyze && read_only {
+        match (&mut *conn)
+            .fetch_all(format!("EXPLAIN ANALYZE {core_sql}").as_str())
+            .await
+        {
+            Ok(rows) => {
+                let text = rows
+                    .iter()
+                    .map(|r| get_string(r, 0))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (!text.is_empty()).then_some(text)
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    /* Resolve the plan's table names (which are ALIASES when the query aliases
+       a table) to real base tables so we can read their schema. Start from the
+       SQL's FROM/JOIN list, then cover any plan tables the parser missed. */
+    let alias_pairs = parse_table_aliases(&core_sql);
+    let mut plan_names = Vec::new();
+    if let Some(js) = explain_json.as_deref() {
+        if let Ok(v) = serde_json::from_str::<Value>(js) {
+            collect_table_names(&v, &mut plan_names);
+        }
+    }
+    let mut tables = Vec::new();
+    let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (real, alias) in &alias_pairs {
+        let plan_name = alias.clone().unwrap_or_else(|| real.clone());
+        if covered.contains(&plan_name) {
+            continue;
+        }
+        if let Some(mut info) = gather_table_info(&pool, &database, real).await {
+            info.name = plan_name.clone();
+            tables.push(info);
+            covered.insert(plan_name);
+        }
+    }
+    for tn in plan_names {
+        if covered.contains(&tn) {
+            continue;
+        }
+        if let Some(info) = gather_table_info(&pool, &database, &tn).await {
+            covered.insert(tn);
+            tables.push(info);
+        }
+    }
+
+    Ok(QueryAnalysisInput {
+        server_version,
+        read_only,
+        explain_json,
+        explain_columns,
+        explain_rows,
+        warnings,
+        analyze_tree,
+        tables,
+    })
+}
+
 /// Interrupt the query running under `token` (if any) by issuing `KILL QUERY`
 /// on a separate pooled connection. No-op when nothing is registered.
 #[tauri::command]
@@ -1359,43 +1821,64 @@ fn strip_auto_increment_option(ddl: &str) -> String {
     result
 }
 
-/// Write a `.sql` script for a table: its `CREATE TABLE` statement and,
-/// optionally, `INSERT` statements that restore every row. When data is
-/// included, emits `table-sql-progress` ({ done, total }) so the UI can show a
-/// progress bar — medium and large tables take a while to serialize. Returns
-/// `false` (and writes nothing) when the user cancels mid-stream.
+/// Write a `.sql` script for one or more tables: each table's `CREATE TABLE`
+/// statement and, optionally, `INSERT` statements that restore every row. With
+/// several tables the statements are concatenated into the single file (in the
+/// given order). When data is included, emits `table-sql-progress`
+/// ({ done, total }) — cumulative across all tables — so the UI can show a
+/// progress bar. Returns `false` (and writes nothing) when the user cancels
+/// mid-stream.
 #[tauri::command]
 pub async fn export_table_sql(
     app: AppHandle,
     state: State<'_, AppState>,
     profile_id: String,
     database: String,
-    table: String,
+    tables: Vec<String>,
     path: String,
     include_data: bool,
 ) -> AppResult<bool> {
     state.cancel_sql_export.store(false, Ordering::Relaxed);
     let pool = pool_for(&state, &profile_id).await?;
-    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
 
-    let create_row = sqlx::query(&format!("SHOW CREATE TABLE {qualified}"))
-        .fetch_one(&pool)
-        .await?;
-    /* SHOW CREATE TABLE returns (Table, "Create Table"); the DDL is column 1. */
-    let create_sql = strip_auto_increment_option(&get_string(&create_row, 1));
+    /* Grand total across every table so the progress bar tracks the whole job,
+       not each table in isolation. */
+    let mut total: u64 = 0;
+    if include_data {
+        for table in &tables {
+            let qualified = format!("{}.{}", quote_ident(&database), quote_ident(table));
+            total += sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {qualified}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap_or(0)
+                .max(0) as u64;
+        }
+        let _ = app.emit("table-sql-progress", serde_json::json!({ "done": 0, "total": total }));
+    }
 
     let mut out = String::new();
-    out.push_str(&format!("-- DB Sage export of `{database}`.`{table}`\n\n"));
-    out.push_str(&create_sql);
-    out.push_str(";\n");
+    let mut done: u64 = 0;
+    let mut last_emit: u64 = 0;
 
-    if include_data {
-        let total: u64 = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {qualified}"))
+    for table in &tables {
+        let qualified = format!("{}.{}", quote_ident(&database), quote_ident(table));
+
+        let create_row = sqlx::query(&format!("SHOW CREATE TABLE {qualified}"))
             .fetch_one(&pool)
-            .await
-            .unwrap_or(0)
-            .max(0) as u64;
-        let _ = app.emit("table-sql-progress", serde_json::json!({ "done": 0, "total": total }));
+            .await?;
+        /* SHOW CREATE TABLE returns (Table, "Create Table"); the DDL is column 1. */
+        let create_sql = strip_auto_increment_option(&get_string(&create_row, 1));
+
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("-- DB Sage export of `{database}`.`{table}`\n\n"));
+        out.push_str(&create_sql);
+        out.push_str(";\n");
+
+        if !include_data {
+            continue;
+        }
 
         /* Stream on a dedicated connection so a cancel can detach it (it still
            has unsent rows queued) instead of returning a dirty conn to the pool. */
@@ -1404,8 +1887,6 @@ pub async fn export_table_sql(
         let mut stream = sqlx::query(&select_sql).fetch(&mut *conn);
         let mut columns: Vec<(String, String)> = Vec::new();
         let mut insert_prefix = String::new();
-        let mut done: u64 = 0;
-        let mut last_emit: u64 = 0;
         let mut cancelled = false;
         while let Some(row) = stream.try_next().await? {
             if state.cancel_sql_export.load(Ordering::Relaxed) {
@@ -1420,7 +1901,7 @@ pub async fn export_table_sql(
                     .collect::<Vec<_>>()
                     .join(", ");
                 insert_prefix =
-                    format!("INSERT INTO {} ({}) VALUES", quote_ident(&table), col_list);
+                    format!("INSERT INTO {} ({}) VALUES", quote_ident(table), col_list);
                 out.push('\n');
             }
             let values = columns
@@ -1442,6 +1923,9 @@ pub async fn export_table_sql(
             let _ = conn.detach();
             return Ok(false);
         }
+    }
+
+    if include_data {
         let _ = app.emit(
             "table-sql-progress",
             serde_json::json!({ "done": done, "total": done.max(total) }),

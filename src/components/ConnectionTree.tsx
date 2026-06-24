@@ -27,7 +27,8 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useStore } from "../state/store";
-import { notifyError } from "../state/notify";
+import { notifyError, notifySuccess } from "../state/notify";
+import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { canAdminister } from "../lib/local";
 import type { ProfileView } from "../types";
 import { ProfileDialog } from "./ProfileDialog";
@@ -414,10 +415,12 @@ function ConnectionContextMenu({
   const item =
     "flex w-full items-center gap-2.5 text-left px-3 py-1.5 hover:bg-zinc-800";
 
+  const { ref, style } = useAnchoredPosition(x, y);
   return createPortal(
     <div
+      ref={ref}
       data-el="connection-menu"
-      style={{ top: y, left: x }}
+      style={style}
       onClick={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >
@@ -519,6 +522,7 @@ function DatabaseList({
   const makeLive = useStore((s) => s.makeLive);
   const discardRestoredCopy = useStore((s) => s.discardRestoredCopy);
   const renameTable = useStore((s) => s.renameTable);
+  const copyTable = useStore((s) => s.copyTable);
   const refreshTableData = useStore((s) => s.refreshTableData);
   const renameFolderInDb = useStore((s) => s.renameFolderInDb);
   const deleteFolderInDb = useStore((s) => s.deleteFolderInDb);
@@ -877,6 +881,17 @@ function DatabaseList({
             setRenamingTable({ db: tableMenu.db, table: tableMenu.table });
             setTreeMenu(null);
           }}
+          onCopy={() => {
+            const { db, table } = tableMenu;
+            setTreeMenu(null);
+            copyTable(profile.id, db, table)
+              .then((newName) =>
+                notifySuccess(`Copied "${table}" to "${newName}".`)
+              )
+              .catch((e) =>
+                notifyError(`Could not copy "${table}": ${String(e)}`)
+              );
+          }}
           onTruncate={() => {
             setPendingTableAction({
               kind: "truncate",
@@ -896,7 +911,7 @@ function DatabaseList({
           onSaveSql={(includeData) => {
             const { db, table } = tableMenu;
             setTreeMenu(null);
-            exportTableSql(profile.id, db, table, includeData);
+            exportTableSql(profile.id, db, [table], includeData);
           }}
           onImportJson={() => {
             setImportTarget({ db: tableMenu.db, table: tableMenu.table });
@@ -922,7 +937,7 @@ function DatabaseList({
           action={pendingTableAction.kind}
           profileId={profile.id}
           database={pendingTableAction.db}
-          table={pendingTableAction.table}
+          tables={[pendingTableAction.table]}
           onClose={() => setPendingTableAction(null)}
         />
       )}
@@ -1043,10 +1058,12 @@ function DbContextMenu({
   onDiscardCopy: () => void;
   onDrop: () => void;
 }) {
+  const { ref, style } = useAnchoredPosition(x, y);
   return createPortal(
     <div
+      ref={ref}
       data-el="db-context-menu"
-      style={{ top: y, left: x }}
+      style={style}
       onClick={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >
@@ -1266,10 +1283,12 @@ function TreeFolderContextMenu({
 
   const item = "flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800";
 
+  const { ref, style } = useAnchoredPosition(x, y);
   return createPortal(
     <div
+      ref={ref}
       data-el="tree-folder-menu"
-      style={{ top: y, left: x }}
+      style={style}
       onClick={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 min-w-[150px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >

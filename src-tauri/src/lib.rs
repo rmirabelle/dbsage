@@ -208,6 +208,7 @@ pub fn run() {
             query::fetch_rows,
             query::count_rows,
             query::execute_query,
+            query::analyze_query,
             query::cancel_query,
             query::update_cell,
             query::insert_row,

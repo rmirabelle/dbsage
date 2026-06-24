@@ -17,7 +17,8 @@ interface Props {
   action: TableAction;
   profileId: string;
   database: string;
-  table: string;
+  /** One or more tables to act on; >1 truncates/deletes every one. */
+  tables: string[];
   onClose: () => void;
 }
 
@@ -25,7 +26,7 @@ export function TableActionDialog({
   action,
   profileId,
   database,
-  table,
+  tables,
   onClose,
 }: Props) {
   const truncateTable = useStore((s) => s.truncateTable);
@@ -38,15 +39,22 @@ export function TableActionDialog({
   const isDelete = action === "delete";
   const verb = isDelete ? "Delete" : "Truncate";
   const Icon = isDelete ? Trash : Eraser;
+  const multi = tables.length > 1;
+  const subject = multi ? `${tables.length} tables` : `“${tables[0]}”`;
 
   useEffect(() => {
     let cancelled = false;
     setRowCount(null);
     setCountError(false);
-    ipc
-      .countRows({ profileId, database, table, filters: [] })
-      .then((n) => {
-        if (!cancelled) setRowCount(n);
+    /* Sum the rows across every selected table so the warning reflects the
+       whole job. */
+    Promise.all(
+      tables.map((table) =>
+        ipc.countRows({ profileId, database, table, filters: [] })
+      )
+    )
+      .then((counts) => {
+        if (!cancelled) setRowCount(counts.reduce((a, b) => a + b, 0));
       })
       .catch(() => {
         if (!cancelled) setCountError(true);
@@ -54,7 +62,7 @@ export function TableActionDialog({
     return () => {
       cancelled = true;
     };
-  }, [profileId, database, table]);
+  }, [profileId, database, tables]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -67,16 +75,21 @@ export function TableActionDialog({
   const handleConfirm = async () => {
     setBusy(true);
     try {
-      if (isDelete) {
-        await deleteTable(profileId, database, table);
-        notifySuccess(`Table "${table}" deleted from ${database}.`);
-      } else {
-        await truncateTable(profileId, database, table);
-        notifySuccess(`Table "${table}" truncated — all rows deleted.`);
+      for (const table of tables) {
+        if (isDelete) {
+          await deleteTable(profileId, database, table);
+        } else {
+          await truncateTable(profileId, database, table);
+        }
       }
+      notifySuccess(
+        isDelete
+          ? `${multi ? `${tables.length} tables` : `Table “${tables[0]}”`} deleted from ${database}.`
+          : `${multi ? `${tables.length} tables` : `Table “${tables[0]}”`} truncated — all rows deleted.`
+      );
       onClose();
     } catch (e) {
-      notifyError(`Could not ${verb.toLowerCase()} "${table}": ${String(e)}`);
+      notifyError(`Could not ${verb.toLowerCase()} ${subject}: ${String(e)}`);
       setBusy(false);
     }
   };
@@ -106,7 +119,7 @@ export function TableActionDialog({
           <div className="flex items-center gap-2">
             <Warning size={18} weight="fill" className="text-rose-400" />
             <h2 className="text-sm font-semibold text-zinc-100">
-              {verb} table “{table}”?
+              {verb} {multi ? `${tables.length} tables` : `table ${subject}`}?
             </h2>
           </div>
           {!busy && (
@@ -125,31 +138,50 @@ export function TableActionDialog({
             {isDelete ? (
               <>
                 This permanently <span className="font-semibold text-rose-300">drops</span>{" "}
-                the table{" "}
-                <span className="font-mono text-zinc-100">
-                  {database}.{table}
-                </span>{" "}
-                — its structure and all of its data.
+                {multi ? "these tables" : "the table"}
+                {multi ? (
+                  ""
+                ) : (
+                  <>
+                    {" "}
+                    <span className="font-mono text-zinc-100">
+                      {database}.{tables[0]}
+                    </span>
+                  </>
+                )}{" "}
+                — {multi ? "their" : "its"} structure and all of {multi ? "their" : "its"} data.
               </>
             ) : (
               <>
                 This permanently{" "}
                 <span className="font-semibold text-rose-300">deletes every row</span>{" "}
-                from{" "}
-                <span className="font-mono text-zinc-100">
-                  {database}.{table}
-                </span>
+                from {multi ? "these tables" : (
+                  <span className="font-mono text-zinc-100">
+                    {database}.{tables[0]}
+                  </span>
+                )}
                 . The table structure is kept.
               </>
             )}
           </p>
+
+          {multi && (
+            <div className="max-h-32 overflow-auto rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[11px] text-zinc-300">
+              {tables.map((t) => (
+                <div key={t} className="truncate">
+                  {t}
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2.5">
             <div className="flex items-center gap-2">
               <Icon size={16} className="text-rose-400 shrink-0" />
               <span>
                 <span className="font-semibold text-zinc-100">{rowsText}</span> row
-                {rowCount === 1 ? "" : "s"} will be permanently deleted.
+                {rowCount === 1 ? "" : "s"} will be permanently deleted
+                {multi ? ` across ${tables.length} tables` : ""}.
               </span>
             </div>
             {countError && (
@@ -179,7 +211,9 @@ export function TableActionDialog({
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-semibold bg-rose-500 text-white hover:bg-rose-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Icon size={14} />}
-            {busy ? `${verb.replace(/e$/, "")}ing…` : `${verb} table`}
+            {busy
+              ? `${verb.replace(/e$/, "")}ing…`
+              : `${verb} ${multi ? `${tables.length} tables` : "table"}`}
           </button>
         </div>
       </div>

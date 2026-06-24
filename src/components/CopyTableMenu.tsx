@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Table as Table2, Database } from "@phosphor-icons/react";
+import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 
 /**
  * Menu shown after dropping table(s) onto a different database, offering a
@@ -46,10 +47,12 @@ export function CopyTableMenu({
     ? `${targetConnectionName} / ${targetDb}`
     : targetDb;
 
+  const { ref, style } = useAnchoredPosition(x, y);
   return createPortal(
     <div
+      ref={ref}
       data-el="copy-table-menu"
-      style={{ top: y, left: x }}
+      style={style}
       onClick={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 min-w-[260px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >

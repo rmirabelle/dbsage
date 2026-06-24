@@ -6,6 +6,7 @@ import {
   CaretUp,
   CaretDown,
   Binoculars,
+  BracketsCurly,
   MagnifyingGlass as Search,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
@@ -120,6 +121,30 @@ export function ExpandedPanel({
       return undefined;
     }
   }, [text, isJsonColumn]);
+
+  /** Text columns (text/mediumtext/varchar…) sometimes hold JSON. Offer a
+   * pretty-print button when the value looks like JSON and actually parses.
+   * Real JSON columns already pretty-print on load, so they're excluded. */
+  const canFormatJson = useMemo(() => {
+    if (isJsonColumn) return false;
+    const t = text.trim();
+    if (!t.startsWith("{") && !t.startsWith("[")) return false;
+    try {
+      JSON.parse(t);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [text, isJsonColumn]);
+
+  const formatJson = () => {
+    try {
+      setText(JSON.stringify(JSON.parse(text), null, 2));
+      setSaved(false);
+    } catch {
+      /* guarded by canFormatJson, so this shouldn't happen */
+    }
+  };
 
   const matches = useMemo(() => findMatches(text, search), [text, search]);
   const matchCount = matches.length;
@@ -268,6 +293,17 @@ export function ExpandedPanel({
         )}
 
         <div className="ml-auto flex items-center gap-1">
+          {column && canFormatJson && (
+            <button
+              data-el="expanded-format-json-btn"
+              onClick={formatJson}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              title="Pretty-print this JSON value"
+            >
+              <BracketsCurly size={13} className="text-sky-400" />
+              <span>Format JSON</span>
+            </button>
+          )}
           {column && (
             <button
               data-el="expanded-copy-btn"

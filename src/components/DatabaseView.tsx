@@ -7,6 +7,7 @@ import {
   CircleNotch as Loader2,
   ArrowsClockwise as RefreshCw,
   MagnifyingGlass as Search,
+  PencilSimple,
   ShareNetwork,
   Table as Table2,
   Code,
@@ -17,7 +18,8 @@ import {
 import clsx from "clsx";
 import { useDraggable, useDroppable, useDndMonitor } from "@dnd-kit/core";
 import { useStore } from "../state/store";
-import { notifyError } from "../state/notify";
+import { notifyError, notifySuccess } from "../state/notify";
+import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { ipc } from "../ipc";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
@@ -59,6 +61,7 @@ export function DatabaseView({ tab }: Props) {
   const openTableEditor = useStore((s) => s.openTableEditor);
   const exportTableSql = useStore((s) => s.exportTableSql);
   const renameTable = useStore((s) => s.renameTable);
+  const copyTable = useStore((s) => s.copyTable);
   const loadRelations = useStore((s) => s.loadRelations);
   const relations = useStore(
     (s) => s.relations[`${tab.profileId}::${tab.database}`]
@@ -162,7 +165,7 @@ export function DatabaseView({ tab }: Props) {
   } | null>(null);
   const [pendingTableAction, setPendingTableAction] = useState<{
     kind: TableAction;
-    table: string;
+    tables: string[];
   } | null>(null);
   const [importTable, setImportTable] = useState<string | null>(null);
   const [pendingFolderDelete, setPendingFolderDelete] = useState<{
@@ -516,6 +519,31 @@ export function DatabaseView({ tab }: Props) {
             )}
           </button>
 
+          {selectedTables.size === 1 && (
+            <button
+              data-el="edit-table-btn"
+              onClick={() => {
+                const table = Array.from(selectedTables)[0];
+                openTableEditor(
+                  tab.profileId,
+                  tab.profileName,
+                  tab.database,
+                  table
+                ).catch((e) =>
+                  notifyError(
+                    `Could not open "${table}" for editing: ${String(e)}`
+                  )
+                );
+              }}
+              style={{ fontSize: 13 }}
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
+              title="Edit this table's structure"
+            >
+              <PencilSimple size={17} />
+              Edit Table
+            </button>
+          )}
+
           <span className="ml-auto">
             {tab.loading ? (
               <span className="inline-flex items-center gap-1.5">
@@ -779,12 +807,19 @@ export function DatabaseView({ tab }: Props) {
           <TableContextMenu
             x={tableMenu.x}
             y={tableMenu.y}
+            count={selectedTables.size}
             onTruncate={() => {
-              setPendingTableAction({ kind: "truncate", table: tableMenu.table });
+              setPendingTableAction({
+                kind: "truncate",
+                tables: Array.from(selectedTables),
+              });
               setTableMenu(null);
             }}
             onDelete={() => {
-              setPendingTableAction({ kind: "delete", table: tableMenu.table });
+              setPendingTableAction({
+                kind: "delete",
+                tables: Array.from(selectedTables),
+              });
               setTableMenu(null);
             }}
             onEdit={() => {
@@ -798,10 +833,21 @@ export function DatabaseView({ tab }: Props) {
               setRenamingTable(tableMenu.table);
               setTableMenu(null);
             }}
-            onSaveSql={(includeData) => {
+            onCopy={() => {
               const table = tableMenu.table;
               setTableMenu(null);
-              exportTableSql(tab.profileId, tab.database, table, includeData);
+              copyTable(tab.profileId, tab.database, table)
+                .then((newName) =>
+                  notifySuccess(`Copied "${table}" to "${newName}".`)
+                )
+                .catch((e) =>
+                  notifyError(`Could not copy "${table}": ${String(e)}`)
+                );
+            }}
+            onSaveSql={(includeData) => {
+              const tables = Array.from(selectedTables);
+              setTableMenu(null);
+              exportTableSql(tab.profileId, tab.database, tables, includeData);
             }}
             onImportJson={() => {
               setImportTable(tableMenu.table);
@@ -827,7 +873,7 @@ export function DatabaseView({ tab }: Props) {
             action={pendingTableAction.kind}
             profileId={tab.profileId}
             database={tab.database}
-            table={pendingTableAction.table}
+            tables={pendingTableAction.tables}
             onClose={() => setPendingTableAction(null)}
           />
         )}
@@ -1108,10 +1154,12 @@ function FolderContextMenu({
   onRename: () => void;
   onDelete: () => void;
 }) {
+  const { ref, style } = useAnchoredPosition(x, y);
   return createPortal(
     <div
+      ref={ref}
       data-el="folder-context-menu"
-      style={{ top: y, left: x }}
+      style={style}
       onClick={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 min-w-[150px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >
@@ -1147,10 +1195,12 @@ function EmptyAreaContextMenu({
   onNewTable: () => void;
   onNewFolder: () => void;
 }) {
+  const { ref, style } = useAnchoredPosition(x, y);
   return createPortal(
     <div
+      ref={ref}
       data-el="empty-context-menu"
-      style={{ top: y, left: x }}
+      style={style}
       onClick={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 min-w-[160px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60"
     >

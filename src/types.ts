@@ -1,3 +1,5 @@
+import type { AnalysisResult } from "./lib/queryAnalysis/types";
+
 export interface ConnectionProfile {
   id: string;
   name: string;
@@ -372,6 +374,8 @@ export interface QueryTab extends BaseTab {
   maxRows: number | null;
   /** Last execution's result; null until the first run. */
   result: QueryResult | null;
+  /** Last Explain's analysis (grade + findings); null until Explain is run. */
+  analysis: AnalysisResult | null;
   loading: boolean;
   error: string | null;
   /** True between a Stop request and the query settling, so the UI can show a

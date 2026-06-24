@@ -29,6 +29,7 @@ import {
   checkRelatedExistence,
 } from "../lib/relatedExistence";
 import { useBackdropDismiss } from "../lib/useBackdropDismiss";
+import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import type {
   ColumnFilter,
   PeekDescriptor,
@@ -202,6 +203,12 @@ export function PeekPanel({
     cell: { rowIndex: number; column: string };
   } | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const { style: pickerStyle } = useAnchoredPosition(
+    picker?.x ?? 0,
+    picker?.y ?? 0,
+    8,
+    pickerRef
+  );
 
   /** Number of open peek windows the close-all confirmation will close; null when
    * the confirmation isn't showing. */
@@ -435,7 +442,7 @@ export function PeekPanel({
           <div
             ref={pickerRef}
             data-el="peek-related-picker"
-            style={{ top: picker.y, left: picker.x }}
+            style={pickerStyle}
             className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
           >
             <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">

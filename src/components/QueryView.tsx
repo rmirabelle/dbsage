@@ -6,6 +6,7 @@ import {
   FloppyDisk,
   CaretDown,
   Binoculars,
+  Gauge,
   Database,
   PlugsConnected,
   CircleNotch as Loader2,
@@ -21,6 +22,7 @@ import { StyledSelect } from "./StyledSelect";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { ExportButton } from "./ExportButton";
 import { SqlEditor } from "./SqlEditor";
+import { QueryAnalysisPanel } from "./QueryAnalysisPanel";
 import { SavedQueryMenu } from "./SavedQueryMenu";
 import { QueryHistoryButton } from "./QueryHistoryButton";
 import { compactDisplay, extractJsonCandidates } from "../lib/jsonPath";
@@ -43,6 +45,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   const setQueryDatabase = useStore((s) => s.setQueryDatabase);
   const setQueryMaxRows = useStore((s) => s.setQueryMaxRows);
   const executeQuery = useStore((s) => s.executeQuery);
+  const explainQuery = useStore((s) => s.explainQuery);
   const stopQuery = useStore((s) => s.stopQuery);
   const saveQuery = useStore((s) => s.saveQuery);
   const applySavedQuery = useStore((s) => s.applySavedQuery);
@@ -91,6 +94,26 @@ export function QueryView({ tab }: { tab: QueryTab }) {
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
   }, [formatMenuOpen]);
+
+  /* Split Execute button menu (Execute / Explain) + the analysis drawer. */
+  const [execMenuOpen, setExecMenuOpen] = useState(false);
+  const execMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!execMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (execMenuRef.current && !execMenuRef.current.contains(e.target as Node)) {
+        setExecMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [execMenuOpen]);
+
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  /* Open the drawer whenever a fresh analysis lands. */
+  useEffect(() => {
+    if (tab.analysis) setShowAnalysis(true);
+  }, [tab.analysis]);
 
   /* Draggable splitter between the editor and the results. */
   const containerRef = useRef<HTMLDivElement>(null);
@@ -239,7 +262,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   };
 
   return (
-    <div ref={containerRef} className="flex-1 flex flex-col min-h-0">
+    <div ref={containerRef} className="relative flex-1 flex flex-col min-h-0">
       <div
         data-el="query-toolbar"
         data-toolbar="query"
@@ -335,15 +358,71 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             {tab.stopping ? "Stopping…" : "Stop"}
           </button>
         ) : (
+          <div ref={execMenuRef} className="relative inline-flex">
+            <button
+              data-el="query-execute-btn"
+              onClick={() => executeQuery(tab.id)}
+              disabled={!canRun}
+              title="Execute (Ctrl+Enter)"
+              className="inline-flex items-center gap-1.5 pl-2 pr-2 py-1 rounded-l font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
+            >
+              <Play size={16} weight="fill" />
+              Execute
+            </button>
+            <button
+              data-el="query-execute-menu-btn"
+              onClick={() => setExecMenuOpen((o) => !o)}
+              disabled={!canRun}
+              title="More run options"
+              className="inline-flex items-center px-1 py-1 rounded-r border-l border-emerald-700/50 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
+            >
+              <CaretDown size={13} />
+            </button>
+            {execMenuOpen && (
+              <div
+                data-el="query-execute-menu"
+                className="absolute top-full left-0 mt-1 z-50 w-56 rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-[12px]"
+              >
+                <button
+                  onClick={() => {
+                    setExecMenuOpen(false);
+                    executeQuery(tab.id);
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-zinc-800 flex items-center gap-2 text-zinc-200"
+                >
+                  <Play size={14} weight="fill" className="text-emerald-400 shrink-0" />
+                  <span className="flex-1">Execute</span>
+                  <span className="text-[10px] text-zinc-500">Ctrl+Enter</span>
+                </button>
+                <button
+                  data-el="query-explain-btn"
+                  onClick={() => {
+                    setExecMenuOpen(false);
+                    explainQuery(tab.id);
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-zinc-800 flex items-center gap-2 text-zinc-200"
+                >
+                  <Gauge size={14} className="text-accent-400 shrink-0" />
+                  <span className="flex-1">Explain</span>
+                  <span className="text-[10px] text-zinc-500">analyze</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab.analysis && (
           <button
-            data-el="query-execute-btn"
-            onClick={() => executeQuery(tab.id)}
-            disabled={!canRun}
-            title="Execute (Ctrl+Enter)"
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
+            data-el="analysis-toggle-btn"
+            onClick={() => setShowAnalysis((v) => !v)}
+            title="Toggle the query analysis"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 text-emerald-300 hover:bg-zinc-700"
           >
-            <Play size={16} weight="fill" />
-            Execute
+            <Gauge size={16} weight="fill" className="shrink-0" />
+            Analysis
+            <span className="rounded bg-zinc-950/60 px-1 text-[10px] font-bold tabular-nums text-zinc-100">
+              {tab.analysis.grade}
+            </span>
           </button>
         )}
 
@@ -610,6 +689,16 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           value={activeValue}
           rowOrdinal={activeRowOrdinal}
           onClose={() => setExpanded(false)}
+        />
+      )}
+
+      {tab.analysis && showAnalysis && (
+        <QueryAnalysisPanel
+          analysis={tab.analysis}
+          profileId={tab.profileId}
+          database={tab.database}
+          onClose={() => setShowAnalysis(false)}
+          onReExplain={() => explainQuery(tab.id)}
         />
       )}
     </div>

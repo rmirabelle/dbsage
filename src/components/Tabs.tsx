@@ -40,6 +40,7 @@ import { TableViewPresetMenu } from "./TableViewPresetMenu";
 import { InsertRowDialog } from "./InsertRowDialog";
 import appIconLarge from "../assets/app-icon-large.png";
 import { ipc } from "../ipc";
+import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import type { PeekDescriptor, PeekSeed, Relation, RowsTab, Tab } from "../types";
 import {
   relationTargets,
@@ -362,10 +363,12 @@ function TabContextMenu({
     };
   }, [onDismiss]);
 
+  const { ref, style } = useAnchoredPosition(x, y);
   return createPortal(
     <div
+      ref={ref}
       data-el="tab-context-menu"
-      style={{ top: y, left: x }}
+      style={style}
       onMouseDown={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
     >
@@ -471,6 +474,12 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     cell: { rowIndex: number; column: string };
   } | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const { style: pickerStyle } = useAnchoredPosition(
+    picker?.x ?? 0,
+    picker?.y ?? 0,
+    8,
+    pickerRef
+  );
 
   /** The relation menu opens as a side effect of selecting a cell, so it must
    * never block interaction the way a backdrop would (the next cell click has
@@ -948,7 +957,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           <div
             ref={pickerRef}
             data-el="related-picker"
-            style={{ top: picker.y, left: picker.x }}
+            style={pickerStyle}
             className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
           >
             <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">

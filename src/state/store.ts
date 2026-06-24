@@ -11,6 +11,7 @@ import {
   droppedColumnNames,
 } from "../lib/tableSql";
 import { notifyError, notifySuccess, notifyInfo } from "./notify";
+import { analyzeQueryBundle } from "../lib/queryAnalysis";
 import type {
   ColumnFilter,
   CreateTableTab,
@@ -18,9 +19,11 @@ import type {
   Folder,
   PeekDescriptor,
   ProfileView,
+  QueryResult,
   QueryTab,
   Relation,
   RelationsTab,
+  RowRecord,
   RowsTab,
   SavedQuery,
   SortSpec,
@@ -233,6 +236,8 @@ interface Store {
     oldName: string,
     newName: string
   ) => Promise<void>;
+  /** Duplicate a table + its data; refreshes the DB view and returns the copy's name. */
+  copyTable: (profileId: string, database: string, table: string) => Promise<string>;
   openRelations: (profileId: string, profileName: string, database: string) => void;
   /** Open (or focus) the standalone server Monitoring window for a connection. */
   openMonitoring: (profileId: string) => void;
@@ -247,6 +252,11 @@ interface Store {
   setQueryDatabase: (tabId: string, database: string) => void;
   /** Run the query pane's SQL against its connection + database. */
   executeQuery: (tabId: string) => Promise<void>;
+  /** EXPLAIN the query pane's SQL and grade it; `runAnalyze` measures real
+   * timings (read-only statements only). Sets the tab's analysis + EXPLAIN grid. */
+  explainQuery: (tabId: string, runAnalyze?: boolean) => Promise<void>;
+  /** Clear the current Explain analysis for a query tab. */
+  clearAnalysis: (tabId: string) => void;
   /** Request cancellation of a running query (KILL QUERY server-side). */
   stopQuery: (tabId: string) => Promise<void>;
   /** Save the query pane's current SQL under a name, scoped to its database. */
@@ -276,10 +286,11 @@ interface Store {
   ) => Promise<void>;
   /** Prompt for a destination and write a `.sql` script for a table (DDL, plus
    * INSERTs when `includeData`). */
+  /** Save a `.sql` script for one or more tables (combined into a single file). */
   exportTableSql: (
     profileId: string,
     database: string,
-    table: string,
+    tables: string[],
     includeData: boolean
   ) => Promise<void>;
   /** Request cancellation of the in-progress SQL-script export. */
@@ -1036,6 +1047,34 @@ export const useStore = create<Store>((set, get) => ({
     await refreshFoldersEverywhere(profileId, database, set, get);
   },
 
+  copyTable: async (profileId, database, table) => {
+    /* Pick the first free `{table}_copy`, `{table}_copy2`, … from the names we
+       already know; the backend re-checks and errors on a real collision. */
+    const known = new Set<string>();
+    const s = get();
+    for (const t of s.tabs) {
+      if (t.kind === "database" && t.profileId === profileId && t.database === database) {
+        for (const tbl of t.tables) known.add(tbl.name);
+      }
+    }
+    for (const it of s.trees[profileId]?.tablesByDb[database]?.items ?? []) {
+      known.add(it.name);
+    }
+    let newName = `${table}_copy`;
+    for (let n = 2; known.has(newName); n++) newName = `${table}_copy${n}`;
+
+    await ipc.copyTable({
+      profileId,
+      sourceDatabase: database,
+      sourceTable: table,
+      targetDatabase: database,
+      targetTable: newName,
+      includeData: true,
+    });
+    await refreshFoldersEverywhere(profileId, database, set, get);
+    return newName;
+  },
+
   closeTab: (tabId) => {
     set((s) => {
       const idx = s.tabs.findIndex((t) => t.id === tabId);
@@ -1218,6 +1257,7 @@ export const useStore = create<Store>((set, get) => ({
       sql: "",
       maxRows: DEFAULT_QUERY_MAX_ROWS,
       result: null,
+      analysis: null,
       loading: false,
       error: null,
       stopping: false,
@@ -1370,6 +1410,7 @@ export const useStore = create<Store>((set, get) => ({
                 loading: false,
                 error: null,
                 result,
+                analysis: null,
                 runStartedAt: null,
                 roundTripMs: Date.now() - startedAt,
               }
@@ -1408,6 +1449,76 @@ export const useStore = create<Store>((set, get) => ({
     } finally {
       unlisten();
     }
+  },
+
+  explainQuery: async (tabId, runAnalyze = false) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "query" || tab.loading) return;
+    if (!tab.sql.trim()) return;
+    const startedAt = Date.now();
+    const sqlAtRun = tab.sql;
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query"
+          ? { ...t, loading: true, error: null, stopping: false, runStartedAt: startedAt, liveServerMs: 0, roundTripMs: null }
+          : t
+      ),
+    }));
+    try {
+      const bundle = await ipc.analyzeQuery({
+        profileId: tab.profileId,
+        database: tab.database,
+        sql: sqlAtRun,
+        runAnalyze,
+      });
+      const analysis = analyzeQueryBundle(bundle, sqlAtRun);
+      /* Show the traditional EXPLAIN grid in the normal results area. */
+      const result: QueryResult = {
+        columns: bundle.explainColumns.map((name) => ({
+          name,
+          dataType: "",
+          nullable: true,
+          key: "",
+        })),
+        rows: bundle.explainRows as unknown as RowRecord[],
+        rowsAffected: null,
+        elapsedMs: 0,
+        truncated: false,
+      };
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "query"
+            ? {
+                ...t,
+                loading: false,
+                error: null,
+                result,
+                analysis,
+                runStartedAt: null,
+                roundTripMs: Date.now() - startedAt,
+              }
+            : t
+        ),
+      }));
+    } catch (e) {
+      const msg = String(e);
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "query"
+            ? { ...t, loading: false, stopping: false, runStartedAt: null, error: msg }
+            : t
+        ),
+      }));
+      notifyError(`Explain failed: ${msg}`, `query-error:${tabId}`);
+    }
+  },
+
+  clearAnalysis: (tabId) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query" ? { ...t, analysis: null } : t
+      ),
+    }));
   },
 
   stopQuery: async (tabId) => {
@@ -1555,6 +1666,12 @@ export const useStore = create<Store>((set, get) => ({
 
   openTableEditor: async (profileId, profileName, database, table) => {
     const tabId = `edit-table::${profileId}::${database}::${table}`;
+    set((s) => ({
+      lastOpenedTables: {
+        ...s.lastOpenedTables,
+        [`${profileId}::${database}`]: table,
+      },
+    }));
     if (get().tabs.some((t) => t.id === tabId)) {
       set({ activeTabId: tabId });
       return;
@@ -1592,18 +1709,21 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
   },
 
-  exportTableSql: async (profileId, database, table, includeData) => {
+  exportTableSql: async (profileId, database, tables, includeData) => {
+    if (tables.length === 0) return;
+    const multi = tables.length > 1;
+    const label = multi ? `${tables.length} tables` : tables[0];
     const path = await save({
-      defaultPath: `${table}.sql`,
+      defaultPath: multi ? `${database}.sql` : `${tables[0]}.sql`,
       filters: [{ name: "SQL Script", extensions: ["sql"] }],
     });
     if (!path) return;
 
     /* Only the data path is slow enough to warrant a progress bar; it streams
-       rows backend-side and reports `table-sql-progress`. */
+       rows backend-side and reports `table-sql-progress` (cumulative). */
     let unlisten: (() => void) | undefined;
     if (includeData) {
-      set({ sqlExport: { table, done: 0, total: 0, cancelling: false } });
+      set({ sqlExport: { table: label, done: 0, total: 0, cancelling: false } });
       unlisten = await listen<{ done: number; total: number }>(
         "table-sql-progress",
         (e) => {
@@ -1620,16 +1740,18 @@ export const useStore = create<Store>((set, get) => ({
       const completed = await ipc.exportTableSql(
         profileId,
         database,
-        table,
+        tables,
         path,
         includeData
       );
       if (completed) {
         notifySuccess(
-          `Saved ${includeData ? "table and data" : "table"} SQL to ${table}.sql`
+          multi
+            ? `Saved SQL for ${tables.length} tables${includeData ? " (with data)" : ""}.`
+            : `Saved ${includeData ? "table and data" : "table"} SQL to ${tables[0]}.sql`
         );
       } else {
-        notifyInfo(`SQL export of "${table}" cancelled.`);
+        notifyInfo(`SQL export of ${label} cancelled.`);
       }
     } catch (e) {
       notifyError(`Could not save SQL script: ${String(e)}`);
