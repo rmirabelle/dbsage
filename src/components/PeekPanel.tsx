@@ -232,13 +232,20 @@ export function PeekPanel({
   };
 
   /** Closing every peek at once is easy to hit by accident (it's the corner-flush
-   * button), so confirm first via a themed modal — and say how many it'll close. */
+   * button), so confirm first via a themed modal — and say how many it'll close.
+   * When this is the only open peek there's nothing to confirm: just close it
+   * like any normal window, skipping the dialog. (A failed enumeration counts as
+   * solo too — closing only this window is the safe, non-destructive default.) */
   const requestCloseAll = async () => {
     let count = 0;
     try {
       count = (await ipc.listOpenPeeks()).length;
     } catch {
-      /* fall back to a generic prompt */
+      /* fall through to the solo path below */
+    }
+    if (count <= 1) {
+      getCurrentWindow().close();
+      return;
     }
     setConfirmCloseAll(count);
   };
@@ -502,17 +509,11 @@ export function PeekPanel({
                 </button>
               </div>
               <div className="px-4 py-4 text-[12px] leading-relaxed text-zinc-300">
-                {confirmCloseAll > 1 ? (
-                  <>
-                    There are{" "}
-                    <span className="font-semibold text-zinc-100">
-                      {confirmCloseAll} open peek windows
-                    </span>
-                    . Close just this one, or all of them?
-                  </>
-                ) : (
-                  "Close this peek window?"
-                )}
+                There are{" "}
+                <span className="font-semibold text-zinc-100">
+                  {confirmCloseAll} open peek windows
+                </span>
+                . Close just this one, or all of them?
               </div>
               <div className="flex justify-end gap-2 border-t border-zinc-800 px-4 py-3">
                 <button

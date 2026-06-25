@@ -24,6 +24,7 @@ interface UiState {
   expandedPanelHeight: number;
   relationsEditorWidth: number;
   sqlPaneHeight: number;
+  analysisPanelWidth: number;
   tableCopyPrompt: TableCopyPrompt | null;
 
   setSidebarWidth: (px: number) => void;
@@ -34,6 +35,7 @@ interface UiState {
   setExpandedPanelHeight: (px: number) => void;
   setRelationsEditorWidth: (px: number) => void;
   setSqlPaneHeight: (px: number) => void;
+  setAnalysisPanelWidth: (px: number) => void;
   openTableCopyPrompt: (prompt: TableCopyPrompt) => void;
   closeTableCopyPrompt: () => void;
 }
@@ -51,6 +53,8 @@ const RELATIONS_EDITOR_MIN = 320;
 const RELATIONS_EDITOR_MAX = 760;
 const SQL_PANE_MIN = 80;
 const SQL_PANE_MAX = 800;
+const ANALYSIS_PANEL_MIN = 360;
+const ANALYSIS_PANEL_MAX = 1400;
 
 interface Persisted {
   sidebarWidth?: number;
@@ -59,6 +63,7 @@ interface Persisted {
   expandedPanelHeight?: number;
   relationsEditorWidth?: number;
   sqlPaneHeight?: number;
+  analysisPanelWidth?: number;
 }
 
 const clamp = (v: number, lo: number, hi: number) =>
@@ -85,6 +90,7 @@ const savePersisted = (state: UiState) => {
       expandedPanelHeight: state.expandedPanelHeight,
       relationsEditorWidth: state.relationsEditorWidth,
       sqlPaneHeight: state.sqlPaneHeight,
+      analysisPanelWidth: state.analysisPanelWidth,
     };
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch {
@@ -110,6 +116,11 @@ export const useUi = create<UiState>((set, get) => ({
     RELATIONS_EDITOR_MAX
   ),
   sqlPaneHeight: clamp(persisted.sqlPaneHeight ?? 200, SQL_PANE_MIN, SQL_PANE_MAX),
+  analysisPanelWidth: clamp(
+    persisted.analysisPanelWidth ?? 880,
+    ANALYSIS_PANEL_MIN,
+    ANALYSIS_PANEL_MAX
+  ),
   tableCopyPrompt: null,
 
   setSidebarWidth: (px) => {
@@ -158,6 +169,17 @@ export const useUi = create<UiState>((set, get) => ({
     set({ sqlPaneHeight: clamp(Math.round(px), SQL_PANE_MIN, SQL_PANE_MAX) });
     savePersisted(get());
   },
+
+  setAnalysisPanelWidth: (px) => {
+    set({
+      analysisPanelWidth: clamp(
+        Math.round(px),
+        ANALYSIS_PANEL_MIN,
+        ANALYSIS_PANEL_MAX
+      ),
+    });
+    savePersisted(get());
+  },
 }));
 
 /**
@@ -193,6 +215,13 @@ window.addEventListener("storage", (e) => {
       }),
       ...(p.sqlPaneHeight != null && {
         sqlPaneHeight: clamp(p.sqlPaneHeight, SQL_PANE_MIN, SQL_PANE_MAX),
+      }),
+      ...(p.analysisPanelWidth != null && {
+        analysisPanelWidth: clamp(
+          p.analysisPanelWidth,
+          ANALYSIS_PANEL_MIN,
+          ANALYSIS_PANEL_MAX
+        ),
       }),
     });
   } catch {

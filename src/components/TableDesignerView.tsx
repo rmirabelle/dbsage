@@ -565,7 +565,7 @@ function ColumnsEditor({
 }
 
 const INDEX_GRID =
-  "grid grid-cols-[minmax(120px,1.2fr)_minmax(240px,2fr)_130px_110px_minmax(140px,1.4fr)_72px] gap-2 items-start";
+  "grid grid-cols-[minmax(120px,1.2fr)_minmax(200px,1.6fr)_150px_130px_110px_minmax(140px,1.4fr)_72px] gap-2 items-start";
 
 function IndexesEditor({
   indexes,
@@ -593,7 +593,7 @@ function IndexesEditor({
           <button
             data-el="indexes-add-btn"
             onClick={onAddIndex}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
           >
             <span className="relative -top-px text-[19px] leading-none">+</span> Add Index
           </button>
@@ -609,6 +609,7 @@ function IndexesEditor({
         >
           <span>Name</span>
           <span>Columns</span>
+          <span>Add</span>
           <span>Index Type</span>
           <span>Method</span>
           <span>Comment</span>
@@ -779,80 +780,94 @@ function ColumnPicker({
     "flex items-center justify-center h-5 w-5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400";
 
   return (
-    <div
-      data-el="index-columns"
-      className="min-h-8 rounded border border-zinc-700 bg-zinc-950 p-1 space-y-1"
-    >
-      {value.map((ref, i) => (
-        <div
-          key={ref.column}
-          data-el="index-column-chip"
-          className="flex items-center gap-1 rounded bg-zinc-800/70 pl-2 pr-1 py-0.5"
-        >
-          <span
-            className="flex-1 truncate text-[12px] text-zinc-200"
-            title={ref.column}
-          >
-            {ref.column}
-          </span>
-          {directional && (
-            <button
-              type="button"
-              onClick={() => toggleDir(ref.column)}
-              className="px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums bg-zinc-700 text-zinc-200 hover:bg-zinc-600"
-              title="Toggle sort direction"
+    <>
+      <div
+        data-el="index-columns"
+        className="min-h-8 rounded border border-zinc-700 bg-zinc-950 p-1 space-y-1"
+      >
+        {value.length === 0 ? (
+          <div className="px-1 leading-6 text-[11px] text-zinc-600">
+            No columns
+          </div>
+        ) : (
+          value.map((ref, i) => (
+            <div
+              key={ref.column}
+              data-el="index-column-chip"
+              className="flex items-center gap-1 rounded bg-zinc-800/70 pl-2 pr-1 py-0.5"
             >
-              {ref.direction}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => move(i, -1)}
-            disabled={i === 0}
-            className={chipBtn}
-            aria-label="Move column up"
+              <span
+                className="flex-1 truncate text-[12px] text-zinc-200"
+                title={ref.column}
+              >
+                {ref.column}
+              </span>
+              {directional && (
+                <button
+                  type="button"
+                  onClick={() => toggleDir(ref.column)}
+                  className="px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums bg-zinc-700 text-zinc-200 hover:bg-zinc-600"
+                  title="Toggle sort direction"
+                >
+                  {ref.direction}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => move(i, -1)}
+                disabled={i === 0}
+                className={chipBtn}
+                aria-label="Move column up"
+              >
+                <ArrowUp size={12} />
+              </button>
+              <button
+                type="button"
+                onClick={() => move(i, 1)}
+                disabled={i === value.length - 1}
+                className={chipBtn}
+                aria-label="Move column down"
+              >
+                <ArrowDown size={12} />
+              </button>
+              <button
+                type="button"
+                onClick={() => remove(ref.column)}
+                className="flex items-center justify-center h-5 w-5 rounded text-zinc-400 hover:text-rose-300 hover:bg-zinc-700"
+                aria-label="Remove column"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+      <div data-el="index-add-column-cell">
+        {addable.length > 0 ? (
+          <select
+            data-el="index-add-column"
+            value=""
+            onChange={(e) => add(e.target.value)}
+            className="w-full h-8 bg-zinc-950 border border-zinc-700 rounded px-2 text-[11px] text-zinc-300 outline-none focus:border-accent-500"
           >
-            <ArrowUp size={12} />
-          </button>
-          <button
-            type="button"
-            onClick={() => move(i, 1)}
-            disabled={i === value.length - 1}
-            className={chipBtn}
-            aria-label="Move column down"
-          >
-            <ArrowDown size={12} />
-          </button>
-          <button
-            type="button"
-            onClick={() => remove(ref.column)}
-            className="flex items-center justify-center h-5 w-5 rounded text-zinc-400 hover:text-rose-300 hover:bg-zinc-700"
-            aria-label="Remove column"
-          >
-            <X size={12} />
-          </button>
-        </div>
-      ))}
-      {addable.length > 0 ? (
-        <select
-          data-el="index-add-column"
-          value=""
-          onChange={(e) => add(e.target.value)}
-          className="w-full h-7 bg-zinc-950 border border-zinc-700 rounded px-2 text-[11px] text-zinc-300 outline-none focus:border-accent-500"
-        >
-          <option value="">+ Add column…</option>
-          {addable.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      ) : value.length === 0 ? (
-        <div className="px-1 py-1 text-[11px] text-zinc-500">
-          Add named columns first.
-        </div>
-      ) : null}
-    </div>
+            <option value="">+ Add column…</option>
+            {addable.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        ) : available.length === 0 ? (
+          <div className="px-1 leading-8 text-[11px] text-zinc-500">
+            Add named columns first.
+          </div>
+        ) : (
+          <div className="px-1 leading-8 text-[11px] text-zinc-600">
+            All added
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -868,7 +883,7 @@ function AdvancedPanel({
   return (
     <div
       data-el="column-advanced"
-      className="ml-9 mt-1 mb-0.5 rounded-md border border-zinc-800 bg-zinc-900/40 px-3 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2.5"
+      className="ml-9 mr-[96px] mt-1 mb-0.5 rounded-md border border-zinc-800 bg-zinc-950/50 px-3 py-[5px] flex flex-wrap items-center gap-x-6 gap-y-2.5 text-[11px]"
     >
       <label className={checkboxLabel}>
         <input

@@ -3,11 +3,24 @@ import { CaretDown, Check, FloppyDisk, Plus, X } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type { SavedQuery } from "../types";
 
+/**
+ * Tab ids whose Saved menu has already auto-opened. Kept at module scope (not
+ * component state) so it survives this menu remounting — which happens whenever
+ * you switch away to a different-kind tab and back to the Query tab. The menu
+ * should drop only once, when the query tab is first created, not on every
+ * re-select/redraw.
+ */
+const autoOpenedTabs = new Set<string>();
+
 interface Props {
   queries: SavedQuery[];
   activeName: string | null;
   /** Disabled (e.g. no database picked) — the trigger is inert. */
   disabled?: boolean;
+  /** Identity of the owning query tab. When it changes to a tab not seen before,
+   * the menu auto-opens once (if it has saved queries) so a freshly-opened Query
+   * tab surfaces its saved queries for loading. */
+  autoOpenKey?: string;
   onApply: (name: string) => void;
   onSave: (name: string) => void;
   onDelete: (name: string) => void;
@@ -17,6 +30,7 @@ export function SavedQueryMenu({
   queries,
   activeName,
   disabled,
+  autoOpenKey,
   onApply,
   onSave,
   onDelete,
@@ -24,6 +38,14 @@ export function SavedQueryMenu({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+
+  /* Auto-open exactly once per query tab — see autoOpenedTabs above. */
+  useEffect(() => {
+    if (disabled || !autoOpenKey || queries.length === 0) return;
+    if (autoOpenedTabs.has(autoOpenKey)) return;
+    autoOpenedTabs.add(autoOpenKey);
+    setOpen(true);
+  }, [autoOpenKey, queries.length, disabled]);
 
   useEffect(() => {
     if (!open) return;
@@ -66,7 +88,7 @@ export function SavedQueryMenu({
       >
         <FloppyDisk size={16} weight="fill" className="shrink-0" />
         <span className="max-w-[160px] truncate font-bold">{activeName ?? "Saved"}</span>
-        <span className="text-[10px] font-semibold tabular-nums text-zinc-100">
+        <span className="rounded-full px-1.5 text-[10px] font-semibold tabular-nums bg-black/30 text-zinc-100">
           {queries.length}
         </span>
         <CaretDown size={12} className="-mr-1 opacity-70" />

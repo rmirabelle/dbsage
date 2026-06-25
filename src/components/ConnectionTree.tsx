@@ -28,6 +28,7 @@ import {
 import clsx from "clsx";
 import { useStore } from "../state/store";
 import { notifyError, notifySuccess } from "../state/notify";
+import { useHelp, helpHandlers } from "../state/help";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { canAdminister } from "../lib/local";
 import type { ProfileView } from "../types";
@@ -81,6 +82,8 @@ export function ConnectionTree() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProfileView | null>(null);
   const [treeMenu, setTreeMenu] = useState<TreeMenu | null>(null);
+  /** Help text for the hovered item, shown in the app help strip below. */
+  const help = useHelp((s) => s.help);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [newDbProfile, setNewDbProfile] = useState<ProfileView | null>(null);
   const [pendingProfileDelete, setPendingProfileDelete] =
@@ -218,7 +221,7 @@ export function ConnectionTree() {
                     }}
                     className="shrink-0 mr-1.5 text-lime-400 hover:text-zinc-300 transition-colors"
                     aria-label="Disconnect"
-                    title="Disconnect"
+                    {...helpHandlers("Disconnect")}
                   >
                     <PlugsConnected size={18} weight="fill" />
                   </button>
@@ -258,11 +261,11 @@ export function ConnectionTree() {
                     style={{ fontSize: 11 }}
                     className="inline-flex items-center gap-1.5 rounded bg-zinc-800 px-2 py-1 font-semibold text-zinc-300 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-zinc-800"
                     aria-label="Monitor Server"
-                    title={
+                    {...helpHandlers(
                       conn?.connected
                         ? "Monitor Server"
                         : "Connect to monitor server"
-                    }
+                    )}
                   >
                     <Pulse size={13} weight="fill" className="text-blue-400" />
                     Monitor
@@ -281,7 +284,7 @@ export function ConnectionTree() {
                       style={{ fontSize: 11 }}
                       className="inline-flex items-center gap-1.5 rounded bg-zinc-800 px-2 py-1 font-semibold text-zinc-300 transition-colors hover:bg-zinc-700"
                       aria-label="Server Admin"
-                      title="Local server administration"
+                      {...helpHandlers("Local server administration")}
                     >
                       <GearSix size={13} weight="fill" className="text-zinc-400" />
                       Admin
@@ -337,6 +340,17 @@ export function ConnectionTree() {
             </div>
           );
         })}
+      </div>
+
+      <div
+        data-el="app-help"
+        className="shrink-0 border-t border-zinc-800/60 bg-zinc-900/40 px-3 py-2 min-h-[3.25rem] text-[11px] leading-snug text-zinc-400"
+      >
+        {help ?? (
+          <span className="text-zinc-600 italic">
+            Hover an item for help.
+          </span>
+        )}
       </div>
 
       {dialogOpen && (
@@ -688,7 +702,9 @@ function DatabaseList({
                   y: e.clientY,
                 });
               }}
-              title="Click to view tables · double-click or arrow to expand · right-click for actions"
+              {...helpHandlers(
+                "Click to view tables · double-click or arrow to expand · right-click for actions"
+              )}
             >
               <button
                 onClick={(e) => {
@@ -781,7 +797,9 @@ function DatabaseList({
                           "flex items-center gap-1 pl-11 pr-2 py-1 cursor-pointer hover:bg-zinc-900/70 text-zinc-300",
                           isOver && "ring-1 ring-inset ring-accent-400 bg-accent-500/10"
                         )}
-                        title={`${folder.name} · ${folder.tables.length} table(s) · right-click for actions`}
+                        {...helpHandlers(
+                          `${folder.name} · ${folder.tables.length} table(s) · right-click for actions`
+                        )}
                       >
                         <ChevronRight
                           size={13}
@@ -1245,7 +1263,9 @@ function DraggableTableRow({
         paddingClass,
         isDragging && "opacity-50"
       )}
-      title="Double-click to open · drag to a folder or another database · right-click for actions"
+      {...helpHandlers(
+        "Double-click to open · drag to a folder or another database · right-click for actions"
+      )}
     >
       <Table2 size={13} className="text-zinc-600 shrink-0" />
       <span className="truncate font-normal italic">{table}</span>

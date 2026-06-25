@@ -263,10 +263,12 @@ export function QueryView({ tab }: { tab: QueryTab }) {
 
   return (
     <div ref={containerRef} className="relative flex-1 flex flex-col min-h-0">
+      {/* Context bar: the connection + database everything below depends on.
+          Tinted like the active tab (bg-zinc-900) so it reads as the document's
+          target rather than another row of actions. */}
       <div
-        data-el="query-toolbar"
-        data-toolbar="query"
-        className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
+        data-el="query-context-bar"
+        className="h-9 pl-1 pr-1 border-b border-zinc-800/60 bg-zinc-900 flex items-center gap-1 text-zinc-400"
       >
         <StyledSelect
           dataEl="query-connection-select"
@@ -274,7 +276,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           value={tab.profileId}
           onChange={(v) => setQueryConnection(tab.id, v)}
           title="Connection"
-          className="font-bold max-w-44 text-lime-300"
+          className="font-bold text-lime-300"
           menuClassName="text-[13.5px]"
           options={profiles.map((p) => ({
             value: p.id,
@@ -295,7 +297,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           value={tab.database}
           onChange={(v) => setQueryDatabase(tab.id, v)}
           title="Database"
-          className="font-bold max-w-44 text-accent-300"
+          className="font-bold text-accent-300"
           menuClassName="text-[13.5px]"
           options={
             dbOptions.length === 0
@@ -313,35 +315,13 @@ export function QueryView({ tab }: { tab: QueryTab }) {
                 }))
           }
         />
+      </div>
 
-        <SavedQueryMenu
-          queries={tab.savedQueries}
-          activeName={tab.activeSavedQuery}
-          disabled={!tab.database}
-          onApply={(name) => applySavedQuery(tab.id, name)}
-          onSave={(name) => saveQuery(tab.id, name)}
-          onDelete={(name) => deleteSavedQuery(tab.id, name)}
-        />
-
-        <QueryHistoryButton
-          items={tab.queryHistory}
-          disabled={!tab.database}
-          onApply={(sql) => applyQueryHistory(tab.id, sql)}
-          onDelete={(sql) => deleteQueryHistory(tab.id, sql)}
-          onClear={() => clearQueryHistory(tab.id)}
-        />
-
-        {savedQueryDirty && (
-          <button
-            data-el="saved-query-overwrite-btn"
-            onClick={() => saveQuery(tab.id, tab.activeSavedQuery!)}
-            title={`Overwrite "${tab.activeSavedQuery}" with the current query`}
-            className="inline-flex items-center justify-center p-1 rounded text-emerald-400 hover:text-emerald-300 hover:bg-zinc-800 transition-colors"
-          >
-            <FloppyDisk size={16} weight="fill" />
-          </button>
-        )}
-
+      <div
+        data-el="query-toolbar"
+        data-toolbar="query"
+        className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
+      >
         {tab.loading ? (
           <button
             data-el="query-stop-btn"
@@ -409,6 +389,35 @@ export function QueryView({ tab }: { tab: QueryTab }) {
               </div>
             )}
           </div>
+        )}
+
+        <SavedQueryMenu
+          queries={tab.savedQueries}
+          activeName={tab.activeSavedQuery}
+          disabled={!tab.database}
+          autoOpenKey={tab.id}
+          onApply={(name) => applySavedQuery(tab.id, name)}
+          onSave={(name) => saveQuery(tab.id, name)}
+          onDelete={(name) => deleteSavedQuery(tab.id, name)}
+        />
+
+        <QueryHistoryButton
+          items={tab.queryHistory}
+          disabled={!tab.database}
+          onApply={(sql) => applyQueryHistory(tab.id, sql)}
+          onDelete={(sql) => deleteQueryHistory(tab.id, sql)}
+          onClear={() => clearQueryHistory(tab.id)}
+        />
+
+        {savedQueryDirty && (
+          <button
+            data-el="saved-query-overwrite-btn"
+            onClick={() => saveQuery(tab.id, tab.activeSavedQuery!)}
+            title={`Overwrite "${tab.activeSavedQuery}" with the current query`}
+            className="inline-flex items-center justify-center p-1 rounded text-emerald-400 hover:text-emerald-300 hover:bg-zinc-800 transition-colors"
+          >
+            <FloppyDisk size={16} weight="fill" />
+          </button>
         )}
 
         {tab.analysis && (

@@ -33,9 +33,10 @@ export function QueryHistoryButton({
         className="inline-flex items-center gap-1.5 h-7 px-2 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100"
       >
         <ClockCounterClockwise size={16} weight="bold" className="shrink-0 text-emerald-400" />
+        <span className="font-bold text-emerald-300">History</span>
         {items.length > 0 && (
           <span
-            className="text-[10px] font-semibold tabular-nums text-zinc-100"
+            className="rounded-full px-1.5 text-[10px] font-semibold tabular-nums bg-black/30 text-zinc-100"
             aria-label={`${items.length} history items`}
           >
             {items.length}

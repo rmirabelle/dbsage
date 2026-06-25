@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowCounterClockwise, CaretDown, Check, Plus, X } from "@phosphor-icons/react";
 import clsx from "clsx";
+import { helpHandlers } from "../state/help";
 import type { TableViewPreset } from "../types";
 
 /** Custom "table views" glyph: an eye framed by scan-corner brackets. Inherits
@@ -32,15 +33,28 @@ export function ViewsIcon({ size = 16, className }: { size?: number; className?:
 interface Props {
   presets: TableViewPreset[];
   activeName: string | null;
+  /** Identity of the owning table-view tab. When it's a tab not seen before, the
+   * menu auto-opens once (if it has saved views) so a freshly-opened table tab
+   * surfaces its saved views for loading. */
+  autoOpenKey?: string;
   onApply: (name: string) => void;
   onSave: (name: string) => void;
   onDelete: (name: string) => void;
   onClear: () => void;
 }
 
+/**
+ * Tab ids whose Saved Views menu has already auto-opened. Module scope (not
+ * component state) so it survives this menu remounting when you switch away to a
+ * different-kind tab and back — the menu should drop only once, when the table
+ * tab is first created, not on every re-select/redraw.
+ */
+const autoOpenedTabs = new Set<string>();
+
 export function TableViewPresetMenu({
   presets,
   activeName,
+  autoOpenKey,
   onApply,
   onSave,
   onDelete,
@@ -49,6 +63,14 @@ export function TableViewPresetMenu({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+
+  /* Auto-open exactly once per table tab — see autoOpenedTabs above. */
+  useEffect(() => {
+    if (!autoOpenKey || presets.length === 0) return;
+    if (autoOpenedTabs.has(autoOpenKey)) return;
+    autoOpenedTabs.add(autoOpenKey);
+    setOpen(true);
+  }, [autoOpenKey, presets.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -86,14 +108,18 @@ export function TableViewPresetMenu({
             ? "bg-emerald-500 text-emerald-950 hover:bg-emerald-400"
             : "bg-zinc-800 text-emerald-300 hover:bg-zinc-700"
         )}
-        title={activeName ? `Active view: ${activeName}` : "Saved table views"}
+        {...helpHandlers(
+          activeName ? `Active view: ${activeName}` : "Saved table views"
+        )}
       >
         <ViewsIcon size={16} className="shrink-0" />
         <span className="max-w-[160px] truncate">{activeName ?? "Views"}</span>
         <span
           className={clsx(
-            "text-[10px] font-semibold tabular-nums",
-            activeName ? "text-emerald-50" : "text-zinc-100"
+            "rounded-full px-1.5 text-[10px] font-semibold tabular-nums",
+            activeName
+              ? "bg-emerald-950/40 text-emerald-50"
+              : "bg-black/30 text-zinc-100"
           )}
         >
           {presets.length}
@@ -112,7 +138,7 @@ export function TableViewPresetMenu({
               setOpen(false);
             }}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800"
-            title="Reset to defaults — remove all hidden columns, widths, sort, filters and show"
+            {...helpHandlers("Reset to defaults — remove all hidden columns, widths, sort, filters and show")}
           >
             <ArrowCounterClockwise size={14} className="text-zinc-400 shrink-0" />
             Clear View
@@ -138,7 +164,7 @@ export function TableViewPresetMenu({
                       setOpen(false);
                     }}
                     className="flex-1 min-w-0 flex items-center gap-2 py-1.5 text-left"
-                    title={`Apply "${p.name}"`}
+                    {...helpHandlers(`Apply "${p.name}"`)}
                   >
                     <ViewsIcon size={14} className="text-emerald-400 shrink-0" />
                     <span className={clsx("truncate", active && "font-semibold text-zinc-100")}>
@@ -150,7 +176,7 @@ export function TableViewPresetMenu({
                       if (confirm(`Delete the view "${p.name}"?`)) onDelete(p.name);
                     }}
                     className="shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition"
-                    title={`Delete "${p.name}"`}
+                    {...helpHandlers(`Delete "${p.name}"`)}
                     aria-label={`Delete ${p.name}`}
                   >
                     <X size={13} />
@@ -181,7 +207,8 @@ export function TableViewPresetMenu({
               <button
                 onClick={submitSave}
                 disabled={!trimmed}
-                title={overwrites ? "Overwrite existing view" : "Save view"}
+                aria-label={overwrites ? "Overwrite existing view" : "Save view"}
+                {...helpHandlers(overwrites ? "Overwrite existing view" : "Save view")}
                 className="shrink-0 inline-flex items-center justify-center h-7 w-7 rounded bg-accent-500 text-[#042f2e] hover:bg-accent-400 disabled:bg-zinc-800 disabled:text-zinc-500 transition-colors"
               >
                 {overwrites ? <Check size={15} /> : <Plus size={15} />}

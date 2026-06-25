@@ -31,6 +31,7 @@ import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { buildCopyText, COPY_AS_OPTIONS, type CopyAsFormat } from "../lib/copyAs";
 import { notifyError, notifySuccess } from "../state/notify";
+import { helpHandlers } from "../state/help";
 
 interface Props {
   columns: ColumnInfo[];
@@ -991,6 +992,18 @@ function Cell({
     isPeekable && value !== null && value !== undefined
       ? "text-violet-400 font-bold"
       : null;
+  /* What the cell publishes to the help strip on hover: an edit hint when
+     editable, otherwise its full value so truncated content stays readable.
+     Suppressed (undefined) when the value tooltip is hidden (e.g. peeks). */
+  const cellHelp = editable
+    ? `Double-click to edit${column.key === "PRI" ? " (primary key)" : ""}`
+    : hideValueTooltip
+    ? undefined
+    : showParts
+    ? display
+    : typeof value === "string"
+    ? value
+    : display;
   return (
     <div
       style={{ width }}
@@ -1012,17 +1025,7 @@ function Cell({
         editable && "cursor-text",
         isActive && "ring-1 ring-inset ring-accent-400 bg-accent-500/10"
       )}
-      title={
-        editable
-          ? `Double-click to edit${column.key === "PRI" ? " (primary key)" : ""}`
-          : hideValueTooltip
-          ? undefined
-          : showParts
-          ? display
-          : typeof value === "string"
-          ? value
-          : display
-      }
+      {...(cellHelp ? helpHandlers(cellHelp) : {})}
     >
       {showParts ? (
         <span className="truncate text-zinc-200">

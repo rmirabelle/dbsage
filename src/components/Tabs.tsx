@@ -29,6 +29,7 @@ import { emit } from "@tauri-apps/api/event";
 import { useStore, isDesignerTabDirty } from "../state/store";
 import type { DuplicateConflict } from "../state/store";
 import { notifyError, notifySuccess } from "../state/notify";
+import { helpHandlers } from "../state/help";
 import { CloseTabConfirmDialog } from "./CloseTabConfirmDialog";
 import { DataGrid } from "./DataGrid";
 import { DatabaseView } from "./DatabaseView";
@@ -38,6 +39,7 @@ import { TableDesignerView } from "./TableDesignerView";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { TableViewPresetMenu } from "./TableViewPresetMenu";
 import { InsertRowDialog } from "./InsertRowDialog";
+import { Tooltip } from "./Tooltip";
 import appIconLarge from "../assets/app-icon-large.png";
 import { ipc } from "../ipc";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
@@ -186,10 +188,11 @@ export function Tabs() {
         ref={barRef}
         data-el="tab-bar"
         className={clsx(
-          "flex items-stretch border-b bg-zinc-950 overflow-hidden",
-          tabDropActive
-            ? "border-accent-500 ring-1 ring-inset ring-accent-500/70 bg-accent-500/5"
-            : "border-zinc-800/80"
+          "flex items-stretch bg-zinc-950 overflow-hidden",
+          /* The bottom rail isn't on this bar — each tab (and the trailing
+             spacer) draws its own bottom border, so the active query tab can
+             leave a gap and merge into the context bar below it. */
+          tabDropActive && "ring-1 ring-inset ring-accent-500/70 bg-accent-500/5"
         )}
       >
         <div className="flex-1 flex items-stretch overflow-x-auto">
@@ -233,7 +236,9 @@ export function Tabs() {
               Icon = Table2;
               iconColor = "text-emerald-400";
             }
-            return (
+            const tableComment =
+              tab.kind === "rows" ? tab.tableComment?.trim() : undefined;
+            const tabEl = (
               <div
                 key={tab.id}
                 data-el="tab"
@@ -244,10 +249,17 @@ export function Tabs() {
                   setTabMenu({ tab, x: e.clientX, y: e.clientY });
                 }}
                 className={clsx(
-                  "group flex items-center gap-2 pl-3 pr-1.5 border-r border-zinc-800/60 cursor-pointer min-w-0 max-w-[260px] shrink-0",
+                  "group flex items-center gap-2 pl-3 pr-1.5 border-r border-r-zinc-800/60 cursor-pointer min-w-0 max-w-[260px] shrink-0",
                   tab.id === activeTabId
                     ? "bg-zinc-900 text-zinc-100"
-                    : "text-zinc-400 hover:bg-zinc-900/50"
+                    : "text-zinc-400 hover:bg-zinc-900/50",
+                  /* The active query tab breaks the rail so it flows into the
+                     query context bar (same bg) directly below it; every other
+                     tab keeps its bottom border. Side-specific colors so the
+                     bottom border isn't overridden by the right border's color. */
+                  tab.id === activeTabId && tab.kind === "query"
+                    ? "border-b border-b-transparent"
+                    : "border-b border-b-zinc-800/80"
                 )}
               >
                 <Icon
@@ -309,7 +321,28 @@ export function Tabs() {
                 </button>
               </div>
             );
+            if (!tableComment) return tabEl;
+            return (
+              <Tooltip
+                key={tab.id}
+                className="flex min-w-0 shrink-0"
+                maxWidth={420}
+                label={
+                  <div>
+                    <div className="text-[11px] font-mono text-accent-400 mb-1">
+                      {tab.kind === "rows" ? tab.table : ""}
+                    </div>
+                    <div className="whitespace-pre-wrap">{tableComment}</div>
+                  </div>
+                }
+              >
+                {tabEl}
+              </Tooltip>
+            );
         })}
+        {/* Fills the strip to the right of the last tab and carries the bottom
+            rail across the empty space. */}
+        <div className="flex-1 border-b border-zinc-800/80" />
         </div>
       </div>
       )}
@@ -718,7 +751,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             )
           }
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
-          title="Edit this table's structure"
+          {...helpHandlers("Edit this table's structure")}
         >
           <PencilSimple size={17} />
           Edit Table
@@ -728,7 +761,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           data-el="add-row-btn"
           onClick={() => setInsertOpen(true)}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
-          title="Insert a new row"
+          {...helpHandlers("Insert a new row")}
         >
           <span className="relative -top-px text-[16px] leading-none">+</span> Row
         </button>
@@ -736,6 +769,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         <TableViewPresetMenu
           presets={tab.presets}
           activeName={tab.activePreset}
+          autoOpenKey={`${tab.id}:${tab.openSeq ?? ""}`}
           onApply={(name) => applyTablePreset(tab.id, name)}
           onSave={(name) => saveTablePreset(tab.id, name)}
           onDelete={(name) => deleteTablePreset(tab.id, name)}
@@ -746,8 +780,8 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           data-el="refresh-btn"
           onClick={() => refreshTab(tab.id)}
           disabled={tab.loading}
-          title="Refresh the row set"
           aria-label="Refresh"
+          {...helpHandlers("Refresh the row set")}
           className="inline-flex items-center justify-center h-7 w-7 rounded transition-colors bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-40 disabled:hover:bg-zinc-800"
         >
           {tab.loading ? (
@@ -764,7 +798,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             "ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 hover:bg-zinc-700",
             expanded ? "text-emerald-300" : "text-zinc-500 hover:text-zinc-400"
           )}
-          title="Toggle the Inspector panel"
+          {...helpHandlers("Toggle the Inspector panel")}
         >
           <Binoculars size={17} />
           Inspector
@@ -973,7 +1007,9 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
                     setPicker(null);
                     openPeek(m);
                   }}
-                  title={empty ? `No related rows in ${m.table}` : undefined}
+                  {...(empty
+                    ? helpHandlers(`No related rows in ${m.table}`)
+                    : {})}
                   className={clsx(
                     "flex w-full items-center gap-1 px-3 py-1.5 text-left text-[12px] whitespace-nowrap",
                     empty ? "cursor-not-allowed opacity-40" : "hover:bg-zinc-800"
@@ -1052,7 +1088,7 @@ function ExactCountButton({ onCount }: { onCount: () => Promise<void> }) {
           setLoading(false);
         }
       }}
-      title="Run an exact COUNT(*) — may be slow on very large tables"
+      {...helpHandlers("Run an exact COUNT(*) — may be slow on very large tables")}
       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-accent-400 hover:bg-zinc-800 hover:text-accent-300 disabled:opacity-50"
     >
       {loading ? <Loader2 size={11} className="animate-spin" /> : null}
@@ -1104,7 +1140,7 @@ function PageSizeDropup({
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30"
-        title="Rows per page"
+        {...helpHandlers("Rows per page")}
       >
         <span className="font-mono text-zinc-300">{value}</span>
         <span className="text-zinc-500">/ page</span>

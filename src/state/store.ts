@@ -157,6 +157,8 @@ interface Store {
   lastOpenedTables: Record<string, string>;
   /** Defined relations per `${profileId}::${database}`. */
   relations: Record<string, Relation[]>;
+  /** Saved-query counts per `${profileId}::${database}`, for the Query button badge. */
+  savedQueryCounts: Record<string, number>;
 
   loadProfiles: () => Promise<void>;
   /** Move a connection so it sits where `targetId` is, persisting the new order.
@@ -225,6 +227,9 @@ interface Store {
   cancelTableCopy: () => void;
 
   openTable: (profileId: string, profileName: string, database: string, table: string) => Promise<void>;
+  /** Forget the remembered table for a database so the DB view stops
+   * auto-reselecting it (called when the user clears the table selection). */
+  forgetLastOpenedTable: (profileId: string, database: string) => void;
   /** Empty a table (TRUNCATE) and refresh any open views of it. */
   truncateTable: (profileId: string, database: string, table: string) => Promise<void>;
   /** Drop a table, close any open tabs for it, and refresh the DB view + tree. */
@@ -336,6 +341,7 @@ interface Store {
     folderId?: string | null
   ) => Promise<void>;
   loadRelations: (profileId: string, database: string) => Promise<void>;
+  loadSavedQueryCount: (profileId: string, database: string) => Promise<void>;
   saveRelation: (args: {
     profileId: string;
     database: string;
@@ -462,6 +468,7 @@ export const useStore = create<Store>((set, get) => ({
   pendingSwap: null,
   lastOpenedTables: {},
   relations: {},
+  savedQueryCounts: {},
 
   loadProfiles: async () => {
     set({ loadingProfiles: true });
@@ -956,17 +963,20 @@ export const useStore = create<Store>((set, get) => ({
       return;
     }
 
-    const [saved, presets] = await Promise.all([
+    const [saved, presets, tableComment] = await Promise.all([
       ipc.getColumnSetup(profileId, database, table),
       ipc.listTablePresets(profileId, database, table).catch(() => []),
+      ipc.tableComment(profileId, database, table).catch(() => ""),
     ]);
     const tab: RowsTab = {
       id: tabId,
       kind: "rows",
+      openSeq: Date.now(),
       profileId,
       profileName,
       database,
       table,
+      tableComment,
       page: 1,
       pageSize: 500,
       data: null,
@@ -984,6 +994,16 @@ export const useStore = create<Store>((set, get) => ({
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     await loadTabPage(tabId, 1, set, get);
+  },
+
+  forgetLastOpenedTable: (profileId, database) => {
+    const key = `${profileId}::${database}`;
+    set((s) => {
+      if (!(key in s.lastOpenedTables)) return s;
+      const next = { ...s.lastOpenedTables };
+      delete next[key];
+      return { lastOpenedTables: next };
+    });
   },
 
   truncateTable: async (profileId, database, table) => {
@@ -1555,6 +1575,10 @@ export const useStore = create<Store>((set, get) => ({
             ? { ...t, savedQueries, activeSavedQuery: trimmed }
             : t
         ),
+        savedQueryCounts: {
+          ...s.savedQueryCounts,
+          [`${tab.profileId}::${tab.database}`]: savedQueries.length,
+        },
       }));
       notifySuccess(`Saved query "${trimmed}".`);
     } catch (e) {
@@ -1581,17 +1605,22 @@ export const useStore = create<Store>((set, get) => ({
     if (!tab || tab.kind !== "query") return;
     try {
       await ipc.deleteSavedQuery(tab.profileId, tab.database, name);
+      const remaining = tab.savedQueries.filter((q) => q.name !== name);
       set((s) => ({
         tabs: s.tabs.map((t) =>
           t.id === tabId && t.kind === "query"
             ? {
                 ...t,
-                savedQueries: t.savedQueries.filter((q) => q.name !== name),
+                savedQueries: remaining,
                 activeSavedQuery:
                   t.activeSavedQuery === name ? null : t.activeSavedQuery,
               }
             : t
         ),
+        savedQueryCounts: {
+          ...s.savedQueryCounts,
+          [`${tab.profileId}::${tab.database}`]: remaining.length,
+        },
       }));
     } catch (e) {
       notifyError(`Could not delete query: ${String(e)}`);
@@ -1907,6 +1936,16 @@ export const useStore = create<Store>((set, get) => ({
     const list = await ipc.listRelations(profileId, database);
     set((s) => ({
       relations: { ...s.relations, [`${profileId}::${database}`]: list },
+    }));
+  },
+
+  loadSavedQueryCount: async (profileId, database) => {
+    const list = await ipc.listSavedQueries(profileId, database);
+    set((s) => ({
+      savedQueryCounts: {
+        ...s.savedQueryCounts,
+        [`${profileId}::${database}`]: list.length,
+      },
     }));
   },
 

@@ -280,6 +280,13 @@ export interface ColumnFilter {
 export interface RowsTab extends BaseTab {
   kind: "rows";
   table: string;
+  /** A nonce set fresh each time the table is opened (its tab id is otherwise
+   * deterministic and reused across close/reopen). Lets the Saved Views menu
+   * auto-drop once per open rather than once per tab id. */
+  openSeq?: number;
+  /** The table's COMMENT, shown as a tip when hovering the tab. Empty/absent
+   * when the table has none. */
+  tableComment?: string;
   page: number;
   pageSize: number;
   data: RowsResult | null;

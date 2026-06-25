@@ -766,6 +766,23 @@ function StructuredForm({
             <p className="mt-2 text-[12px] text-zinc-400 leading-relaxed">
               {active.description}
             </p>
+            {active.optionDetails && active.options && (
+              <div className="mt-3 border-t border-zinc-800/70 pt-3 space-y-2.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                  Options
+                </div>
+                {active.options.map((o) => (
+                  <div key={o}>
+                    <code className="text-[11px] font-mono font-semibold text-zinc-300">
+                      {o}
+                    </code>
+                    <p className="mt-0.5 text-[11px] text-zinc-500 leading-relaxed">
+                      {active.optionDetails?.[o]}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
             {active.default && (
               <div className="mt-3 text-[11px] text-zinc-600">
                 Default:

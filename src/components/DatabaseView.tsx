@@ -19,6 +19,7 @@ import clsx from "clsx";
 import { useDraggable, useDroppable, useDndMonitor } from "@dnd-kit/core";
 import { useStore } from "../state/store";
 import { notifyError, notifySuccess } from "../state/notify";
+import { helpHandlers } from "../state/help";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { ipc } from "../ipc";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
@@ -63,10 +64,15 @@ export function DatabaseView({ tab }: Props) {
   const renameTable = useStore((s) => s.renameTable);
   const copyTable = useStore((s) => s.copyTable);
   const loadRelations = useStore((s) => s.loadRelations);
+  const loadSavedQueryCount = useStore((s) => s.loadSavedQueryCount);
+  const forgetLastOpenedTable = useStore((s) => s.forgetLastOpenedTable);
   const relations = useStore(
     (s) => s.relations[`${tab.profileId}::${tab.database}`]
   );
   const relationCount = relations?.length ?? 0;
+  const savedQueryCount = useStore(
+    (s) => s.savedQueryCounts[`${tab.profileId}::${tab.database}`] ?? 0
+  );
   /** Tables that OWN a relation, for the tile indicator. Relations are
    * forward-only (`fromTable` peeks into `toTable`), so only the `fromTable`
    * side "has" the relation — e.g. crews → crew_members marks crews, not
@@ -84,7 +90,8 @@ export function DatabaseView({ tab }: Props) {
 
   useEffect(() => {
     loadRelations(tab.profileId, tab.database).catch(() => {});
-  }, [tab.profileId, tab.database, loadRelations]);
+    loadSavedQueryCount(tab.profileId, tab.database).catch(() => {});
+  }, [tab.profileId, tab.database, loadRelations, loadSavedQueryCount]);
 
   /** Tables that have at least one saved view, marked with a views icon.
    * Re-fetched when the table list reloads (e.g. on refresh). */
@@ -231,14 +238,14 @@ export function DatabaseView({ tab }: Props) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setSelectedTables(new Set());
-        lastSelectedRef.current = null;
-      }
+      if (e.key !== "Escape") return;
+      setSelectedTables(new Set());
+      lastSelectedRef.current = null;
+      forgetLastOpenedTable(tab.profileId, tab.database);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [forgetLastOpenedTable, tab.profileId, tab.database]);
 
   const handleTableClick = (
     name: string,
@@ -263,6 +270,7 @@ export function DatabaseView({ tab }: Props) {
       }
     }
     if (e.ctrlKey || e.metaKey) {
+      const willBeEmpty = selectedTables.size === 1 && selectedTables.has(name);
       setSelectedTables((prev) => {
         const next = new Set(prev);
         if (next.has(name)) next.delete(name);
@@ -270,6 +278,7 @@ export function DatabaseView({ tab }: Props) {
         return next;
       });
       lastSelectedRef.current = name;
+      if (willBeEmpty) forgetLastOpenedTable(tab.profileId, tab.database);
       return;
     }
     setSelectedTables(new Set([name]));
@@ -279,6 +288,9 @@ export function DatabaseView({ tab }: Props) {
   const clearSelection = () => {
     setSelectedTables(new Set());
     lastSelectedRef.current = null;
+    /* Unselecting everything forgets the remembered table, so re-opening this DB
+       view doesn't auto-reselect it. */
+    forgetLastOpenedTable(tab.profileId, tab.database);
   };
 
   /**
@@ -306,6 +318,9 @@ export function DatabaseView({ tab }: Props) {
         : new Set<string>();
     marqueeStartRef.current = { x: e.clientX, y: e.clientY };
     marqueeMovedRef.current = false;
+    /* Tracks the marquee's final selection so onUp can forget the remembered
+       table if the drag ended up selecting nothing. */
+    let finalNames = base;
 
     const onMove = (ev: PointerEvent) => {
       const start = marqueeStartRef.current;
@@ -339,6 +354,7 @@ export function DatabaseView({ tab }: Props) {
         if (hit && name) names.add(name);
       });
       setSelectedTables(names);
+      finalNames = names;
       lastSelectedRef.current = null;
     };
 
@@ -347,6 +363,9 @@ export function DatabaseView({ tab }: Props) {
       window.removeEventListener("pointerup", onUp);
       marqueeStartRef.current = null;
       setMarqueeRect(null);
+      if (marqueeMovedRef.current && finalNames.size === 0) {
+        forgetLastOpenedTable(tab.profileId, tab.database);
+      }
       if (marqueeMovedRef.current) {
         /* Swallow the trailing click so it doesn't clear the new selection. */
         const swallow = (ce: MouseEvent) => {
@@ -485,7 +504,7 @@ export function DatabaseView({ tab }: Props) {
             }
             style={{ fontSize: 13 }}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-emerald-600 text-black hover:bg-emerald-500 transition-colors"
-            title="Design a new table"
+            {...helpHandlers("Design a new table")}
           >
             <span className="relative -top-px text-[19px] leading-none">+</span> Table
           </button>
@@ -497,9 +516,14 @@ export function DatabaseView({ tab }: Props) {
             }
             style={{ fontSize: 13 }}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-emerald-600 text-black hover:bg-emerald-500 transition-colors"
-            title="Open a SQL query pane"
+            {...helpHandlers("Open a SQL query pane")}
           >
             <Code size={16} weight="bold" /> Query
+            {savedQueryCount > 0 && (
+              <span className="rounded-full bg-emerald-950/40 text-emerald-50 px-1.5 text-[10px] font-semibold tabular-nums">
+                {savedQueryCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -509,7 +533,7 @@ export function DatabaseView({ tab }: Props) {
             }
             style={{ fontSize: 13 }}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
-            title="Open the relations view for this database"
+            {...helpHandlers("Open the relations view for this database")}
           >
             <ShareNetwork size={17} /> Relations
             {relationCount > 0 && (
@@ -537,7 +561,7 @@ export function DatabaseView({ tab }: Props) {
               }}
               style={{ fontSize: 13 }}
               className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
-              title="Edit this table's structure"
+              {...helpHandlers("Edit this table's structure")}
             >
               <PencilSimple size={17} />
               Edit Table
@@ -569,7 +593,8 @@ export function DatabaseView({ tab }: Props) {
             onClick={() => refreshTab(tab.id)}
             disabled={tab.loading}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-800 disabled:opacity-30"
-            title="Refresh"
+            aria-label="Refresh"
+            {...helpHandlers("Refresh the table list")}
           >
             {tab.loading ? (
               <Loader2 size={17} className="animate-spin" />
@@ -594,7 +619,7 @@ export function DatabaseView({ tab }: Props) {
                   ? "ring-1 ring-inset ring-accent-400 bg-accent-500/25 text-accent-100"
                   : "bg-amber-300 text-black hover:bg-amber-200"
               )}
-              title="Back to all tables · drop a table here to remove it from this folder"
+              {...helpHandlers("Back to all tables · drop a table here to remove it from this folder")}
             >
               <ArrowUp size={14} />
               <span className="truncate">{tab.database}</span>
@@ -934,7 +959,9 @@ function FolderTile({
       data-el="folder-tile"
       onDoubleClick={renaming ? undefined : onOpen}
       onContextMenu={onContextMenu}
-      title={`${folder.name} · ${folder.tables.length} table(s)\nDouble-click to open · right-click for actions`}
+      {...helpHandlers(
+        `${folder.name} · ${folder.tables.length} table(s) · Double-click to open · right-click for actions`
+      )}
       className={clsx(
         "group flex items-center gap-2 px-2.5 py-1.5 bg-transparent hover:bg-accent-500/10 text-left transition-colors min-w-0 cursor-pointer break-inside-avoid",
         isOver && "ring-1 ring-inset ring-accent-400 bg-accent-500/15"

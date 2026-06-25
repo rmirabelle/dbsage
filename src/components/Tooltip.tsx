@@ -15,12 +15,15 @@ export function Tooltip({
   label,
   children,
   className,
+  maxWidth = TIP_MAX_W,
 }: {
   label: ReactNode;
   /** The trigger element(s). */
   children: ReactNode;
   /** Extra classes for the inline wrapper around the trigger. */
   className?: string;
+  /** Max width of the tip in px (default 260). */
+  maxWidth?: number;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -39,7 +42,7 @@ export function Tooltip({
     if (!rect) return;
     const tip = tipRef.current;
     const h = tip?.offsetHeight ?? 0;
-    const w = tip?.offsetWidth ?? TIP_MAX_W;
+    const w = tip?.offsetWidth ?? maxWidth;
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - w - 8));
     let top = rect.bottom + 6;
     if (top + h > window.innerHeight - 8) {
@@ -65,7 +68,7 @@ export function Tooltip({
               position: "fixed",
               left: pos?.left ?? rect.left,
               top: pos?.top ?? rect.bottom + 6,
-              maxWidth: TIP_MAX_W,
+              maxWidth,
               visibility: pos ? "visible" : "hidden",
             }}
             className="z-[80] pointer-events-none rounded-lg border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm px-3 py-2 text-[12.5px] leading-relaxed text-zinc-200 shadow-xl shadow-black/60"

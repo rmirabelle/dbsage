@@ -3,6 +3,7 @@ import { X, Gauge, CheckCircle, Lightbulb, TreeStructure } from "@phosphor-icons
 import clsx from "clsx";
 import { AnalysisFinding } from "./AnalysisFinding";
 import { PlanBreakdown } from "./PlanBreakdown";
+import { useUi } from "../state/ui";
 import type { AnalysisResult, Grade } from "../lib/queryAnalysis/types";
 
 const GRADE_STYLE: Record<Grade, string> = {
@@ -34,14 +35,45 @@ export function QueryAnalysisPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const width = useUi((s) => s.analysisPanelWidth);
+  const setWidth = useUi((s) => s.setAnalysisPanelWidth);
+
+  /* Drag the left edge to resize. The panel is anchored to the right, so moving
+     the pointer left (clientX decreasing) widens it. The width persists. */
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = width;
+    const onMove = (ev: PointerEvent) => setWidth(startW + (startX - ev.clientX));
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  };
+
   const [view, setView] = useState<"suggestions" | "plan">("suggestions");
   const { grade, score, headline, findings, plan, meta } = analysis;
 
   return (
     <div
       data-el="query-analysis-panel"
-      className="absolute top-0 right-0 z-40 h-full w-[880px] max-w-[92vw] flex flex-col border-l border-zinc-800 bg-zinc-950/95 backdrop-blur-sm shadow-2xl shadow-black/60"
+      style={{ width }}
+      className="absolute top-0 right-0 z-40 h-full max-w-[92vw] flex flex-col border-l border-zinc-800 bg-zinc-950/95 backdrop-blur-sm shadow-2xl shadow-black/60"
     >
+      {/* Left-edge resize grip. */}
+      <div
+        data-el="analysis-resize-handle"
+        onPointerDown={startResize}
+        className="absolute left-0 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent-500/40 transition-colors"
+        title="Drag to resize"
+      />
+
       <div className="shrink-0 flex items-center gap-2 px-3 h-10 border-b border-zinc-800 dbs-toolbar">
         <Gauge size={17} className="text-accent-400 shrink-0" />
         <span className="text-[13px] font-semibold text-zinc-100">Query Analysis</span>
