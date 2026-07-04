@@ -11,12 +11,13 @@ import { emitTo } from "@tauri-apps/api/event";
 import { ipc } from "../ipc";
 import { revealWindow } from "../lib/revealWindow";
 import { setWindowGlyphIcon, GLYPHS, type Glyph } from "../lib/windowIcon";
-import { useStore } from "../state/store";
+import { useStore, isQueryTabDirty } from "../state/store";
 import { useUi } from "../state/ui";
 import { useZoomShortcuts } from "../hooks/useZoomShortcuts";
 import { TabBody, tabTitle } from "./Tabs";
 import { TabDndProvider } from "./TabDndProvider";
 import { WindowControls } from "./WindowControls";
+import { UnsavedChangesModal } from "./UnsavedChangesModal";
 import { Toaster } from "./Toaster";
 import { CopyProgress } from "./CopyProgress";
 import { SqlExportProgress } from "./SqlExportProgress";
@@ -35,6 +36,11 @@ const inRect = (x: number, y: number, r: ScreenRect | null) =>
 
 /** Tears down the in-flight drag watch (move listener + mouseup handler). */
 let cancelWatch: (() => void) | null = null;
+
+/** Set true right before a close that must skip the unsaved-changes guard — a
+ * dock hand-off (the tab moves to the main window, nothing is lost) or a
+ * confirmed discard. Per-window: each torn window is its own JS context. */
+let bypassCloseGuard = false;
 
 /**
  * While a window drag is in progress, watch whether the titlebar is over the
@@ -67,7 +73,10 @@ async function armDockWatch() {
       const docked = st.tabs.find((t) => t.id === st.activeTabId);
       if (docked) {
         emitTo("main", "dbsage://dock-tab", docked)
-          .then(() => win.close())
+          .then(() => {
+            bypassCloseGuard = true;
+            win.close();
+          })
           .catch(() => {});
         return;
       }
@@ -121,11 +130,30 @@ async function armDockWatch() {
  */
 export function TornTabWindow({ label }: { label: string }) {
   const [missing, setMissing] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
   const tabs = useStore((s) => s.tabs);
   const activeTabId = useStore((s) => s.activeTabId);
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
   const title = active ? tabTitle(active) : null;
   const tabsZoom = useUi((s) => s.tabsZoom);
+
+  /* Guard the OS close: a dirty query window confirms before discarding its
+     edits. Dock hand-offs and a confirmed discard set `bypassCloseGuard` so they
+     pass straight through. */
+  useEffect(() => {
+    const un = getCurrentWindow().onCloseRequested((event) => {
+      if (bypassCloseGuard) return;
+      const st = useStore.getState();
+      const t = st.tabs.find((x) => x.id === st.activeTabId);
+      if (t && t.kind === "query" && isQueryTabDirty(t)) {
+        event.preventDefault();
+        setConfirmClose(true);
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   /* Ctrl+wheel / Ctrl+= zoom works here too, driving the shared tabs zoom. */
   useZoomShortcuts();
@@ -184,6 +212,22 @@ export function TornTabWindow({ label }: { label: string }) {
       <Toaster />
       <SqlExportProgress />
       <CopyProgress />
+      {confirmClose && (
+        <UnsavedChangesModal
+          message={
+            <p>
+              This query has unsaved changes. Close the window without saving
+              them?
+            </p>
+          }
+          discardLabel="Close Without Saving"
+          onCancel={() => setConfirmClose(false)}
+          onDiscard={() => {
+            bypassCloseGuard = true;
+            getCurrentWindow().close();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -226,7 +270,10 @@ function TornTabTitleBar({ tab }: { tab: Tab | null }) {
           <button
             onClick={() => {
               emitTo("main", "dbsage://dock-tab", tab)
-                .then(() => getCurrentWindow().close())
+                .then(() => {
+                  bypassCloseGuard = true;
+                  getCurrentWindow().close();
+                })
                 .catch(() => {});
             }}
             title="Reattach to the main window"

@@ -411,6 +411,10 @@ export interface QueryTab extends BaseTab {
   savedQueries: SavedQuery[];
   /** The saved query whose SQL is currently loaded, or null. */
   activeSavedQuery: string | null;
+  /** The editor's clean baseline: the SQL as it was when the tab was opened, or
+   * a saved query was last loaded/saved. `sql !== savedSql` means unsaved edits,
+   * which prompts a confirm before the tab/window closes. */
+  savedSql?: string;
   /** Silent execution history for this tab's database, most-recent-first. */
   queryHistory: QueryHistoryItem[];
   /** Whether the Inspector panel is showing. Lives on the tab so tearing the

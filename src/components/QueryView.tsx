@@ -6,6 +6,7 @@ import {
   FloppyDisk,
   CaretDown,
   Binoculars,
+  BracketsCurly,
   Gauge,
   Database,
   PlugsConnected,
@@ -21,19 +22,22 @@ import { DataGrid } from "./DataGrid";
 import { StyledSelect } from "./StyledSelect";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { ExportButton } from "./ExportButton";
-import { SqlEditor } from "./SqlEditor";
+import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
 import { QueryAnalysisPanel } from "./QueryAnalysisPanel";
 import { SavedQueryMenu } from "./SavedQueryMenu";
 import { QueryHistoryButton } from "./QueryHistoryButton";
+import { AsJsonDialog, type JsonSnippetMode } from "./AsJsonDialog";
 import { compactDisplay, extractJsonCandidates } from "../lib/jsonPath";
 import { formatSql, type FormatStyle } from "../lib/formatSql";
 import { scanFromTables } from "../lib/sqlCompletion";
 import { SQL_KEYWORDS } from "../lib/sqlHighlight";
-import type { ColumnFilter, QueryTab, RowRecord, SortSpec } from "../types";
+import { SQL_SNIPPETS } from "../lib/sqlSnippets";
+import type { ColumnFilter, QueryTab, Relation, RowRecord, SortSpec } from "../types";
 
 /** Stable empty fallback so the selector never returns a fresh array (which, in
  * a window whose store has no tree loaded, would loop useSyncExternalStore). */
 const NO_DATABASES: string[] = [];
+const NO_RELATIONS: Relation[] = [];
 
 export function QueryView({ tab }: { tab: QueryTab }) {
   const profiles = useStore((s) => s.profiles);
@@ -68,10 +72,39 @@ export function QueryView({ tab }: { tab: QueryTab }) {
 
   /* Focus the editor when this query pane becomes active (new tab, or switching
      to it) so the user can start typing immediately. */
-  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<SqlEditorHandle>(null);
   useEffect(() => {
     editorRef.current?.focus();
   }, [tab.id]);
+
+  /* Insert-menu (DSL macros): a dropdown of SQL-generating helpers. AS_JSON
+     opens a dialog; its output is injected at the editor caret. */
+  const [insertMenuOpen, setInsertMenuOpen] = useState(false);
+  const [jsonSnippet, setJsonSnippet] = useState<JsonSnippetMode | null>(null);
+  const insertMenuRef = useRef<HTMLDivElement>(null);
+
+  /* Relations power AS_JSON_ARRAY's foreign-key auto-detection; load them so
+     they're ready when the dialog opens. */
+  const relations = useStore(
+    (s) => s.relations[`${tab.profileId}::${tab.database}`] ?? NO_RELATIONS
+  );
+  const loadRelations = useStore((s) => s.loadRelations);
+  useEffect(() => {
+    loadRelations(tab.profileId, tab.database).catch(() => {});
+  }, [tab.profileId, tab.database, loadRelations]);
+  useEffect(() => {
+    if (!insertMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        insertMenuRef.current &&
+        !insertMenuRef.current.contains(e.target as Node)
+      ) {
+        setInsertMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [insertMenuOpen]);
 
   /* Split Format button: remembers the chosen style across sessions. */
   const [formatStyle, setFormatStyle] = useState<FormatStyle>(() =>
@@ -443,7 +476,43 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           </span>
         )}
 
-        <div ref={formatMenuRef} className="relative inline-flex ml-auto">
+        <div ref={insertMenuRef} className="relative inline-flex ml-auto">
+          <button
+            data-el="query-insert-btn"
+            onClick={() => setInsertMenuOpen((o) => !o)}
+            title="Insert a generated SQL snippet"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors"
+          >
+            <BracketsCurly size={16} className="text-sky-400" />
+            Insert
+            <CaretDown size={13} />
+          </button>
+          {insertMenuOpen && (
+            <div
+              data-el="query-insert-menu"
+              className="absolute top-full left-0 mt-1 z-50 w-72 rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-[12px]"
+            >
+              {SQL_SNIPPETS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setInsertMenuOpen(false);
+                    if (s.id === "as_json") setJsonSnippet("object");
+                    else if (s.id === "as_json_array") setJsonSnippet("array");
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-zinc-950 flex flex-col gap-0.5"
+                >
+                  <span className="font-mono text-sky-300">{s.label}</span>
+                  <span className="text-[10px] text-zinc-500">
+                    {s.description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div ref={formatMenuRef} className="relative inline-flex">
           <button
             data-el="query-format-btn"
             onClick={() => runFormat(formatStyle)}
@@ -709,6 +778,19 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           database={tab.database}
           onClose={() => setShowAnalysis(false)}
           onReExplain={() => explainQuery(tab.id)}
+        />
+      )}
+
+      {jsonSnippet && (
+        <AsJsonDialog
+          mode={jsonSnippet}
+          profileId={tab.profileId}
+          database={tab.database}
+          tables={tableNames}
+          relations={relations}
+          sql={tab.sql}
+          onInsert={(text) => editorRef.current?.insertText(text)}
+          onClose={() => setJsonSnippet(null)}
         />
       )}
     </div>

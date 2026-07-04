@@ -1,6 +1,6 @@
 [package]
 name = "dbsage"
-version = "0.14.3"
+version = "0.14.4"
 description = "DB Sage â€” sleek MySQL desktop client"
 authors = ["Rob Mirabelle"]
 edition = "2021"

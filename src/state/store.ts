@@ -61,6 +61,12 @@ export function isDesignerTabDirty(tab: CreateTableTab): boolean {
   );
 }
 
+/** True when a query tab's editor has unsaved edits versus its clean baseline
+ * (the SQL at open, or when a saved query was last loaded/saved). */
+export function isQueryTabDirty(tab: QueryTab): boolean {
+  return tab.sql !== (tab.savedSql ?? "");
+}
+
 /** Persist a rows tab's column setup (visibility, filters, JSON "Show", widths)
  * to the backend store so reopening the table restores it. Best-effort. */
 function persistColumnSetup(tab: RowsTab) {
@@ -1119,7 +1125,11 @@ export const useStore = create<Store>((set, get) => ({
 
   requestCloseTab: (tabId) => {
     const tab = get().tabs.find((t) => t.id === tabId);
-    if (tab && tab.kind === "create-table" && isDesignerTabDirty(tab)) {
+    const dirty =
+      tab != null &&
+      ((tab.kind === "create-table" && isDesignerTabDirty(tab)) ||
+        (tab.kind === "query" && isQueryTabDirty(tab)));
+    if (dirty) {
       set({ pendingCloseTabId: tabId });
       return;
     }
@@ -1293,6 +1303,7 @@ export const useStore = create<Store>((set, get) => ({
       roundTripMs: null,
       savedQueries: [],
       activeSavedQuery: null,
+      savedSql: "",
       queryHistory: [],
       inspectorOpen: true,
     };
@@ -1580,7 +1591,7 @@ export const useStore = create<Store>((set, get) => ({
       set((s) => ({
         tabs: s.tabs.map((t) =>
           t.id === tabId && t.kind === "query"
-            ? { ...t, savedQueries, activeSavedQuery: trimmed }
+            ? { ...t, savedQueries, activeSavedQuery: trimmed, savedSql: query.sql }
             : t
         ),
         savedQueryCounts: {
@@ -1602,7 +1613,7 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "query"
-          ? { ...t, sql: saved.sql, activeSavedQuery: name }
+          ? { ...t, sql: saved.sql, activeSavedQuery: name, savedSql: saved.sql }
           : t
       ),
     }));
@@ -1639,7 +1650,7 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "query"
-          ? { ...t, sql, activeSavedQuery: null }
+          ? { ...t, sql, activeSavedQuery: null, savedSql: sql }
           : t
       ),
     }));

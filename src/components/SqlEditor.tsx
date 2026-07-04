@@ -1,12 +1,12 @@
 import {
   forwardRef,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type MutableRefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import clsx from "clsx";
@@ -42,13 +42,20 @@ interface Suggestion {
   kind: CompletionKind;
 }
 
+/** Imperative surface exposed to parents via the ref. */
+export interface SqlEditorHandle {
+  focus: () => void;
+  /** Replace the current selection with `text`, leaving the caret after it. */
+  insertText: (text: string) => void;
+}
+
 /**
  * Syntax-highlighting SQL editor (transparent textarea over a highlighted
  * backdrop) with lightweight autocompletion. A third, invisible "measure" layer
  * — sharing the textarea's exact metrics — places a marker at the caret so the
  * completion popup can be anchored to it without a separate mirror hack.
  */
-export const SqlEditor = forwardRef<HTMLTextAreaElement, Props>(function SqlEditor(
+export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
   { value, onChange, onSubmit, placeholder, completion },
   forwardedRef
 ) {
@@ -70,10 +77,28 @@ export const SqlEditor = forwardRef<HTMLTextAreaElement, Props>(function SqlEdit
 
   const setRefs = (node: HTMLTextAreaElement | null) => {
     innerRef.current = node;
-    if (typeof forwardedRef === "function") forwardedRef(node);
-    else if (forwardedRef)
-      (forwardedRef as MutableRefObject<HTMLTextAreaElement | null>).current = node;
   };
+
+  useImperativeHandle(forwardedRef, () => ({
+    focus: () => innerRef.current?.focus(),
+    /* Reuse the accept()-path machinery: suppress the auto-open for the new
+       value and queue the caret so it lands after the inserted text (the
+       pending-caret effect applies it once the controlled value commits). */
+    insertText: (text: string) => {
+      const ta = innerRef.current;
+      if (!ta) return;
+      const cur = ta.value;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const next = cur.slice(0, start) + text + cur.slice(end);
+      suppressValueRef.current = next;
+      pendingCaretRef.current = start + text.length;
+      setOpen(false);
+      manualRef.current = false;
+      onChange(next);
+      requestAnimationFrame(() => innerRef.current?.focus());
+    },
+  }));
 
   const query = useMemo(
     () => (completion ? analyzeCompletion(value, caret) : null),
