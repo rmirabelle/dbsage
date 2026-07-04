@@ -205,6 +205,20 @@ pub fn set_peek_columns(state: State<'_, AppState>, label: String, hidden_column
     }
 }
 
+/// Record a peek window's current Inspector-panel visibility into its registry
+/// (and seed) entry, so a saved table view restores whether the peek's Inspector
+/// was showing, and a webview reload re-seeds with it. No-op if the peek isn't
+/// registered (already closed).
+#[tauri::command]
+pub fn set_peek_inspector(state: State<'_, AppState>, label: String, open: bool) {
+    if let Some(Value::Object(m)) = state.peeks.lock().unwrap().get_mut(&label) {
+        m.insert("inspectorOpen".into(), json!(open));
+    }
+    if let Some(Value::Object(m)) = state.window_seeds.lock().unwrap().get_mut(&label) {
+        m.insert("inspectorOpen".into(), json!(open));
+    }
+}
+
 /// Publish the main window's tab-strip rectangle (screen CSS px) so a dragging
 /// tab-window can hit-test it for re-docking. `rect` is `{ left, top, right,
 /// bottom }` or `null` to clear.

@@ -54,6 +54,9 @@ interface Props {
   readOnly?: boolean;
   /** Reports the currently selected row indices (ascending) on every change. */
   onSelectionChange?: (indices: number[]) => void;
+  /** Row indices to select on mount — restores a persisted selection when the
+   * grid is (re)mounted, e.g. carried into a torn-off window. Read once. */
+  initialSelectedRows?: number[];
   /** Persisted manual column widths (px), keyed by column name. */
   columnWidths?: Record<string, number>;
   /** Reports the full name→width map after a resize completes, for persistence. */
@@ -118,6 +121,7 @@ export function DataGrid({
   clearActiveCellOnRowSelect = false,
   readOnly = false,
   onSelectionChange,
+  initialSelectedRows,
   columnWidths,
   onColumnWidthsChange,
   copyTarget,
@@ -138,7 +142,9 @@ export function DataGrid({
   const [columnsMenu, setColumnsMenu] = useState<{ x: number; y: number } | null>(
     null
   );
-  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(
+    () => new Set(initialSelectedRows ?? [])
+  );
   const [anchor, setAnchor] = useState<number | null>(null);
   /** Row indices pending a delete confirmation (null = dialog closed). */
   const [deleteConfirm, setDeleteConfirm] = useState<number[] | null>(null);
@@ -193,12 +199,28 @@ export function DataGrid({
     onColumnWidthsChange(next);
   };
 
-  /* Clear transient selection/edit state when the columns or page change. */
+  /* Clear transient selection/edit state when the columns or page change — but
+     NOT on the initial mount, so a persisted selection seeded from the tab
+     (e.g. carried into a torn-off window) survives. A ref holds the identity
+     seen last render; it starts at the mount values so the first run is a
+     no-op. */
+  /* Clear transient selection/edit state only when the VIEW actually changes —
+     columns, page (offset), sort, or filters. Keying on these props (not the
+     `rows` array reference) means re-applying the same page's data — a torn-off
+     window seeding from its tab, a same-view reload, StrictMode's double-invoke
+     — does NOT wipe a persisted selection, while a real page/sort/filter change
+     still does. */
+  const viewKey = `${columnKey}|${offset}|${JSON.stringify(sort)}|${JSON.stringify(
+    filters
+  )}`;
+  const clearGuardRef = useRef(viewKey);
   useEffect(() => {
+    if (clearGuardRef.current === viewKey) return;
+    clearGuardRef.current = viewKey;
     setSelectedRows(new Set());
     setAnchor(null);
     setEditing(null);
-  }, [columnKey, rows]);
+  }, [viewKey]);
 
   useEffect(() => {
     const onUp = () => {

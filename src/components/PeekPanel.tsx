@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowSquareOut,
+  Binoculars,
   CircleNotch,
   ShareNetwork,
   Warning,
@@ -14,6 +15,7 @@ import { ipc } from "../ipc";
 import { useStore } from "../state/store";
 import { useUi } from "../state/ui";
 import { DataGrid } from "./DataGrid";
+import { ExpandedPanel } from "./ExpandedPanel";
 import { WindowControls } from "./WindowControls";
 import {
   relationTargets,
@@ -55,6 +57,8 @@ export function PeekPanel({
   target,
   initialHiddenColumns,
   onHiddenColumnsChange,
+  initialInspectorOpen,
+  onInspectorOpenChange,
   onOpenChildPeek,
   onOpenAsTab,
 }: {
@@ -67,6 +71,12 @@ export function PeekPanel({
   /** Report the peek's current hidden columns so the host can persist them for
    * saved-view capture. */
   onHiddenColumnsChange?: (hidden: string[]) => void;
+  /** Whether the Inspector panel should start open — true only when restoring a
+   * saved view whose peek had it showing; otherwise it opens closed. */
+  initialInspectorOpen?: boolean;
+  /** Report the Inspector's open/closed state so the host can persist it for
+   * saved-view capture. */
+  onInspectorOpenChange?: (open: boolean) => void;
   /** Peek into a relation found on this peek's own table (opens a new window). */
   onOpenChildPeek: (target: RelationTarget, sourceColumn: string, value: string) => void;
   /** Promote this peek's table to a full, filtered tab in the main window. */
@@ -159,11 +169,34 @@ export function PeekPanel({
     [relations, target.table]
   );
   const activeColumnName = activeCell?.column ?? null;
+  const activeColumn =
+    activeCell && data
+      ? data.columns.find((c) => c.name === activeCell.column) ?? null
+      : null;
   const activeValue =
     activeCell && data
       ? data.rows[activeCell.rowIndex]?.[activeCell.column]
       : undefined;
+  const activeRowOrdinal = activeCell ? activeCell.rowIndex + 1 : null;
   const peekValue = cellToFilterValue(activeValue);
+
+  /** The read-only Inspector panel for the selected cell. Starts closed on a
+   * freshly-launched peek, but a saved view restores it open when it was showing
+   * at save time. Every change reports up so the host persists it (via the peek
+   * registry) for the next saved-view capture. */
+  const [expanded, setExpandedState] = useState(initialInspectorOpen ?? false);
+  const setExpanded = (open: boolean) => {
+    setExpandedState(open);
+    onInspectorOpenChange?.(open);
+  };
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
 
   /* Broadcast this peek's selection so peeks launched from its table+column
      (nested peeks) live-follow it, just like the main grid drives its peeks. */
@@ -376,6 +409,22 @@ export function PeekPanel({
         </span>
 
         <button
+          data-el="peek-inspector-btn"
+          onClick={() => setExpanded(!expanded)}
+          disabled={!data}
+          className={clsx(
+            "shrink-0 inline-flex items-center justify-center p-1 rounded transition-colors disabled:opacity-40",
+            expanded
+              ? "bg-zinc-700 text-emerald-300"
+              : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+          )}
+          title="Toggle the Inspector panel"
+          aria-label="Toggle the Inspector panel"
+        >
+          <Binoculars size={15} />
+        </button>
+
+        <button
           data-el="peek-open-tab-btn"
           onClick={onOpenAsTab}
           className="shrink-0 inline-flex items-center justify-center p-1 rounded bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
@@ -402,43 +451,55 @@ export function PeekPanel({
            window's table views); the titlebar above is window chrome and stays
            fixed, mirroring the main window's layout. */
         <div
-          className="relative flex-1 min-h-0 flex flex-col"
+          className="flex-1 min-h-0 flex flex-col"
           style={tabsZoom !== 1 ? { zoom: tabsZoom } : undefined}
         >
-          <DataGrid
-            readOnly
-            hideValueTooltip
-            columns={data.columns}
-            rows={data.rows}
-            offset={data.offset}
-            sort={sort}
-            filters={extraFilters}
-            hiddenColumns={hiddenColumns}
-            jsonDisplay={jsonDisplay}
-            columnWidths={columnWidths}
-            peekableColumns={peekableColumns}
-            activeCell={activeCell}
-            clearActiveCellOnRowSelect
-            onActiveCellChange={setActiveCell}
-            onCellMenu={onCellMenu}
-            onColumnWidthsChange={setColumnWidths}
-            onSortChange={setSort}
-            onFilterChange={onFilterChange}
-            onHiddenColumnsChange={(hidden) => {
-              setHiddenColumns(hidden);
-              onHiddenColumnsChange?.(hidden);
-            }}
-            onJsonShow={(column, path) =>
-              setJsonDisplay((prev) => {
-                const next = { ...prev };
-                if (path) next[column] = path;
-                else delete next[column];
-                return next;
-              })
-            }
-            onCellEdit={async () => {}}
-          />
-          <div className="pointer-events-none absolute inset-0 bg-violet-500/[0.06]" />
+          <div className="relative flex-1 min-h-0 flex flex-col">
+            <DataGrid
+              readOnly
+              hideValueTooltip
+              columns={data.columns}
+              rows={data.rows}
+              offset={data.offset}
+              sort={sort}
+              filters={extraFilters}
+              hiddenColumns={hiddenColumns}
+              jsonDisplay={jsonDisplay}
+              columnWidths={columnWidths}
+              peekableColumns={peekableColumns}
+              activeCell={activeCell}
+              clearActiveCellOnRowSelect
+              onActiveCellChange={setActiveCell}
+              onCellMenu={onCellMenu}
+              onColumnWidthsChange={setColumnWidths}
+              onSortChange={setSort}
+              onFilterChange={onFilterChange}
+              onHiddenColumnsChange={(hidden) => {
+                setHiddenColumns(hidden);
+                onHiddenColumnsChange?.(hidden);
+              }}
+              onJsonShow={(column, path) =>
+                setJsonDisplay((prev) => {
+                  const next = { ...prev };
+                  if (path) next[column] = path;
+                  else delete next[column];
+                  return next;
+                })
+              }
+              onCellEdit={async () => {}}
+            />
+            <div className="pointer-events-none absolute inset-0 bg-violet-500/[0.06]" />
+          </div>
+          {expanded && (
+            <ExpandedPanel
+              readOnly
+              editable={false}
+              column={activeColumn}
+              value={activeValue}
+              rowOrdinal={activeRowOrdinal}
+              onClose={() => setExpanded(false)}
+            />
+          )}
         </div>
       ) : (
         <div className="flex-1" />

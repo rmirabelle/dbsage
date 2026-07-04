@@ -114,7 +114,8 @@ export function PeekWindow({ label }: { label: string }) {
   };
 
   /** Promote this peek's table to a full, filtered tab — handled by the main
-   * window. Per the no-auto-close rule, this peek window stays open. */
+   * window — then close this window: the tab supersedes the peek (the one
+   * exception to the peeks-stay-open rule). */
   const openAsTab = () => {
     if (!seed) return;
     emitTo("main", "dbsage://open-table-as-tab", {
@@ -122,7 +123,9 @@ export function PeekWindow({ label }: { label: string }) {
       profileName: seed.profileName,
       database: seed.database,
       target: target ?? seed.target,
-    }).catch(() => {});
+    })
+      .then(() => getCurrentWindow().close())
+      .catch(() => {});
   };
 
   return (
@@ -135,6 +138,10 @@ export function PeekWindow({ label }: { label: string }) {
           initialHiddenColumns={seed.hiddenColumns}
           onHiddenColumnsChange={(hidden) =>
             ipc.setPeekColumns(label, hidden).catch(() => {})
+          }
+          initialInspectorOpen={seed.inspectorOpen}
+          onInspectorOpenChange={(open) =>
+            ipc.setPeekInspector(label, open).catch(() => {})
           }
           onOpenChildPeek={openChildPeek}
           onOpenAsTab={openAsTab}

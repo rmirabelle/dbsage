@@ -287,6 +287,7 @@ pub fn run() {
             windows::open_peek_window,
             windows::list_open_peeks,
             windows::set_peek_columns,
+            windows::set_peek_inspector,
             windows::close_all_peeks,
             windows::set_tabstrip_rect,
             windows::get_tabstrip_rect,

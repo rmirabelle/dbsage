@@ -145,29 +145,19 @@ export function Tabs() {
     if (!live) return;
     const MIN_W = 480;
     const MIN_H = 320;
-    /* The size template: the visible grid (or a query's empty-state pane) —
-       plus, for query tabs, the SQL editor above it, so the torn window fits
-       editor and results together. */
-    const grid =
-      document.querySelector('[data-el="data-grid"]') ??
-      document.querySelector('[data-el="query-empty"]') ??
-      document.querySelector('[data-el="main-pane"]');
-    const editor =
-      live.kind === "query"
-        ? document.querySelector('[data-el="query-editor"]')
-        : null;
-    const g = grid?.getBoundingClientRect();
-    const ed = editor?.getBoundingClientRect();
-    const width = Math.max(MIN_W, (g?.width ?? 1050) - 50);
-    const height = Math.max(MIN_H, (g?.height ?? 730) + (ed?.height ?? 0) - 50);
-    /* Center the window on the measured region — editor top through grid
-       bottom (screen CSS px). */
-    const top = ed ? ed.top : g?.top;
+    /* Size the window to the whole on-screen tab content (the main pane), a
+       touch smaller, and center it over that region. Measuring the pane — not
+       the inner data grid — keeps the height correct even when the Inspector
+       panel is compressing the grid; the pane already spans editor + grid +
+       inspector for every tab kind. */
+    const pane = document.querySelector('[data-el="main-pane"]');
+    const p = pane?.getBoundingClientRect();
+    const width = Math.max(MIN_W, (p?.width ?? 1050) - 40);
+    const height = Math.max(MIN_H, (p?.height ?? 730) - 40);
     const cx =
-      window.screenX + (g ? g.left + g.width / 2 : window.innerWidth / 2);
+      window.screenX + (p ? p.left + p.width / 2 : window.innerWidth / 2);
     const cy =
-      window.screenY +
-      (g && top != null ? (top + g.bottom) / 2 : window.innerHeight / 2);
+      window.screenY + (p ? p.top + p.height / 2 : window.innerHeight / 2);
     ipc
       .openTabWindow(
         live,
@@ -469,6 +459,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const openTableEditor = useStore((s) => s.openTableEditor);
   const loadRelations = useStore((s) => s.loadRelations);
   const setRowsActiveCell = useStore((s) => s.setRowsActiveCell);
+  const setRowsSelection = useStore((s) => s.setRowsSelection);
   const relations =
     useStore((s) => s.relations[`${tab.profileId}::${tab.database}`]) ??
     EMPTY_RELATIONS;
@@ -477,11 +468,12 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const activeCell = tab.activeCell;
   const setActiveCell = (cell: { rowIndex: number; column: string } | null) =>
     setRowsActiveCell(tab.id, cell);
-  /** The Inspector starts open in the main window but closed in a torn-off
-   * window — a freshly torn tab shouldn't surrender half its height to it. */
-  const [expanded, setExpanded] = useState(
-    () => getCurrentWindow().label === "main"
-  );
+  /** Inspector visibility lives on the tab (not component state) so tearing
+   * the tab into its own window — or docking it back — keeps whatever state it
+   * had. Tabs predating the field fall back to open-in-main, closed elsewhere. */
+  const setTabInspectorOpen = useStore((s) => s.setTabInspectorOpen);
+  const expanded = tab.inspectorOpen ?? getCurrentWindow().label === "main";
+  const setExpanded = (open: boolean) => setTabInspectorOpen(tab.id, open);
   const [insertOpen, setInsertOpen] = useState(false);
   /** Rows whose duplicate hit a unique/PK conflict, awaiting edit-and-retry.
    * Shown one at a time; submitting or cancelling advances to the next. */
@@ -793,7 +785,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
 
         <button
           data-el="expanded-toggle-btn"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => setExpanded(!expanded)}
           className={clsx(
             "ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 hover:bg-zinc-700",
             expanded ? "text-emerald-300" : "text-zinc-500 hover:text-zinc-400"
@@ -819,6 +811,12 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         </div>
       ) : tab.data ? (
         <DataGrid
+          /* Keyed by tab so switching to (or docking back) another rows tab
+             remounts the grid — that's what re-runs the selection seed from
+             `tab.selectedRows`. Without it, React reuses one grid instance
+             across same-kind tab switches and the seed (a useState initializer)
+             never re-fires. */
+          key={tab.id}
           columns={tab.data.columns}
           rows={tab.data.rows}
           offset={tab.data.offset}
@@ -831,6 +829,8 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           peekableColumns={peekableColumns}
           activeCell={activeCell}
           clearActiveCellOnRowSelect
+          initialSelectedRows={tab.selectedRows}
+          onSelectionChange={(indices) => setRowsSelection(tab.id, indices)}
           onActiveCellChange={setActiveCell}
           onCellMenu={onCellMenu}
           onColumnWidthsChange={(w) => setColumnWidths(tab.id, w)}

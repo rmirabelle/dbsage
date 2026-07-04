@@ -389,6 +389,12 @@ interface Store {
     tabId: string,
     cell: { rowIndex: number; column: string } | null
   ) => void;
+  /** Persist the highlighted row indices, so a torn-off window (or tab switch)
+   * keeps the selection. */
+  setRowsSelection: (tabId: string, indices: number[]) => void;
+  /** Show/hide the Inspector panel on a rows or query tab. On the tab (not
+   * component state) so a torn-off window inherits the docked state. */
+  setTabInspectorOpen: (tabId: string, open: boolean) => void;
   /** Persist manual column-width overrides (px, keyed by column name). */
   setColumnWidths: (tabId: string, widths: Record<string, number>) => void;
   /** Save the rows tab's current view (columns, widths, sort, filters, show) as
@@ -991,6 +997,7 @@ export const useStore = create<Store>((set, get) => ({
       presets,
       activePreset: null,
       activeCell: null,
+      inspectorOpen: true,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     await loadTabPage(tabId, 1, set, get);
@@ -1287,6 +1294,7 @@ export const useStore = create<Store>((set, get) => ({
       savedQueries: [],
       activeSavedQuery: null,
       queryHistory: [],
+      inspectorOpen: true,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     loadSavedQueries(tabId, set, get);
@@ -2074,6 +2082,26 @@ export const useStore = create<Store>((set, get) => ({
     }));
   },
 
+  setRowsSelection: (tabId, indices) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows"
+          ? { ...t, selectedRows: indices }
+          : t
+      ),
+    }));
+  },
+
+  setTabInspectorOpen: (tabId, open) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && (t.kind === "rows" || t.kind === "query")
+          ? { ...t, inspectorOpen: open }
+          : t
+      ),
+    }));
+  },
+
   setJsonDisplay: (tabId, column, path) => {
     set((s) => ({
       tabs: s.tabs.map((t) => {
@@ -2201,6 +2229,7 @@ export const useStore = create<Store>((set, get) => ({
         sourceTable: p.sourceTable,
         sourceColumn: p.sourceColumn,
         hiddenColumns: p.hiddenColumns,
+        inspectorOpen: p.inspectorOpen,
       };
       ipc
         .openPeekWindow(seed, p.x ?? 120, p.y ?? 120, p.width ?? 900, p.height ?? 440)

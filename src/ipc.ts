@@ -361,6 +361,8 @@ export const ipc = {
   listOpenPeeks: <T>() => invoke<T[]>("list_open_peeks"),
   setPeekColumns: (label: string, hiddenColumns: string[]) =>
     invoke<void>("set_peek_columns", { label, hiddenColumns }),
+  setPeekInspector: (label: string, open: boolean) =>
+    invoke<void>("set_peek_inspector", { label, open }),
   closeAllPeeks: () => invoke<void>("close_all_peeks"),
   setTabstripRect: (rect: unknown | null) =>
     invoke<void>("set_tabstrip_rect", { rect }),

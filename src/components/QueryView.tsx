@@ -119,12 +119,13 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [editorHeight, setEditorHeight] = useState(180);
 
-  /* Expanded-value panel (read-only) for the active result cell. Starts open in
-     the main window but closed in a torn-off window — a freshly torn tab
-     shouldn't surrender half its height to it. */
-  const [expanded, setExpanded] = useState(
-    () => getCurrentWindow().label === "main"
-  );
+  /* Expanded-value panel (read-only) for the active result cell. Visibility
+     lives on the tab (not component state) so tearing the tab into its own
+     window — or docking it back — keeps whatever state it had. Tabs predating
+     the field fall back to open-in-main, closed elsewhere. */
+  const setTabInspectorOpen = useStore((s) => s.setTabInspectorOpen);
+  const expanded = tab.inspectorOpen ?? getCurrentWindow().label === "main";
+  const setExpanded = (open: boolean) => setTabInspectorOpen(tab.id, open);
   useEffect(() => {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
@@ -539,7 +540,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
 
         <button
           data-el="expanded-toggle-btn"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => setExpanded(!expanded)}
           disabled={!hasResultSet}
           title="Toggle the Inspector panel"
           className={clsx(

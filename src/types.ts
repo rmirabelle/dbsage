@@ -165,6 +165,9 @@ export interface PeekSeed {
   /** Columns hidden in this peek's grid. Carried so a saved view restores the
    * peek's column visibility; absent on a freshly-launched peek (none hidden). */
   hiddenColumns?: string[];
+  /** Whether this peek's Inspector panel was showing. Carried so a saved view
+   * restores it visible; absent/false on a freshly-launched peek. */
+  inspectorOpen?: boolean;
 }
 
 /** A peek as reported by `list_open_peeks`: its seed plus current on-screen
@@ -311,6 +314,13 @@ export interface RowsTab extends BaseTab {
   /** The selected cell, persisted so switching tabs doesn't lose the user's
    * place. Cleared when the row set actually changes (page/sort/filter). */
   activeCell: { rowIndex: number; column: string } | null;
+  /** The highlighted row indices, persisted so tearing the tab into its own
+   * window (or switching tabs) keeps the selection. Cleared when the row set
+   * actually changes (page/sort/filter). */
+  selectedRows?: number[];
+  /** Whether the Inspector panel is showing. Lives on the tab so tearing the
+   * tab into its own window (and docking it back) keeps the state. */
+  inspectorOpen?: boolean;
 }
 
 export interface Folder {
@@ -403,6 +413,9 @@ export interface QueryTab extends BaseTab {
   activeSavedQuery: string | null;
   /** Silent execution history for this tab's database, most-recent-first. */
   queryHistory: QueryHistoryItem[];
+  /** Whether the Inspector panel is showing. Lives on the tab so tearing the
+   * tab into its own window (and docking it back) keeps the state. */
+  inspectorOpen?: boolean;
 }
 
 /** One column row in the table designer. Numeric fields are kept as strings
