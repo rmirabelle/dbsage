@@ -229,6 +229,8 @@ pub fn run() {
             query::index_definitions,
             query::table_auto_increment,
             query::table_comment,
+            query::table_schema_meta,
+            query::database_schema,
             query::export_table_sql,
             query::cancel_table_sql_export,
             query::run_ddl,

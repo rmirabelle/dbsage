@@ -24,6 +24,7 @@ import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { ipc } from "../ipc";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
+import { CompareSchemaDialog } from "./CompareSchemaDialog";
 import { ImportJsonDialog } from "./ImportJsonDialog";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { ViewsIcon } from "./TableViewPresetMenu";
@@ -175,6 +176,7 @@ export function DatabaseView({ tab }: Props) {
     tables: string[];
   } | null>(null);
   const [importTable, setImportTable] = useState<string | null>(null);
+  const [compareTable, setCompareTable] = useState<string | null>(null);
   const [pendingFolderDelete, setPendingFolderDelete] = useState<{
     folderId: string;
     folderName: string;
@@ -874,10 +876,26 @@ export function DatabaseView({ tab }: Props) {
               setTableMenu(null);
               exportTableSql(tab.profileId, tab.database, tables, includeData);
             }}
+            onCompareSchema={() => {
+              setCompareTable(tableMenu.table);
+              setTableMenu(null);
+            }}
             onImportJson={() => {
               setImportTable(tableMenu.table);
               setTableMenu(null);
             }}
+          />
+        )}
+
+        {compareTable && (
+          <CompareSchemaDialog
+            left={{
+              profileId: tab.profileId,
+              profileName: tab.profileName,
+              database: tab.database,
+              table: compareTable,
+            }}
+            onClose={() => setCompareTable(null)}
           />
         )}
 

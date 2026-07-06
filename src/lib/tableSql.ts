@@ -135,6 +135,9 @@ export function columnSpec(col: ColumnDraft): string {
 
 const id = (name: string) => `\`${name.replace(/`/g, "``")}\``;
 
+/** Shared with the schema-sync builder (src/lib/schemaSync.ts). */
+export { id as quoteIdent, quoteString };
+
 /** Render one index definition body (no leading ADD/comma), or null when the
  * index is incomplete (no name or no columns). USING and per-column direction
  * are only emitted for B-tree/hash indexes — FULLTEXT/SPATIAL reject them. */

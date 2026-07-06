@@ -15,6 +15,8 @@ import { analyzeQueryBundle } from "../lib/queryAnalysis";
 import type {
   ColumnFilter,
   CreateTableTab,
+  DatabaseDiffSide,
+  DatabaseDiffTab,
   DatabaseTab,
   Folder,
   PeekDescriptor,
@@ -26,8 +28,11 @@ import type {
   RowRecord,
   RowsTab,
   SavedQuery,
+  SchemaDiffSide,
+  SchemaDiffTab,
   SortSpec,
   Tab,
+  TableSchema,
   TableInfo,
   TableViewPreset,
 } from "../types";
@@ -250,6 +255,34 @@ interface Store {
   /** Duplicate a table + its data; refreshes the DB view and returns the copy's name. */
   copyTable: (profileId: string, database: string, table: string) => Promise<string>;
   openRelations: (profileId: string, profileName: string, database: string) => void;
+  /** Open (or focus) a schema-diff tab comparing two tables. */
+  openSchemaDiff: (left: SchemaDiffSide, right: SchemaDiffSide) => void;
+  /** Re-fetch both sides of a schema-diff tab. */
+  refreshSchemaDiff: (tabId: string) => Promise<void>;
+  /** Swap the two sides of a schema-diff tab in place. */
+  swapSchemaDiff: (tabId: string) => void;
+  /** Open (or focus) a db-diff tab comparing two databases; `tables` restricts
+   * the comparison to those tables (null/omitted = all). */
+  openDatabaseDiff: (
+    left: DatabaseDiffSide,
+    right: DatabaseDiffSide,
+    tables?: string[] | null
+  ) => void;
+  /** Re-fetch both sides of a db-diff tab. */
+  refreshDatabaseDiff: (tabId: string) => Promise<void>;
+  /** Swap the two sides of a db-diff tab in place. */
+  swapDatabaseDiff: (tabId: string) => void;
+  /** Fold/unfold a report section in a schema-diff or db-diff tab. */
+  toggleDiffSection: (tabId: string, key: string) => void;
+  /** Run a schema-sync ALTER against the tab's destination (right side).
+   * Returns true on success; stores `undoSql` on the tab for one-click undo. */
+  executeSchemaSync: (
+    tabId: string,
+    sql: string,
+    undoSql: string
+  ) => Promise<boolean>;
+  /** Run the stored reverse ALTER, restoring the destination's structure. */
+  undoSchemaSync: (tabId: string) => Promise<boolean>;
   /** Open (or focus) the standalone server Monitoring window for a connection. */
   openMonitoring: (profileId: string) => void;
   /** Open a new, empty SQL query pane scoped to a connection + database. */
@@ -1273,6 +1306,235 @@ export const useStore = create<Store>((set, get) => ({
       database,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+  },
+
+  openSchemaDiff: (left, right) => {
+    /* Order-independent id so comparing A↔B focuses an existing B↔A tab. */
+    const sideKey = (s: SchemaDiffSide) =>
+      `${s.profileId}::${s.database}::${s.table}`;
+    const tabId = `schemadiff::${[sideKey(left), sideKey(right)].sort().join("::")}`;
+    const existing = get().tabs.find((t) => t.id === tabId);
+    if (existing) {
+      set({ activeTabId: tabId });
+      void get().refreshSchemaDiff(tabId);
+      return;
+    }
+    const tab: SchemaDiffTab = {
+      id: tabId,
+      kind: "schema-diff",
+      profileId: left.profileId,
+      profileName: left.profileName,
+      database: left.database,
+      table: left.table,
+      right,
+      leftSchema: null,
+      rightSchema: null,
+      folded: {},
+      undoSync: null,
+      loading: true,
+      error: null,
+    };
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+    void get().refreshSchemaDiff(tabId);
+  },
+
+  refreshSchemaDiff: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "schema-diff") return;
+    const patch = (p: Partial<SchemaDiffTab>) =>
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "schema-diff" ? { ...t, ...p } : t
+        ),
+      }));
+    patch({ loading: true, error: null });
+    const fetchSide = async (side: SchemaDiffSide): Promise<TableSchema> => {
+      const [columns, indexes, meta] = await Promise.all([
+        ipc.columnDefinitions(side.profileId, side.database, side.table),
+        ipc.indexDefinitions(side.profileId, side.database, side.table),
+        ipc.tableSchemaMeta(side.profileId, side.database, side.table),
+      ]);
+      return { columns, indexes, meta };
+    };
+    try {
+      const [leftSchema, rightSchema] = await Promise.all([
+        fetchSide({
+          profileId: tab.profileId,
+          profileName: tab.profileName,
+          database: tab.database,
+          table: tab.table,
+        }),
+        fetchSide(tab.right),
+      ]);
+      patch({ leftSchema, rightSchema, loading: false });
+    } catch (e) {
+      patch({ loading: false, error: String(e) });
+      notifyError(`Schema comparison failed: ${String(e)}`);
+    }
+  },
+
+  swapSchemaDiff: (tabId) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== tabId || t.kind !== "schema-diff") return t;
+        return {
+          ...t,
+          profileId: t.right.profileId,
+          profileName: t.right.profileName,
+          database: t.right.database,
+          table: t.right.table,
+          right: {
+            profileId: t.profileId,
+            profileName: t.profileName,
+            database: t.database,
+            table: t.table,
+          },
+          leftSchema: t.rightSchema,
+          rightSchema: t.leftSchema,
+        };
+      }),
+    }));
+  },
+
+  openDatabaseDiff: (left, right, tables = null) => {
+    /* Order-independent id so comparing A↔B focuses an existing B↔A tab. */
+    const sideKey = (s: DatabaseDiffSide) => `${s.profileId}::${s.database}`;
+    const tabId = `dbdiff::${[sideKey(left), sideKey(right)].sort().join("::")}`;
+    const existing = get().tabs.find((t) => t.id === tabId);
+    if (existing) {
+      /* Re-opening the same pair adopts the new table selection. */
+      set((s) => ({
+        activeTabId: tabId,
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "db-diff" ? { ...t, tables } : t
+        ),
+      }));
+      void get().refreshDatabaseDiff(tabId);
+      return;
+    }
+    const tab: DatabaseDiffTab = {
+      id: tabId,
+      kind: "db-diff",
+      profileId: left.profileId,
+      profileName: left.profileName,
+      database: left.database,
+      right,
+      tables,
+      leftSchemas: null,
+      rightSchemas: null,
+      folded: {},
+      loading: true,
+      error: null,
+    };
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
+    void get().refreshDatabaseDiff(tabId);
+  },
+
+  refreshDatabaseDiff: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "db-diff") return;
+    const patch = (p: Partial<DatabaseDiffTab>) =>
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "db-diff" ? { ...t, ...p } : t
+        ),
+      }));
+    patch({ loading: true, error: null });
+    try {
+      const [leftSchemas, rightSchemas] = await Promise.all([
+        ipc.databaseSchema(tab.profileId, tab.database),
+        ipc.databaseSchema(tab.right.profileId, tab.right.database),
+      ]);
+      patch({ leftSchemas, rightSchemas, loading: false });
+    } catch (e) {
+      patch({ loading: false, error: String(e) });
+      notifyError(`Database comparison failed: ${String(e)}`);
+    }
+  },
+
+  executeSchemaSync: async (tabId, sql, undoSql) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "schema-diff") return false;
+    const dest = tab.right;
+    try {
+      await ipc.runDdl(dest.profileId, dest.database, sql);
+    } catch (e) {
+      notifyError(
+        `Schema sync failed — no changes were applied: ${String(e)}`
+      );
+      return false;
+    }
+    notifySuccess(
+      `Schema synchronized to ${dest.profileName} • ${dest.database}.${dest.table}.`
+    );
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "schema-diff"
+          ? {
+              ...t,
+              undoSync: {
+                sql: undoSql,
+                profileId: dest.profileId,
+                database: dest.database,
+              },
+            }
+          : t
+      ),
+    }));
+    await get().refreshSchemaDiff(tabId);
+    return true;
+  },
+
+  undoSchemaSync: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "schema-diff" || !tab.undoSync) return false;
+    const u = tab.undoSync;
+    try {
+      await ipc.runDdl(u.profileId, u.database, u.sql);
+    } catch (e) {
+      notifyError(`Undo failed — no changes were applied: ${String(e)}`);
+      return false;
+    }
+    notifySuccess("Schema sync undone — the structure was restored.");
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "schema-diff" ? { ...t, undoSync: null } : t
+      ),
+    }));
+    await get().refreshSchemaDiff(tabId);
+    return true;
+  },
+
+  toggleDiffSection: (tabId, key) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== tabId || (t.kind !== "schema-diff" && t.kind !== "db-diff"))
+          return t;
+        const folded = t.folded ?? {};
+        return { ...t, folded: { ...folded, [key]: !folded[key] } };
+      }),
+    }));
+  },
+
+  swapDatabaseDiff: (tabId) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== tabId || t.kind !== "db-diff") return t;
+        return {
+          ...t,
+          profileId: t.right.profileId,
+          profileName: t.right.profileName,
+          database: t.right.database,
+          right: {
+            profileId: t.profileId,
+            profileName: t.profileName,
+            database: t.database,
+          },
+          leftSchemas: t.rightSchemas,
+          rightSchemas: t.leftSchemas,
+        };
+      }),
+    }));
   },
 
   openMonitoring: (profileId) => {

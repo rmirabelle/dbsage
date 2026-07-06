@@ -32,6 +32,8 @@ import type {
   StateCounts,
   StateSelection,
   TableInfo,
+  TableSchemaEntry,
+  TableSchemaMeta,
   TableViewPreset,
 } from "./types";
 import type { QueryAnalysisInput } from "./lib/queryAnalysis/types";
@@ -216,6 +218,10 @@ export const ipc = {
     invoke<number | null>("table_auto_increment", { profileId, database, table }),
   tableComment: (profileId: string, database: string, table: string) =>
     invoke<string>("table_comment", { profileId, database, table }),
+  tableSchemaMeta: (profileId: string, database: string, table: string) =>
+    invoke<TableSchemaMeta>("table_schema_meta", { profileId, database, table }),
+  databaseSchema: (profileId: string, database: string) =>
+    invoke<TableSchemaEntry[]>("database_schema", { profileId, database }),
   exportTableSql: (
     profileId: string,
     database: string,

@@ -24,6 +24,7 @@ import {
   GearSix,
   DownloadSimple,
   UploadSimple,
+  GitDiff,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useStore } from "../state/store";
@@ -37,6 +38,8 @@ import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { ConnectionDeleteDialog } from "./ConnectionDeleteDialog";
 import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
+import { CompareSchemaDialog } from "./CompareSchemaDialog";
+import { CompareDatabaseDialog } from "./CompareDatabaseDialog";
 import { ImportJsonDialog } from "./ImportJsonDialog";
 import { NewDatabaseDialog } from "./NewDatabaseDialog";
 import { DropDatabaseDialog } from "./DropDatabaseDialog";
@@ -561,6 +564,11 @@ function DatabaseList({
     db: string;
     table: string;
   } | null>(null);
+  const [compareTarget, setCompareTarget] = useState<{
+    db: string;
+    table: string;
+  } | null>(null);
+  const [compareDb, setCompareDb] = useState<string | null>(null);
   const [pendingDbDrop, setPendingDbDrop] = useState<string | null>(null);
   const [renamingFolder, setRenamingFolder] = useState<{
     db: string;
@@ -931,10 +939,37 @@ function DatabaseList({
             setTreeMenu(null);
             exportTableSql(profile.id, db, [table], includeData);
           }}
+          onCompareSchema={() => {
+            setCompareTarget({ db: tableMenu.db, table: tableMenu.table });
+            setTreeMenu(null);
+          }}
           onImportJson={() => {
             setImportTarget({ db: tableMenu.db, table: tableMenu.table });
             setTreeMenu(null);
           }}
+        />
+      )}
+
+      {compareDb && (
+        <CompareDatabaseDialog
+          left={{
+            profileId: profile.id,
+            profileName: profile.name,
+            database: compareDb,
+          }}
+          onClose={() => setCompareDb(null)}
+        />
+      )}
+
+      {compareTarget && (
+        <CompareSchemaDialog
+          left={{
+            profileId: profile.id,
+            profileName: profile.name,
+            database: compareTarget.db,
+            table: compareTarget.table,
+          }}
+          onClose={() => setCompareTarget(null)}
         />
       )}
 
@@ -966,6 +1001,10 @@ function DatabaseList({
           y={dbMenu.y}
           onNewQuery={() => {
             openQuery(profile.id, profile.name, dbMenu.db);
+            setTreeMenu(null);
+          }}
+          onCompareSchema={() => {
+            setCompareDb(dbMenu.db);
             setTreeMenu(null);
           }}
           onBackup={() => {
@@ -1058,6 +1097,7 @@ function DbContextMenu({
   x,
   y,
   onNewQuery,
+  onCompareSchema,
   onBackup,
   onRestore,
   pendingSwap,
@@ -1068,6 +1108,8 @@ function DbContextMenu({
   x: number;
   y: number;
   onNewQuery: () => void;
+  /** Open the compare-database dialog seeded with this database as the left side. */
+  onCompareSchema: () => void;
   onBackup: () => void;
   onRestore: () => void;
   /** Set when this database is a restored copy awaiting a make-live swap. */
@@ -1113,6 +1155,14 @@ function DbContextMenu({
       >
         <Code size={14} className="text-accent-400 shrink-0" />
         New Query
+      </button>
+      <button
+        data-el="ctx-compare-db-schema"
+        className="flex w-full items-center gap-2.5 text-left px-3 py-1.5 hover:bg-zinc-800 text-zinc-200"
+        onClick={onCompareSchema}
+      >
+        <GitDiff size={14} className="text-amber-400 shrink-0" />
+        Compare Schema…
       </button>
       <div className="my-1 border-t border-zinc-800" />
       <button

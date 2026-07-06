@@ -452,6 +452,15 @@ export interface ColumnDef {
   defaultValue: string | null;
   extra: string;
   comment: string;
+  /** Collation for text columns, null for numeric/binary types. */
+  collation: string | null;
+}
+
+/** Table-level schema metadata (engine, default collation, comment). */
+export interface TableSchemaMeta {
+  engine: string | null;
+  collation: string | null;
+  comment: string;
 }
 
 /** Result of inspecting a JSON file for the import wizard. */
@@ -575,9 +584,70 @@ export interface CreateTableTab extends BaseTab {
   targetFolderId?: string | null;
 }
 
+/** Everything the diff needs about one side of a schema comparison. */
+export interface TableSchema {
+  columns: ColumnDef[];
+  indexes: IndexDef[];
+  meta: TableSchemaMeta;
+}
+
+/** One side (endpoint) of a schema comparison. */
+export interface SchemaDiffSide {
+  profileId: string;
+  profileName: string;
+  database: string;
+  table: string;
+}
+
+/** One table's full schema in a whole-database fetch (`ipc.databaseSchema`). */
+export interface TableSchemaEntry extends TableSchema {
+  name: string;
+}
+
+/** One side (endpoint) of a whole-database comparison. */
+export interface DatabaseDiffSide {
+  profileId: string;
+  profileName: string;
+  database: string;
+}
+
+export interface DatabaseDiffTab extends BaseTab {
+  kind: "db-diff";
+  /** BaseTab holds the left profile/database. */
+  right: DatabaseDiffSide;
+  /** Restrict the comparison to these tables; null = compare all tables. */
+  tables: string[] | null;
+  /** Fetched per-table schemas; null until loaded. */
+  leftSchemas: TableSchemaEntry[] | null;
+  rightSchemas: TableSchemaEntry[] | null;
+  /** Collapsed report sections, keyed by section id. */
+  folded: Record<string, boolean>;
+  loading: boolean;
+  error: string | null;
+}
+
+export interface SchemaDiffTab extends BaseTab {
+  kind: "schema-diff";
+  /** Left-side table (BaseTab holds the left profile/database). */
+  table: string;
+  right: SchemaDiffSide;
+  /** Fetched schemas; null until loaded. */
+  leftSchema: TableSchema | null;
+  rightSchema: TableSchema | null;
+  /** Collapsed report sections, keyed by section id. */
+  folded: Record<string, boolean>;
+  /** Reverse ALTER from the last executed sync, pinned to the side it must run
+   * against (so a later side-swap can't point undo at the wrong server). */
+  undoSync: { sql: string; profileId: string; database: string } | null;
+  loading: boolean;
+  error: string | null;
+}
+
 export type Tab =
   | RowsTab
   | DatabaseTab
   | RelationsTab
   | CreateTableTab
-  | QueryTab;
+  | QueryTab
+  | SchemaDiffTab
+  | DatabaseDiffTab;

@@ -146,3 +146,301 @@ input[type="checkbox"].dbs-check:checked {
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
 }
+
+/**
+ * Schema Diff tab (SchemaDiffView). Report-style layout: one card per kind of
+ * difference, accented by tone on the card's left edge — emerald = only on the
+ * right side ("added"), rose = only on the left side ("missing"), orange =
+ * same name but the definition changed.
+ */
+.schema-diff {
+  .sd-side {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 2px 10px;
+    font-size: 12.5px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  /** Icon + name segments in the app's identity colors (match tree/tab icons). */
+  .sd-side-conn,
+  .sd-side-db,
+  .sd-side-table {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .sd-side-conn {
+    color: var(--color-lime-400);
+  }
+  .sd-side-db {
+    color: var(--color-accent-400);
+  }
+  .sd-side-table {
+    color: var(--color-emerald-400);
+  }
+
+  .sd-swap {
+    display: flex;
+    align-items: center;
+    padding: 4px;
+    border-radius: 6px;
+    color: var(--color-zinc-400);
+    cursor: pointer;
+  }
+  .sd-swap:hover {
+    color: var(--color-zinc-100);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .sd-refresh,
+  .sd-sync,
+  .sd-undo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .sd-refresh:disabled,
+  .sd-sync:disabled,
+  .sd-undo:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .sd-refresh {
+    background: var(--color-accent-500);
+    color: #042f2e;
+  }
+  .sd-refresh:hover:not(:disabled) {
+    background: var(--color-accent-400);
+  }
+  /** Orange = structure edit (matches the designer's color language). */
+  .sd-sync {
+    background: var(--color-orange-400);
+    color: var(--color-orange-950);
+  }
+  .sd-sync:hover:not(:disabled) {
+    background: var(--color-orange-300);
+  }
+  .sd-undo {
+    background: var(--color-amber-400);
+    color: var(--color-amber-950);
+  }
+  .sd-undo:hover:not(:disabled) {
+    background: var(--color-amber-300);
+  }
+
+  /** Centered loading / error / identical states. */
+  .sd-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 4rem 2rem;
+    text-align: center;
+  }
+  .sd-state-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-zinc-100);
+  }
+  .sd-state-sub {
+    max-width: 480px;
+    font-size: 13px;
+    color: var(--color-zinc-400);
+  }
+
+  .sd-report {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px 16px 24px;
+  }
+
+  .sd-section {
+    border: 1px solid var(--color-zinc-800);
+    border-left: 3px solid transparent;
+    border-radius: 8px;
+    background: #2c303c;
+    overflow: hidden;
+  }
+  .sd-added {
+    border-left-color: var(--color-emerald-400);
+  }
+  .sd-removed {
+    border-left-color: var(--color-rose-400);
+  }
+  .sd-changed {
+    border-left-color: var(--color-orange-400);
+  }
+
+  /** The title row is a button that folds the card body. */
+  .sd-section-title {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--color-zinc-800);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--color-zinc-200);
+    text-align: left;
+    cursor: pointer;
+  }
+  .sd-section-title:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .sd-collapsed .sd-section-title {
+    border-bottom: none;
+  }
+  .sd-fold {
+    flex-shrink: 0;
+    color: var(--color-zinc-500);
+  }
+  .sd-count {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.07);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-zinc-400);
+  }
+
+  .sd-item {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    padding: 7px 12px;
+  }
+  .sd-item + .sd-item {
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  /** Clickable row variant (db diff → drill into a table's diff). */
+  .sd-item-btn {
+    width: 100%;
+    align-items: center;
+    text-align: left;
+    cursor: pointer;
+  }
+  .sd-item-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .sd-drill {
+    flex-shrink: 0;
+    margin-left: auto;
+    color: var(--color-zinc-500);
+  }
+  .sd-item-btn:hover .sd-drill {
+    color: var(--color-zinc-200);
+  }
+
+  .sd-name {
+    min-width: 160px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--color-zinc-100);
+  }
+  .sd-summary {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--color-zinc-400);
+  }
+
+  /** Changed columns/indexes table: name cell rowspans its attribute rows. */
+  .sd-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11.5px;
+  }
+  .sd-table th {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--color-zinc-800);
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-zinc-500);
+  }
+  .sd-table td {
+    padding: 5px 12px;
+    vertical-align: top;
+  }
+  .sd-table tbody tr + tr:not(.sd-row-group) td {
+    border-top: 1px solid rgba(255, 255, 255, 0.03);
+  }
+  .sd-table tbody tr.sd-row-group td {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .sd-table tbody tr:first-child td {
+    border-top: none;
+  }
+  .sd-cell-name {
+    width: 200px;
+    font-family: var(--font-mono);
+    color: var(--color-zinc-100);
+  }
+  .sd-cell-field {
+    width: 130px;
+    color: var(--color-zinc-500);
+  }
+  .sd-cell-old {
+    width: 35%;
+    font-family: var(--font-mono);
+    color: var(--color-rose-400);
+  }
+  .sd-cell-new {
+    width: 35%;
+    font-family: var(--font-mono);
+    color: var(--color-emerald-400);
+  }
+
+  .sd-changes {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .sd-change {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+  }
+  .sd-field {
+    min-width: 84px;
+    font-size: 11px;
+    color: var(--color-zinc-500);
+  }
+  .sd-old,
+  .sd-new {
+    font-family: var(--font-mono);
+  }
+  .sd-old {
+    color: var(--color-rose-400);
+  }
+  .sd-new {
+    color: var(--color-emerald-400);
+  }
+  .sd-arrow {
+    flex-shrink: 0;
+    color: var(--color-zinc-500);
+  }
+
+  .sd-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--color-amber-400);
+  }
+  .sd-note-muted {
+    color: var(--color-zinc-500);
+  }
+}

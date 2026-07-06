@@ -22,6 +22,7 @@ import {
   Code,
   ArrowSquareOut,
   WarningCircle as AlertCircle,
+  GitDiff,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -36,6 +37,8 @@ import { DatabaseView } from "./DatabaseView";
 import { QueryView } from "./QueryView";
 import { RelationsView } from "./RelationsView";
 import { TableDesignerView } from "./TableDesignerView";
+import { SchemaDiffView } from "./SchemaDiffView";
+import { DatabaseDiffView } from "./DatabaseDiffView";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { TableViewPresetMenu } from "./TableViewPresetMenu";
 import { InsertRowDialog } from "./InsertRowDialog";
@@ -74,6 +77,14 @@ export function tabTitle(tab: Tab): string {
         tab.tableName.trim() ||
         (tab.mode === "edit" ? tab.originalName : "New table")
       );
+    case "schema-diff":
+      return tab.table === tab.right.table
+        ? `Diff: ${tab.table}`
+        : `Diff: ${tab.table} ⇄ ${tab.right.table}`;
+    case "db-diff":
+      return tab.database === tab.right.database
+        ? `Diff: ${tab.database}`
+        : `Diff: ${tab.database} ⇄ ${tab.right.database}`;
     default:
       return tab.table;
   }
@@ -220,6 +231,32 @@ export function Tabs() {
               Icon = editing ? TableEditIcon : Table2;
               iconColor = "text-orange-400";
               dirty = isDesignerTabDirty(tab);
+            } else if (tab.kind === "schema-diff") {
+              prefix = "Diff";
+              primary =
+                tab.table === tab.right.table
+                  ? tab.table
+                  : `${tab.table} ⇄ ${tab.right.table}`;
+              secondary =
+                tab.profileId !== tab.right.profileId
+                  ? `${tab.profileName} ⇄ ${tab.right.profileName}`
+                  : tab.database !== tab.right.database
+                    ? `${tab.database} ⇄ ${tab.right.database}`
+                    : `${tab.profileName} / ${tab.database}`;
+              Icon = GitDiff;
+              iconColor = "text-amber-400";
+            } else if (tab.kind === "db-diff") {
+              prefix = "Diff";
+              primary =
+                tab.database === tab.right.database
+                  ? tab.database
+                  : `${tab.database} ⇄ ${tab.right.database}`;
+              secondary =
+                tab.profileId !== tab.right.profileId
+                  ? `${tab.profileName} ⇄ ${tab.right.profileName}`
+                  : tab.profileName;
+              Icon = GitDiff;
+              iconColor = "text-amber-400";
             } else {
               primary = tab.table;
               secondary = `${tab.profileName} / ${tab.database}`;
@@ -434,6 +471,12 @@ export function TabBody({ tab }: { tab: Tab }) {
   }
   if (tab.kind === "create-table") {
     return <TableDesignerView tab={tab} />;
+  }
+  if (tab.kind === "schema-diff") {
+    return <SchemaDiffView tab={tab} />;
+  }
+  if (tab.kind === "db-diff") {
+    return <DatabaseDiffView tab={tab} />;
   }
   return <RowsTabBody tab={tab} />;
 }

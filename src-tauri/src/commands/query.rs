@@ -877,6 +877,8 @@ pub struct ColumnDef {
     pub default_value: Option<String>,
     pub extra: String,
     pub comment: String,
+    /// Collation for text columns, None for numeric/binary types.
+    pub collation: Option<String>,
 }
 
 /// Full column metadata for editing an existing table (richer than `list_columns`).
@@ -889,7 +891,7 @@ pub async fn column_definitions(
 ) -> AppResult<Vec<ColumnDef>> {
     let pool = pool_for(&state, &profile_id).await?;
     let rows = sqlx::query(
-        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT \
+        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT, COLLATION_NAME \
          FROM INFORMATION_SCHEMA.COLUMNS \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
          ORDER BY ORDINAL_POSITION",
@@ -908,6 +910,7 @@ pub async fn column_definitions(
             default_value: get_opt_string(r, 4),
             extra: get_string(r, 5),
             comment: get_string(r, 6),
+            collation: get_opt_string(r, 7),
         })
         .collect())
 }
@@ -973,6 +976,45 @@ pub async fn table_comment(
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TableSchemaMeta {
+    pub engine: Option<String>,
+    pub collation: Option<String>,
+    pub comment: String,
+}
+
+/// Table-level schema metadata (engine, default collation, comment) for the
+/// schema diff view.
+#[tauri::command]
+pub async fn table_schema_meta(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<TableSchemaMeta> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let row = sqlx::query(
+        "SELECT ENGINE, TABLE_COLLATION, TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES \
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+    )
+    .bind(&database)
+    .bind(&table)
+    .fetch_optional(&pool)
+    .await?;
+    match row {
+        Some(r) => Ok(TableSchemaMeta {
+            engine: get_opt_string(&r, 0),
+            collation: get_opt_string(&r, 1),
+            comment: get_string(&r, 2),
+        }),
+        None => Err(AppError::Other(format!(
+            "Table `{}`.`{}` was not found",
+            database, table
+        ))),
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexColumn {
     pub column: String,
     /// "ASC" or "DESC".
@@ -1014,52 +1056,156 @@ pub async fn index_definitions(
 
     let mut out: Vec<IndexDef> = Vec::new();
     for r in &rows {
-        let name = get_string(r, 0);
-        /* NON_UNIQUE is an integer column; its exact width varies by server, so
-           try the likely sqlx mappings before giving up (default: non-unique). */
-        let non_unique = r
-            .try_get::<i64, _>(1)
-            .or_else(|_| r.try_get::<i32, _>(1).map(i64::from))
-            .or_else(|_| r.try_get::<u64, _>(1).map(|v| v as i64))
-            .or_else(|_| r.try_get::<u32, _>(1).map(i64::from))
-            .unwrap_or(1);
-        let column = get_string(r, 2);
-        let collation = r.try_get::<Option<String>, _>(3).ok().flatten();
-        let raw_type = get_string(r, 4).to_uppercase();
-        let comment = get_string(r, 5);
-
-        let direction = if collation.as_deref() == Some("D") {
-            "DESC"
-        } else {
-            "ASC"
-        }
-        .to_string();
-
-        let index_type = if raw_type == "FULLTEXT" {
-            "FULLTEXT"
-        } else if raw_type == "SPATIAL" {
-            "SPATIAL"
-        } else if non_unique == 0 {
-            "UNIQUE"
-        } else {
-            "NORMAL"
-        }
-        .to_string();
-
-        let method = if raw_type == "HASH" { "HASH" } else { "BTREE" }.to_string();
-
-        match out.iter_mut().find(|i| i.name == name) {
-            Some(existing) => existing.columns.push(IndexColumn { column, direction }),
-            None => out.push(IndexDef {
-                name,
-                columns: vec![IndexColumn { column, direction }],
-                index_type,
-                method,
-                comment,
-            }),
-        }
+        push_statistics_row(&mut out, r, 0);
     }
     Ok(out)
+}
+
+/// Fold one INFORMATION_SCHEMA.STATISTICS row (columns starting at offset
+/// `base`: INDEX_NAME, NON_UNIQUE, COLUMN_NAME, COLLATION, INDEX_TYPE,
+/// INDEX_COMMENT) into an accumulating index list — rows arrive ordered by
+/// index name + SEQ_IN_INDEX, so repeats of a name extend its column list.
+fn push_statistics_row(out: &mut Vec<IndexDef>, r: &MySqlRow, base: usize) {
+    let name = get_string(r, base);
+    /* NON_UNIQUE is an integer column; its exact width varies by server, so
+       try the likely sqlx mappings before giving up (default: non-unique). */
+    let non_unique = r
+        .try_get::<i64, _>(base + 1)
+        .or_else(|_| r.try_get::<i32, _>(base + 1).map(i64::from))
+        .or_else(|_| r.try_get::<u64, _>(base + 1).map(|v| v as i64))
+        .or_else(|_| r.try_get::<u32, _>(base + 1).map(i64::from))
+        .unwrap_or(1);
+    let column = get_string(r, base + 2);
+    let collation = r.try_get::<Option<String>, _>(base + 3).ok().flatten();
+    let raw_type = get_string(r, base + 4).to_uppercase();
+    let comment = get_string(r, base + 5);
+
+    let direction = if collation.as_deref() == Some("D") {
+        "DESC"
+    } else {
+        "ASC"
+    }
+    .to_string();
+
+    let index_type = if raw_type == "FULLTEXT" {
+        "FULLTEXT"
+    } else if raw_type == "SPATIAL" {
+        "SPATIAL"
+    } else if non_unique == 0 {
+        "UNIQUE"
+    } else {
+        "NORMAL"
+    }
+    .to_string();
+
+    let method = if raw_type == "HASH" { "HASH" } else { "BTREE" }.to_string();
+
+    match out.iter_mut().find(|i| i.name == name) {
+        Some(existing) => existing.columns.push(IndexColumn { column, direction }),
+        None => out.push(IndexDef {
+            name,
+            columns: vec![IndexColumn { column, direction }],
+            index_type,
+            method,
+            comment,
+        }),
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableSchemaEntry {
+    pub name: String,
+    pub columns: Vec<ColumnDef>,
+    pub indexes: Vec<IndexDef>,
+    pub meta: TableSchemaMeta,
+}
+
+/// Full schema for every base table in a database, fetched with three bulk
+/// INFORMATION_SCHEMA queries (the database diff would otherwise need six
+/// round-trips per table). Views are excluded; PRIMARY is excluded from the
+/// index lists just like `index_definitions` (it's carried by the per-column
+/// key flag).
+#[tauri::command]
+pub async fn database_schema(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+) -> AppResult<Vec<TableSchemaEntry>> {
+    let pool = pool_for(&state, &profile_id).await?;
+
+    let trows = sqlx::query(
+        "SELECT TABLE_NAME, ENGINE, TABLE_COLLATION, TABLE_COMMENT \
+         FROM INFORMATION_SCHEMA.TABLES \
+         WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' \
+         ORDER BY TABLE_NAME",
+    )
+    .bind(&database)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut entries: Vec<TableSchemaEntry> = trows
+        .iter()
+        .map(|r| TableSchemaEntry {
+            name: get_string(r, 0),
+            columns: Vec::new(),
+            indexes: Vec::new(),
+            meta: TableSchemaMeta {
+                engine: get_opt_string(r, 1),
+                collation: get_opt_string(r, 2),
+                comment: get_string(r, 3),
+            },
+        })
+        .collect();
+    let by_name: std::collections::HashMap<String, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.name.clone(), i))
+        .collect();
+
+    let crows = sqlx::query(
+        "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT, COLLATION_NAME \
+         FROM INFORMATION_SCHEMA.COLUMNS \
+         WHERE TABLE_SCHEMA = ? \
+         ORDER BY TABLE_NAME, ORDINAL_POSITION",
+    )
+    .bind(&database)
+    .fetch_all(&pool)
+    .await?;
+    for r in &crows {
+        /* Rows for views aren't in the map and are skipped. */
+        let Some(&i) = by_name.get(&get_string(r, 0)) else {
+            continue;
+        };
+        entries[i].columns.push(ColumnDef {
+            name: get_string(r, 1),
+            column_type: get_string(r, 2),
+            nullable: get_string(r, 3) == "YES",
+            key: get_string(r, 4),
+            default_value: get_opt_string(r, 5),
+            extra: get_string(r, 6),
+            comment: get_string(r, 7),
+            collation: get_opt_string(r, 8),
+        });
+    }
+
+    let irows = sqlx::query(
+        "SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, COLUMN_NAME, COLLATION, INDEX_TYPE, INDEX_COMMENT \
+         FROM INFORMATION_SCHEMA.STATISTICS \
+         WHERE TABLE_SCHEMA = ? AND INDEX_NAME <> 'PRIMARY' \
+         ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX",
+    )
+    .bind(&database)
+    .fetch_all(&pool)
+    .await?;
+    for r in &irows {
+        let Some(&i) = by_name.get(&get_string(r, 0)) else {
+            continue;
+        };
+        push_statistics_row(&mut entries[i].indexes, r, 1);
+    }
+
+    Ok(entries)
 }
 
 /// Run a single DDL statement (e.g. ALTER TABLE) in the context of `database`.
@@ -1471,7 +1617,7 @@ async fn gather_table_info(
     let engine = get_opt_string(&trow, 1);
 
     let crows = sqlx::query(
-        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT \
+        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT, COLLATION_NAME \
          FROM INFORMATION_SCHEMA.COLUMNS \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
     )
@@ -1490,6 +1636,7 @@ async fn gather_table_info(
             default_value: get_opt_string(r, 4),
             extra: get_string(r, 5),
             comment: get_string(r, 6),
+            collation: get_opt_string(r, 7),
         })
         .collect();
 

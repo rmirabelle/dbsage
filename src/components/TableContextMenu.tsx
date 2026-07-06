@@ -10,6 +10,7 @@ import {
   Table,
   Database,
   BracketsCurly,
+  GitDiff,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
@@ -23,6 +24,7 @@ export function TableContextMenu({
   onEdit,
   onRename,
   onCopy,
+  onCompareSchema,
   onSaveSql,
   onImportJson,
   count = 1,
@@ -35,6 +37,8 @@ export function TableContextMenu({
   onRename: () => void;
   /** Duplicate the table and its data into `{name}_copy`. */
   onCopy: () => void;
+  /** Open the compare-schema dialog seeded with this table as the left side. */
+  onCompareSchema: () => void;
   /** Save a `.sql` script; `includeData` adds INSERTs that restore the rows. */
   onSaveSql: (includeData: boolean) => void;
   /** Open the JSON import wizard for this table. */
@@ -82,6 +86,14 @@ export function TableContextMenu({
           >
             <Copy size={16} className="text-emerald-400 shrink-0" />
             Copy Table
+          </button>
+          <button
+            data-el="ctx-compare-schema"
+            className={clsx(itemClass, "text-zinc-200")}
+            onClick={onCompareSchema}
+          >
+            <GitDiff size={16} className="text-amber-400 shrink-0" />
+            Compare Schema…
           </button>
         </>
       )}
