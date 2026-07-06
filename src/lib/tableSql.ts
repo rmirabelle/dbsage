@@ -195,6 +195,35 @@ export function buildCreateTableSql(
   return `CREATE TABLE ${id(tableName)} (\n${body}\n)${suffix};`;
 }
 
+/**
+ * Given kept columns in display order and their positions in the original
+ * order, return the keys forming a longest increasing subsequence of those
+ * positions — the columns that can keep their place while the others are
+ * repositioned around them with FIRST/AFTER. Minimizes the number of
+ * placement clauses a reorder produces.
+ */
+function stableColumnKeys(
+  keys: string[],
+  origPos: Map<string, number>
+): Set<string> {
+  const pos = keys.map((k) => origPos.get(k) ?? -1);
+  const best = pos.map(() => 1);
+  const prev = pos.map(() => -1);
+  let end = -1;
+  for (let i = 0; i < pos.length; i++) {
+    for (let j = 0; j < i; j++) {
+      if (pos[j] < pos[i] && best[j] + 1 > best[i]) {
+        best[i] = best[j] + 1;
+        prev[i] = j;
+      }
+    }
+    if (end === -1 || best[i] > best[end]) end = i;
+  }
+  const stays = new Set<string>();
+  for (let i = end; i !== -1; i = prev[i]) stays.add(keys[i]);
+  return stays;
+}
+
 /** Diff the original (loaded) columns against the live edits into an ALTER TABLE
  * statement: DROP/ADD/CHANGE columns, primary-key changes, and a table rename. */
 export function buildAlterTableSql(
@@ -225,25 +254,53 @@ export function buildAlterTableSql(
     if (!keptOriginalNames.has(on)) clauses.push(`  DROP COLUMN ${id(on)}`);
   }
 
-  /* Added + changed columns, in display order. */
-  for (const col of currentColumns) {
+  /**
+   * Added + changed + reordered columns, in display order. Reordering keeps
+   * the columns that are already in relative order (longest such run) in
+   * place and emits a FIRST/AFTER placement only for the rest, each anchored
+   * to its display-order predecessor. MySQL applies the clauses left to
+   * right, and a predecessor's own add/rename/move clause is always emitted
+   * before the clause that anchors to it, so every placement resolves
+   * against the right neighbor.
+   */
+  const cur = currentColumns.filter((c) => c.name.trim());
+  const keptOrder = originalColumns
+    .map((c) => c.originalName ?? c.name)
+    .filter((n) => keptOriginalNames.has(n));
+  const origPos = new Map(keptOrder.map((n, i) => [n, i] as const));
+  const stays = stableColumnKeys(
+    cur.filter((c) => c.originalName).map((c) => c.originalName as string),
+    origPos
+  );
+  const lastExistingIdx = cur.reduce(
+    (last, c, i) => (c.originalName ? i : last),
+    -1
+  );
+
+  cur.forEach((col, i) => {
     const name = col.name.trim();
-    if (!name) continue;
+    const placement =
+      i === 0 ? " FIRST" : ` AFTER ${id(cur[i - 1].name.trim())}`;
     if (!col.originalName) {
-      clauses.push(`  ADD COLUMN ${id(name)} ${columnSpec(col)}`);
-      continue;
+      /* Adds past the last existing column just append — no placement. */
+      const pos = i > lastExistingIdx ? "" : placement;
+      clauses.push(`  ADD COLUMN ${id(name)} ${columnSpec(col)}${pos}`);
+      return;
     }
+    const moved = !stays.has(col.originalName);
     const orig = origByName.get(col.originalName);
     const changed =
-      !orig ||
-      col.originalName !== name ||
-      columnSpec(orig) !== columnSpec(col);
+      !orig || col.originalName !== name || columnSpec(orig) !== columnSpec(col);
     if (changed) {
       clauses.push(
-        `  CHANGE COLUMN ${id(col.originalName)} ${id(name)} ${columnSpec(col)}`
+        `  CHANGE COLUMN ${id(col.originalName)} ${id(name)} ${columnSpec(col)}${moved ? placement : ""}`
+      );
+    } else if (moved) {
+      clauses.push(
+        `  MODIFY COLUMN ${id(name)} ${columnSpec(col)}${placement}`
       );
     }
-  }
+  });
 
   /* Primary key diff (compare ordered column lists). */
   const origPk = originalColumns
