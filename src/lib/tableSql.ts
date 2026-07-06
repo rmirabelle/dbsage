@@ -200,9 +200,9 @@ export function buildCreateTableSql(
  * order, return the keys forming a longest increasing subsequence of those
  * positions — the columns that can keep their place while the others are
  * repositioned around them with FIRST/AFTER. Minimizes the number of
- * placement clauses a reorder produces.
+ * placement clauses a reorder produces. Shared with the schema-sync builder.
  */
-function stableColumnKeys(
+export function stableColumnKeys(
   keys: string[],
   origPos: Map<string, number>
 ): Set<string> {
