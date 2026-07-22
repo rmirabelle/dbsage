@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import { Warning, Trash, CircleNotch as Loader2, X } from "@phosphor-icons/react";
 import { notifyError } from "../state/notify";
@@ -36,7 +37,11 @@ export function RowDeleteConfirmDialog({ count, onConfirm, onClose }: Props) {
 
   const backdrop = useBackdropDismiss(onClose, !busy);
 
-  return (
+  /* Portaled to <body>: the DataGrid scroller uses `contain: strict`, which
+     turns it into the containing block for fixed-position descendants and
+     paint-clips them — rendered in place, this overlay ends up positioned and
+     clipped inside the scrolling grid content instead of covering the window. */
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       {...backdrop}
@@ -96,6 +101,7 @@ export function RowDeleteConfirmDialog({ count, onConfirm, onClose }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

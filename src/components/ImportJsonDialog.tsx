@@ -59,6 +59,7 @@ export function ImportJsonDialog({
   const [mapping, setMapping] = useState<Record<string, string>>({});
 
   const [error, setError] = useState<string | null>(null);
+  const [continueOnError, setContinueOnError] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
@@ -178,16 +179,30 @@ export function ImportJsonDialog({
       (e) => setProgress({ done: e.payload.done, total: e.payload.total })
     );
     try {
-      const res = await ipc.importJsonRows({ profileId, database, table, path, mappings });
+      const res = await ipc.importJsonRows({
+        profileId,
+        database,
+        table,
+        path,
+        mappings,
+        continueOnError,
+      });
       if (res.cancelled) {
         notifyInfo("Import cancelled — no rows were added.");
         onClose();
       } else {
-        notifySuccess(
-          `Imported ${res.inserted.toLocaleString()} row${
-            res.inserted === 1 ? "" : "s"
-          } into "${table}".`
-        );
+        const summary = `Imported ${res.inserted.toLocaleString()} row${
+          res.inserted === 1 ? "" : "s"
+        } into "${table}".`;
+        if (res.skipped > 0) {
+          notifyInfo(
+            `${summary} Skipped ${res.skipped.toLocaleString()} row${
+              res.skipped === 1 ? "" : "s"
+            } that failed to insert.`
+          );
+        } else {
+          notifySuccess(summary);
+        }
         onImported();
         onClose();
       }
@@ -309,6 +324,21 @@ export function ImportJsonDialog({
             >
               <ArrowLeft size={14} /> Back
             </button>
+          )}
+
+          {step === "map" && (
+            <label
+              className="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer select-none"
+              title="Skip rows that fail to insert (e.g. duplicate keys) and import the rest, instead of aborting the whole import"
+            >
+              <input
+                type="checkbox"
+                checked={continueOnError}
+                onChange={(e) => setContinueOnError(e.target.checked)}
+                className="accent-sky-500"
+              />
+              Continue on error
+            </label>
           )}
 
           {step === "running" ? (

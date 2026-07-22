@@ -23,6 +23,7 @@ import {
   ArrowSquareOut,
   WarningCircle as AlertCircle,
   GitDiff,
+  BracketsCurly,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -42,6 +43,7 @@ import { DatabaseDiffView } from "./DatabaseDiffView";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { TableViewPresetMenu } from "./TableViewPresetMenu";
 import { InsertRowDialog } from "./InsertRowDialog";
+import { ImportJsonDialog } from "./ImportJsonDialog";
 import { Tooltip } from "./Tooltip";
 import appIconLarge from "../assets/app-icon-large.png";
 import { ipc } from "../ipc";
@@ -518,6 +520,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const expanded = tab.inspectorOpen ?? getCurrentWindow().label === "main";
   const setExpanded = (open: boolean) => setTabInspectorOpen(tab.id, open);
   const [insertOpen, setInsertOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   /** Rows whose duplicate hit a unique/PK conflict, awaiting edit-and-retry.
    * Shown one at a time; submitting or cancelling advances to the next. */
   const [dupQueue, setDupQueue] = useState<DuplicateConflict[]>([]);
@@ -827,10 +830,20 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         </button>
 
         <button
+          data-el="import-json-btn"
+          onClick={() => setImportOpen(true)}
+          className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 hover:bg-zinc-700 text-emerald-300"
+          {...helpHandlers("Import rows from a JSON file")}
+        >
+          <BracketsCurly size={15} />
+          Import
+        </button>
+
+        <button
           data-el="expanded-toggle-btn"
           onClick={() => setExpanded(!expanded)}
           className={clsx(
-            "ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 hover:bg-zinc-700",
+            "inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 hover:bg-zinc-700",
             expanded ? "text-emerald-300" : "text-zinc-500 hover:text-zinc-400"
           )}
           {...helpHandlers("Toggle the Inspector panel")}
@@ -981,6 +994,16 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             notifySuccess(`Inserted a row into "${tab.table}"`);
           }}
           onClose={() => setInsertOpen(false)}
+        />
+      )}
+
+      {importOpen && (
+        <ImportJsonDialog
+          profileId={tab.profileId}
+          database={tab.database}
+          table={tab.table}
+          onClose={() => setImportOpen(false)}
+          onImported={() => refreshTab(tab.id)}
         />
       )}
 

@@ -198,6 +198,8 @@ export const ipc = {
     table: string;
     path: string;
     mappings: JsonColumnMapping[];
+    /** Skip rows that fail to insert instead of rolling the whole import back. */
+    continueOnError: boolean;
   }) => invoke<JsonImportResult>("import_json_rows", args),
   cancelJsonImport: () => invoke<void>("cancel_json_import"),
   truncateTable: (profileId: string, database: string, table: string) =>

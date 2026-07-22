@@ -2324,6 +2324,8 @@ pub struct JsonColumnMapping {
 #[serde(rename_all = "camelCase")]
 pub struct JsonImportResult {
     pub inserted: u64,
+    /// Rows that failed to insert and were skipped (continue-on-error mode only).
+    pub skipped: u64,
     pub cancelled: bool,
 }
 
@@ -2376,17 +2378,20 @@ fn db_message(e: &sqlx::Error) -> String {
     }
 }
 
-/// Insert one batch of rows as a single multi-row INSERT. On failure the batch is
-/// replayed row-by-row to pinpoint the offending record (returned as its 0-based
-/// global index + the DB message); the surrounding transaction is rolled back by
-/// the caller, so these probe inserts never persist.
+/// Insert one batch of rows as a single multi-row INSERT, returning how many
+/// rows were inserted. On failure the batch is replayed row-by-row: with
+/// `continue_on_error` the failing rows are simply skipped (their successful
+/// neighbors persist); without it, the first offending record is returned as its
+/// 0-based global index + the DB message, and the surrounding transaction is
+/// rolled back by the caller so the probe inserts never persist.
 async fn flush_import_batch(
     conn: &mut sqlx::pool::PoolConnection<sqlx::MySql>,
     insert_prefix: &str,
     single_sql: &str,
     row_placeholder: &str,
     batch: &[(usize, Vec<Option<String>>)],
-) -> Result<(), (usize, String)> {
+    continue_on_error: bool,
+) -> Result<u64, (usize, String)> {
     let rows_sql = std::iter::repeat(row_placeholder)
         .take(batch.len())
         .collect::<Vec<_>>()
@@ -2399,18 +2404,27 @@ async fn flush_import_batch(
         }
     }
     if q.execute(&mut **conn).await.is_ok() {
-        return Ok(());
+        return Ok(batch.len() as u64);
     }
+    let mut inserted: u64 = 0;
     for (idx, vals) in batch {
         let mut sq = sqlx::query(single_sql);
         for v in vals {
             sq = sq.bind(v.clone());
         }
-        if let Err(e) = sq.execute(&mut **conn).await {
-            return Err((*idx, db_message(&e)));
+        match sq.execute(&mut **conn).await {
+            Ok(_) => inserted += 1,
+            Err(e) => {
+                if !continue_on_error {
+                    return Err((*idx, db_message(&e)));
+                }
+            }
         }
     }
-    Err((batch[0].0, "insert failed".to_string()))
+    if !continue_on_error && inserted == batch.len() as u64 {
+        return Err((batch[0].0, "insert failed".to_string()));
+    }
+    Ok(inserted)
 }
 
 /// Inspect a JSON file for the import wizard: total record count, the union of
@@ -2441,8 +2455,10 @@ pub async fn json_import_preview(path: String) -> AppResult<JsonImportPreview> {
 /// Only mapped columns are written, so unmapped columns fall back to their DB
 /// default / auto-increment. The whole import runs in one transaction: any error
 /// (e.g. a duplicate primary key when the id column is mapped) rolls everything
-/// back and reports the offending row. Returns `cancelled: true` (nothing
-/// written) when the user stops it mid-run.
+/// back and reports the offending row — unless `continue_on_error` is set, in
+/// which case failing rows are skipped and everything else commits (the result
+/// carries the skipped count). Returns `cancelled: true` (nothing written) when
+/// the user stops it mid-run.
 #[tauri::command]
 pub async fn import_json_rows(
     app: AppHandle,
@@ -2452,6 +2468,7 @@ pub async fn import_json_rows(
     table: String,
     path: String,
     mappings: Vec<JsonColumnMapping>,
+    continue_on_error: bool,
 ) -> AppResult<JsonImportResult> {
     state.cancel_import.store(false, Ordering::Relaxed);
     if mappings.is_empty() {
@@ -2496,12 +2513,14 @@ pub async fn import_json_rows(
     let mut batch: Vec<(usize, Vec<Option<String>>)> = Vec::new();
     let mut batch_bytes: usize = 0;
     let mut inserted: u64 = 0;
+    let mut skipped: u64 = 0;
 
     for (idx, row) in rows.iter().enumerate() {
         if state.cancel_import.load(Ordering::Relaxed) {
             let _ = (&mut *conn).execute("ROLLBACK").await;
             return Ok(JsonImportResult {
                 inserted: 0,
+                skipped: 0,
                 cancelled: true,
             });
         }
@@ -2519,17 +2538,28 @@ pub async fn import_json_rows(
         batch.push((idx, vals));
 
         if batch.len() >= 500 || batch_bytes >= 800_000 {
-            if let Err((row_index, msg)) =
-                flush_import_batch(&mut conn, &insert_prefix, &single_sql, &row_placeholder, &batch)
-                    .await
+            match flush_import_batch(
+                &mut conn,
+                &insert_prefix,
+                &single_sql,
+                &row_placeholder,
+                &batch,
+                continue_on_error,
+            )
+            .await
             {
-                let _ = (&mut *conn).execute("ROLLBACK").await;
-                return Err(AppError::Other(format!("Row {}: {}", row_index + 1, msg)));
+                Ok(got) => {
+                    inserted += got;
+                    skipped += batch.len() as u64 - got;
+                }
+                Err((row_index, msg)) => {
+                    let _ = (&mut *conn).execute("ROLLBACK").await;
+                    return Err(AppError::Other(format!("Row {}: {}", row_index + 1, msg)));
+                }
             }
-            inserted += batch.len() as u64;
             let _ = app.emit(
                 "json-import-progress",
-                serde_json::json!({ "done": inserted, "total": total }),
+                serde_json::json!({ "done": inserted + skipped, "total": total }),
             );
             batch.clear();
             batch_bytes = 0;
@@ -2537,22 +2567,35 @@ pub async fn import_json_rows(
     }
 
     if !batch.is_empty() {
-        if let Err((row_index, msg)) =
-            flush_import_batch(&mut conn, &insert_prefix, &single_sql, &row_placeholder, &batch).await
+        match flush_import_batch(
+            &mut conn,
+            &insert_prefix,
+            &single_sql,
+            &row_placeholder,
+            &batch,
+            continue_on_error,
+        )
+        .await
         {
-            let _ = (&mut *conn).execute("ROLLBACK").await;
-            return Err(AppError::Other(format!("Row {}: {}", row_index + 1, msg)));
+            Ok(got) => {
+                inserted += got;
+                skipped += batch.len() as u64 - got;
+            }
+            Err((row_index, msg)) => {
+                let _ = (&mut *conn).execute("ROLLBACK").await;
+                return Err(AppError::Other(format!("Row {}: {}", row_index + 1, msg)));
+            }
         }
-        inserted += batch.len() as u64;
     }
 
     (&mut *conn).execute("COMMIT").await?;
     let _ = app.emit(
         "json-import-progress",
-        serde_json::json!({ "done": inserted, "total": total.max(inserted) }),
+        serde_json::json!({ "done": inserted + skipped, "total": total.max(inserted + skipped) }),
     );
     Ok(JsonImportResult {
         inserted,
+        skipped,
         cancelled: false,
     })
 }

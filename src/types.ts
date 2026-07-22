@@ -480,6 +480,8 @@ export interface JsonColumnMapping {
 
 export interface JsonImportResult {
   inserted: number;
+  /** Rows that failed to insert and were skipped (continue-on-error mode only). */
+  skipped: number;
   cancelled: boolean;
 }
 
