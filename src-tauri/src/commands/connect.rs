@@ -13,6 +13,8 @@ pub struct TestConnectionInput {
     pub username: String,
     pub password: String,
     pub default_database: Option<String>,
+    #[serde(default = "crate::store::profiles::default_true")]
+    pub use_ssl: bool,
 }
 
 #[tauri::command]
@@ -23,6 +25,7 @@ pub async fn test_connection(input: TestConnectionInput) -> AppResult<()> {
         &input.username,
         &input.password,
         input.default_database.as_deref(),
+        input.use_ssl,
     )
     .await?;
     sqlx::query("SELECT 1").execute(&pool).await?;
@@ -53,6 +56,7 @@ pub async fn open_connection(
         &profile.username,
         &password,
         profile.default_database.as_deref(),
+        profile.use_ssl,
     )
     .await?;
 

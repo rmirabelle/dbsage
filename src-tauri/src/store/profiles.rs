@@ -11,10 +11,29 @@ pub struct ConnectionProfile {
     pub host: String,
     pub port: u16,
     pub username: String,
-    #[serde(default)]
+    /**
+     * Fields are individually renamed to camelCase (rather than rename_all)
+     * because the frontend receives this struct flattened into ProfileView,
+     * where the outer rename_all does not reach. The snake_case aliases keep
+     * profiles.json files written before this change readable.
+     */
+    #[serde(rename = "defaultDatabase", alias = "default_database", default)]
     pub default_database: Option<String>,
+    /**
+     * Whether to negotiate TLS when the server offers it (sqlx ssl-mode
+     * Preferred). Off = plaintext, matching clients like Navicat with SSL
+     * unchecked.
+     */
+    #[serde(rename = "useSsl", default = "default_true")]
+    pub use_ssl: bool,
+    #[serde(rename = "createdAt", alias = "created_at")]
     pub created_at: DateTime<Utc>,
+    #[serde(rename = "updatedAt", alias = "updated_at")]
     pub updated_at: DateTime<Utc>,
+}
+
+pub fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

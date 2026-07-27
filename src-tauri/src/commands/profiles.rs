@@ -19,6 +19,8 @@ pub struct ProfileInput {
     pub username: String,
     pub password: Option<String>,
     pub default_database: Option<String>,
+    #[serde(default = "crate::store::profiles::default_true")]
+    pub use_ssl: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,6 +59,7 @@ pub async fn save_profile(app: AppHandle, input: ProfileInput) -> AppResult<Prof
         port: input.port,
         username: input.username,
         default_database: input.default_database.filter(|s| !s.is_empty()),
+        use_ssl: input.use_ssl,
         created_at: now,
         updated_at: now,
     };

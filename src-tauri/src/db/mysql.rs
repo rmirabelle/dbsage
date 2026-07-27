@@ -1,7 +1,7 @@
 use crate::error::AppResult;
 use base64::Engine;
 use serde_json::{json, Value};
-use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlRow};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlRow, MySqlSslMode};
 use sqlx::{Column, MySqlPool, Row, TypeInfo};
 use std::time::Duration;
 
@@ -13,12 +13,16 @@ pub async fn build_pool(
     username: &str,
     password: &str,
     database: Option<&str>,
+    use_ssl: bool,
 ) -> AppResult<MySqlPool> {
     let mut opts = MySqlConnectOptions::new()
         .host(host)
         .port(port)
         .username(username)
         .password(password);
+    if !use_ssl {
+        opts = opts.ssl_mode(MySqlSslMode::Disabled);
+    }
     if let Some(db) = database {
         if !db.is_empty() {
             opts = opts.database(db);

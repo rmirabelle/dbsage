@@ -2,6 +2,7 @@ use crate::db::mysql::{get_opt_string, get_string, quote_ident, result_columns, 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use futures_util::TryStreamExt;
+use mysql_async::prelude::Queryable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::mysql::MySqlRow;
@@ -607,6 +608,81 @@ pub async fn create_table(
 /// name is already taken in the target database, so nothing existing is ever
 /// overwritten. Returns `false` when the user cancels mid-copy (the
 /// partially-written target table is dropped so nothing is left behind).
+/**
+ * The copy's destination uses a dedicated mysql_async connection instead of
+ * the app's sqlx pool: mysql_async implements MySQL protocol compression
+ * (CLIENT_COMPRESS), which sqlx lacks, and bulk INSERT text compresses ~10:1
+ * — the difference between a WAN copy taking seconds and taking minutes. It
+ * also cuts exposure to wire corruption by the same factor. SSL mirrors the
+ * profile's Use SSL setting with sqlx-Preferred semantics (no cert checks).
+ */
+fn copy_dest_opts(
+    profile: &crate::store::profiles::ConnectionProfile,
+    password: &str,
+    database: &str,
+) -> mysql_async::Opts {
+    let mut builder = mysql_async::OptsBuilder::default()
+        .ip_or_hostname(profile.host.clone())
+        .tcp_port(profile.port)
+        .user(Some(profile.username.clone()))
+        .pass(Some(password.to_string()))
+        .db_name(Some(database.to_string()))
+        .compression(mysql_async::Compression::fast());
+    if profile.use_ssl {
+        builder = builder.ssl_opts(
+            mysql_async::SslOpts::default()
+                .with_danger_accept_invalid_certs(true)
+                .with_danger_skip_domain_validation(true),
+        );
+    }
+    builder.into()
+}
+
+fn dst_err(e: mysql_async::Error) -> AppError {
+    AppError::Other(format!("target database error: {e}"))
+}
+
+/**
+ * Execute one multi-row INSERT batch on the destination, surviving transient
+ * network/TLS failures (this network path has been observed corrupting
+ * sustained TLS uploads at roughly one record per few hundred MB). On an I/O
+ * error the dead connection is replaced with a fresh one, and COUNT(*) on the
+ * target table (which only this copy writes to) decides whether the failed
+ * statement actually applied before the link died — so a retry never
+ * duplicates rows.
+ */
+async fn execute_batch_with_reconnect(
+    opts: &mysql_async::Opts,
+    dst_conn: &mut mysql_async::Conn,
+    dest_table: &str,
+    stmt: &str,
+    rows_before: u64,
+    batch_len: u64,
+) -> AppResult<()> {
+    let mut attempts: u32 = 0;
+    loop {
+        let err = match dst_conn.query_drop(stmt).await {
+            Ok(()) => return Ok(()),
+            Err(e) => e,
+        };
+        attempts += 1;
+        let transient = matches!(err, mysql_async::Error::Io(_));
+        if !transient || attempts >= 5 {
+            return Err(dst_err(err));
+        }
+        tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
+        *dst_conn = mysql_async::Conn::new(opts.clone()).await.map_err(dst_err)?;
+        let count: i64 = dst_conn
+            .query_first(format!("SELECT COUNT(*) FROM {}", quote_ident(dest_table)))
+            .await
+            .map_err(dst_err)?
+            .unwrap_or(0);
+        if count as u64 >= rows_before + batch_len {
+            return Ok(());
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn copy_table(
     app: AppHandle,
@@ -642,17 +718,26 @@ pub async fn copy_table(
 
     let target_profile = target_profile_id.unwrap();
     let src_pool = pool_for(&state, &profile_id).await?;
-    let dst_pool = pool_for(&state, &target_profile).await?;
 
-    let exists = sqlx::query(
-        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES \
-         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
-    )
-    .bind(&target_database)
-    .bind(&source_table)
-    .fetch_one(&dst_pool)
-    .await?;
-    if exists.try_get::<i64, _>(0).unwrap_or(0) > 0 {
+    let dest_profile = crate::store::profiles::get(&app, &target_profile)?;
+    let dest_password = crate::store::secrets::get_password(&target_profile)?.ok_or_else(|| {
+        AppError::Other(format!("no password stored for profile {target_profile}"))
+    })?;
+    let dest_opts = copy_dest_opts(&dest_profile, &dest_password, &target_database);
+    let mut dst_conn = mysql_async::Conn::new(dest_opts.clone())
+        .await
+        .map_err(|e| AppError::Other(format!("could not connect to target: {e}")))?;
+
+    let exists: i64 = dst_conn
+        .exec_first(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES \
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+            (&target_database, &source_table),
+        )
+        .await
+        .map_err(dst_err)?
+        .unwrap_or(0);
+    if exists > 0 {
         return Err(AppError::Other(format!(
             "a table named \"{source_table}\" already exists in \"{target_database}\""
         )));
@@ -665,18 +750,13 @@ pub async fn copy_table(
     );
 
     /* Reproduce the structure from the source's own DDL (SHOW CREATE TABLE
-       returns (Table, "Create Table") — the unqualified CREATE is column 1), then
-       run it on the target after USE so it lands in the right schema. */
+       returns (Table, "Create Table") — the unqualified CREATE is column 1).
+       The destination connection's db_name puts it in the right schema. */
     let create_row = sqlx::query(&format!("SHOW CREATE TABLE {qualified_src}"))
         .fetch_one(&src_pool)
         .await?;
     let create_sql = get_string(&create_row, 1);
-
-    let mut dst_conn = dst_pool.acquire().await?;
-    (&mut *dst_conn)
-        .execute(format!("USE {}", quote_ident(&target_database)).as_str())
-        .await?;
-    (&mut *dst_conn).execute(create_sql.as_str()).await?;
+    dst_conn.query_drop(&create_sql).await.map_err(dst_err)?;
 
     if include_data {
         let total: u64 = sqlx::query_scalar::<_, i64>(&format!(
@@ -694,7 +774,10 @@ pub async fn copy_table(
         let mut columns: Vec<(String, String)> = Vec::new();
         let mut insert_prefix = String::new();
         /* Batch rows into multi-row INSERTs, flushing on row count or byte size
-           to stay comfortably under the target's max_allowed_packet. */
+           to stay comfortably under the target's max_allowed_packet (64MB
+           default on MySQL 8). Batches are large because each flush pays a
+           full WAN round-trip serialized behind the previous one — with
+           protocol compression, wire size is not the constraint. */
         let mut batch: Vec<String> = Vec::new();
         let mut batch_bytes: usize = 0;
         let mut done: u64 = 0;
@@ -722,10 +805,18 @@ pub async fn copy_table(
                 .join(", ");
             batch_bytes += values.len() + 4;
             batch.push(format!("({values})"));
-            if batch.len() >= 500 || batch_bytes >= 800_000 {
-                done += batch.len() as u64;
+            if batch.len() >= 10_000 || batch_bytes >= 8_000_000 {
                 let stmt = format!("{insert_prefix} {}", batch.join(", "));
-                (&mut *dst_conn).execute(stmt.as_str()).await?;
+                execute_batch_with_reconnect(
+                    &dest_opts,
+                    &mut dst_conn,
+                    &source_table,
+                    &stmt,
+                    done,
+                    batch.len() as u64,
+                )
+                .await?;
+                done += batch.len() as u64;
                 let _ = app
                     .emit("table-copy-progress", serde_json::json!({ "done": done, "total": total }));
                 batch.clear();
@@ -741,21 +832,30 @@ pub async fn copy_table(
                 quote_ident(&target_database),
                 quote_ident(&source_table)
             );
-            let _ = (&mut *dst_conn)
-                .execute(format!("DROP TABLE IF EXISTS {qualified_dst}").as_str())
+            let _ = dst_conn
+                .query_drop(format!("DROP TABLE IF EXISTS {qualified_dst}"))
                 .await;
             return Ok(false);
         }
         if !batch.is_empty() {
-            done += batch.len() as u64;
             let stmt = format!("{insert_prefix} {}", batch.join(", "));
-            (&mut *dst_conn).execute(stmt.as_str()).await?;
+            execute_batch_with_reconnect(
+                &dest_opts,
+                &mut dst_conn,
+                &source_table,
+                &stmt,
+                done,
+                batch.len() as u64,
+            )
+            .await?;
+            done += batch.len() as u64;
         }
         let _ = app.emit(
             "table-copy-progress",
             serde_json::json!({ "done": done, "total": done.max(total) }),
         );
     }
+    let _ = dst_conn.disconnect().await;
     Ok(true)
 }
 

@@ -122,6 +122,7 @@ export function ConnectionTree() {
       port: profile.port,
       username: profile.username,
       defaultDatabase: profile.defaultDatabase,
+      useSsl: profile.useSsl,
     });
     await loadProfiles();
   };

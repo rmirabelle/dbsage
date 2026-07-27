@@ -125,6 +125,11 @@ fn confirm_exit_with_monitor(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    /* Both rustls crypto backends end up linked (sqlx/reqwest enable `ring`,
+       mysql_async enables `aws-lc-rs`), and rustls panics at first TLS use
+       unless one is installed as the process default. Must run before any
+       connection is opened. */
+    let _ = rustls::crypto::ring::default_provider().install_default();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

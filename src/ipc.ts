@@ -52,6 +52,7 @@ export const ipc = {
     username: string;
     password: string;
     defaultDatabase?: string | null;
+    useSsl: boolean;
   }) => invoke<void>("test_connection", { input }),
 
   openConnection: (profileId: string) =>

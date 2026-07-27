@@ -929,6 +929,7 @@ export const useStore = create<Store>((set, get) => ({
       }
     );
 
+    const startedAt = performance.now();
     let copied = 0;
     let cancelled = false;
     let failed: string | null = null;
@@ -978,10 +979,11 @@ export const useStore = create<Store>((set, get) => ({
       );
     } else if (copied > 0) {
       const suffix = includeData ? " with data" : " (structure only)";
+      const secs = ((performance.now() - startedAt) / 1000).toFixed(1);
       notifySuccess(
         copied === 1
-          ? `Copied "${tables[0]}" to "${targetDatabase}"${suffix}.`
-          : `Copied ${copied} tables to "${targetDatabase}"${suffix}.`
+          ? `Copied "${tables[0]}" to "${targetDatabase}"${suffix} in ${secs}s.`
+          : `Copied ${copied} tables to "${targetDatabase}"${suffix} in ${secs}s.`
       );
     }
     if (failed) notifyError(failed);

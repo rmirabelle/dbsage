@@ -7,6 +7,7 @@ export interface ConnectionProfile {
   port: number;
   username: string;
   defaultDatabase: string | null;
+  useSsl: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -65,6 +66,7 @@ export interface ProfileInput {
   username: string;
   password?: string;
   defaultDatabase?: string | null;
+  useSsl: boolean;
 }
 
 export interface TableInfo {

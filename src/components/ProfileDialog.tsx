@@ -30,6 +30,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
   const [defaultDatabase, setDefaultDatabase] = useState(
     profile?.defaultDatabase ?? ""
   );
+  const [useSsl, setUseSsl] = useState(profile?.useSsl ?? true);
 
   const [test, setTest] = useState<TestState>({ kind: "idle" });
   const [saving, setSaving] = useState(false);
@@ -67,6 +68,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
         username,
         password: pw,
         defaultDatabase: defaultDatabase || null,
+        useSsl,
       });
       setTest({ kind: "ok" });
     } catch (e) {
@@ -86,6 +88,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
         username: username.trim(),
         password: password || undefined,
         defaultDatabase: defaultDatabase.trim() || null,
+        useSsl,
       });
       onSaved();
     } catch (e) {
@@ -182,6 +185,19 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
               className="dbs-input"
             />
           </Field>
+
+          <label className="flex items-center gap-2 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              data-el="profile-ssl-checkbox"
+              checked={useSsl}
+              onChange={(e) => setUseSsl(e.target.checked)}
+              className="accent-cyan-500"
+            />
+            <span className="text-[12px] text-zinc-300">
+              Use SSL when the server supports it
+            </span>
+          </label>
         </div>
 
         <div className="px-4 py-3 border-t border-zinc-800 flex items-center justify-between gap-3">
