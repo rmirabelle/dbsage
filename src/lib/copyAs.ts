@@ -9,6 +9,14 @@ export const COPY_AS_OPTIONS: { format: CopyAsFormat; label: string }[] = [
   { format: "psv-header", label: "Pipe-delimited + header" },
 ];
 
+export type ResultCopyFormat = "json" | "csv" | "tsv";
+
+export const RESULT_COPY_OPTIONS: { format: ResultCopyFormat; label: string }[] = [
+  { format: "json", label: "JSON" },
+  { format: "csv", label: "CSV + header" },
+  { format: "tsv", label: "Tab-delimited (Excel)" },
+];
+
 /** Backtick-quote an identifier (column / table / database name). */
 const id = (name: string) => `\`${name.replace(/`/g, "``")}\``;
 
@@ -29,6 +37,46 @@ function predicate(col: ColumnInfo, v: CellValue): string {
 function psvCell(v: CellValue): string {
   if (v === null) return "";
   return String(v).replace(/[|\r\n]+/g, " ");
+}
+
+/** Quote a CSV field per RFC 4180: wrap in double quotes when it contains a
+ * comma, quote, or newline; double any embedded quotes. Null → empty field. */
+function csvCell(v: CellValue): string {
+  if (v === null) return "";
+  const s = String(v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** Flatten a cell to a tab-delimited field: tabs/newlines collapse to a space
+ * so a paste into Excel lands one grid row per spreadsheet row. Null → empty. */
+function tsvCell(v: CellValue): string {
+  if (v === null) return "";
+  return String(v).replace(/[\t\r\n]+/g, " ");
+}
+
+/**
+ * Build clipboard text for query-result rows — formats that need no table
+ * target. JSON is a pretty-printed array of objects in visible-column order;
+ * CSV and tab-delimited both include a header row.
+ */
+export function buildResultCopyText(
+  format: ResultCopyFormat,
+  columns: ColumnInfo[],
+  rows: RowRecord[]
+): string {
+  if (format === "json") {
+    const objs = rows.map((row) =>
+      Object.fromEntries(columns.map((c) => [c.name, row[c.name] ?? null]))
+    );
+    return JSON.stringify(objs, null, 2);
+  }
+  const sep = format === "csv" ? "," : "\t";
+  const cell = format === "csv" ? csvCell : tsvCell;
+  const lines = [columns.map((c) => cell(c.name)).join(sep)];
+  for (const row of rows) {
+    lines.push(columns.map((c) => cell(row[c.name] ?? null)).join(sep));
+  }
+  return lines.join("\n");
 }
 
 /**

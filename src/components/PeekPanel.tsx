@@ -466,6 +466,7 @@ export function PeekPanel({
               hiddenColumns={hiddenColumns}
               jsonDisplay={jsonDisplay}
               columnWidths={columnWidths}
+              resultCopy
               peekableColumns={peekableColumns}
               activeCell={activeCell}
               clearActiveCellOnRowSelect

@@ -659,6 +659,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           jsonDisplay={jsonDisplay}
           activeCell={activeCell}
           clearActiveCellOnRowSelect
+          resultCopy
           onActiveCellChange={setActiveCell}
           onSelectionChange={setSelectedRows}
           onSortChange={setSort}

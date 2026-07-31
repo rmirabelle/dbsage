@@ -882,6 +882,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           jsonDisplay={tab.jsonDisplay}
           columnWidths={tab.columnWidths}
           copyTarget={{ database: tab.database, table: tab.table }}
+          resultCopy
           peekableColumns={peekableColumns}
           activeCell={activeCell}
           clearActiveCellOnRowSelect

@@ -14,6 +14,9 @@ import {
   Key,
   Trash,
   Copy,
+  BracketsCurly,
+  FileCsv,
+  MicrosoftExcelLogo,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type {
@@ -29,7 +32,14 @@ import { ColumnsVisibilityMenu } from "./ColumnsVisibilityMenu";
 import { RowDeleteConfirmDialog } from "./RowDeleteConfirmDialog";
 import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
-import { buildCopyText, COPY_AS_OPTIONS, type CopyAsFormat } from "../lib/copyAs";
+import {
+  buildCopyText,
+  buildResultCopyText,
+  COPY_AS_OPTIONS,
+  RESULT_COPY_OPTIONS,
+  type CopyAsFormat,
+  type ResultCopyFormat,
+} from "../lib/copyAs";
 import { notifyError, notifySuccess } from "../state/notify";
 import { helpHandlers } from "../state/help";
 
@@ -64,6 +74,10 @@ interface Props {
   /** When set, right-clicking a row's number gutter opens a "Copy As" menu that
    * copies the selected rows (or just the clicked row) targeting this table. */
   copyTarget?: { database: string; table: string };
+  /** When true, right-clicking a row's number gutter opens a "Copy As" menu with
+   * table-free result formats (JSON / CSV / tab-delimited) — for grids showing
+   * query results, which have no db.table target for SQL-shaped copies. */
+  resultCopy?: boolean;
   /** When set, the row-gutter context menu shows a Delete item that calls this
    * with the right-clicked row's selection. The grid handles the confirmation. */
   onDeleteRows?: (indices: number[]) => Promise<void>;
@@ -97,6 +111,12 @@ const COPY_AS_ICONS: Record<CopyAsFormat, typeof Table> = {
   "psv-header": Rows,
 };
 
+const RESULT_COPY_ICONS: Record<ResultCopyFormat, typeof Table> = {
+  json: BracketsCurly,
+  csv: FileCsv,
+  tsv: MicrosoftExcelLogo,
+};
+
 interface MenuAnchor {
   column: string;
   x: number;
@@ -125,6 +145,7 @@ export function DataGrid({
   columnWidths,
   onColumnWidthsChange,
   copyTarget,
+  resultCopy = false,
   onDeleteRows,
   onDuplicateRows,
   peekableColumns,
@@ -292,7 +313,7 @@ export function DataGrid({
      Operate on the whole selection when the clicked row is part of it;
      otherwise select just that row and operate on it. */
   const handleRowContextMenu = (index: number, e: React.MouseEvent) => {
-    if (!copyTarget && !onDeleteRows && !onDuplicateRows) return;
+    if (!copyTarget && !resultCopy && !onDeleteRows && !onDuplicateRows) return;
     e.preventDefault();
     e.stopPropagation();
     let indices: number[];
@@ -351,6 +372,27 @@ export function DataGrid({
         visibleColumns,
         picked
       );
+      await navigator.clipboard.writeText(text);
+      notifySuccess(
+        `Copied ${picked.length} row${picked.length === 1 ? "" : "s"} as ${label}`
+      );
+    } catch {
+      notifyError("Could not copy to the clipboard");
+    }
+  };
+
+  const copyResultsAs = async (
+    format: ResultCopyFormat,
+    label: string,
+    indices: number[]
+  ) => {
+    setRowMenu(null);
+    const picked = indices
+      .map((i) => rows[i])
+      .filter((r): r is RowRecord => r != null);
+    if (picked.length === 0) return;
+    try {
+      const text = buildResultCopyText(format, visibleColumns, picked);
       await navigator.clipboard.writeText(text);
       notifySuccess(
         `Copied ${picked.length} row${picked.length === 1 ? "" : "s"} as ${label}`
@@ -564,7 +606,7 @@ export function DataGrid({
                     onContextMenu={(e) => handleRowContextMenu(vItem.index, e)}
                     className={clsx(
                       "sticky left-0 z-10 w-14 shrink-0 flex items-center justify-end pr-3 text-[10px] font-mono border-r border-zinc-900",
-                      (copyTarget || onDeleteRows) && "cursor-context-menu",
+                      (copyTarget || resultCopy || onDeleteRows) && "cursor-context-menu",
                       isSelected
                         ? "bg-[#113e36] text-emerald-200 font-semibold"
                         : `${gutterStripe} text-zinc-600`
@@ -659,9 +701,13 @@ export function DataGrid({
           y={rowMenu.y}
           count={rowMenu.indices.length}
           canCopy={!!copyTarget}
+          canCopyResult={resultCopy}
           canDelete={!!onDeleteRows}
           canDuplicate={!!onDuplicateRows}
           onPick={(format, label) => copyRowsAs(format, label, rowMenu.indices)}
+          onPickResult={(format, label) =>
+            copyResultsAs(format, label, rowMenu.indices)
+          }
           onDelete={() => deleteRows(rowMenu.indices)}
           onDuplicate={() => duplicateRows(rowMenu.indices)}
           onClose={() => setRowMenu(null)}
@@ -684,9 +730,11 @@ function RowContextMenu({
   y,
   count,
   canCopy,
+  canCopyResult,
   canDelete,
   canDuplicate,
   onPick,
+  onPickResult,
   onDelete,
   onDuplicate,
   onClose,
@@ -695,9 +743,11 @@ function RowContextMenu({
   y: number;
   count: number;
   canCopy: boolean;
+  canCopyResult: boolean;
   canDelete: boolean;
   canDuplicate: boolean;
   onPick: (format: CopyAsFormat, label: string) => void;
+  onPickResult: (format: ResultCopyFormat, label: string) => void;
   onDelete: () => void;
   onDuplicate: () => void;
   onClose: () => void;
@@ -733,7 +783,7 @@ function RowContextMenu({
             <Copy size={14} className="text-emerald-400 shrink-0" />
             Duplicate {count} row{count === 1 ? "" : "s"}
           </button>
-          {(canDelete || canCopy) && (
+          {(canDelete || canCopy || canCopyResult) && (
             <div className="my-1 border-t border-zinc-800" />
           )}
         </>
@@ -747,7 +797,9 @@ function RowContextMenu({
             <Trash size={14} className="text-rose-400 shrink-0" />
             Delete {count} row{count === 1 ? "" : "s"}
           </button>
-          {canCopy && <div className="my-1 border-t border-zinc-800" />}
+          {(canCopy || canCopyResult) && (
+            <div className="my-1 border-t border-zinc-800" />
+          )}
         </>
       )}
       {canCopy && (
@@ -761,6 +813,30 @@ function RowContextMenu({
               <button
                 key={opt.format}
                 onClick={() => onPick(opt.format, opt.label)}
+                className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 whitespace-nowrap"
+              >
+                <Icon size={14} className="text-zinc-400 shrink-0" />
+                {opt.label}
+              </button>
+            );
+          })}
+        </>
+      )}
+      {/* Table-free data formats. In a table grid these continue the "Copy … as"
+          section above; in a results grid they form the section themselves. */}
+      {canCopyResult && (
+        <>
+          {!canCopy && (
+            <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+              Copy {count} result{count === 1 ? "" : "s"} as
+            </div>
+          )}
+          {RESULT_COPY_OPTIONS.map((opt) => {
+            const Icon = RESULT_COPY_ICONS[opt.format];
+            return (
+              <button
+                key={opt.format}
+                onClick={() => onPickResult(opt.format, opt.label)}
                 className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 whitespace-nowrap"
               >
                 <Icon size={14} className="text-zinc-400 shrink-0" />
