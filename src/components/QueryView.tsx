@@ -29,15 +29,29 @@ import { QueryHistoryButton } from "./QueryHistoryButton";
 import { AsJsonDialog, type JsonSnippetMode } from "./AsJsonDialog";
 import { compactDisplay, extractJsonCandidates } from "../lib/jsonPath";
 import { formatSql, type FormatStyle } from "../lib/formatSql";
+import {
+  splitSqlStatements,
+  returnsResultSet,
+  statementPreview,
+} from "../lib/splitSql";
 import { scanFromTables } from "../lib/sqlCompletion";
 import { SQL_KEYWORDS } from "../lib/sqlHighlight";
 import { SQL_SNIPPETS } from "../lib/sqlSnippets";
-import type { ColumnFilter, QueryTab, Relation, RowRecord, SortSpec } from "../types";
+import type {
+  ColumnFilter,
+  QueryTab,
+  Relation,
+  RowRecord,
+  SortSpec,
+  StatementResult,
+} from "../types";
 
 /** Stable empty fallback so the selector never returns a fresh array (which, in
  * a window whose store has no tree loaded, would loop useSyncExternalStore). */
 const NO_DATABASES: string[] = [];
 const NO_RELATIONS: Relation[] = [];
+const NO_SETS: StatementResult[] = [];
+const NO_STMTS: string[] = [];
 
 export function QueryView({ tab }: { tab: QueryTab }) {
   const profiles = useStore((s) => s.profiles);
@@ -233,18 +247,57 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   );
 
   const result = tab.result;
+  const sets = result?.results ?? NO_SETS;
+
+  /* A compound script yields one result set per statement; the grid shows one
+     at a time, picked via the numbered buttons in the results toolbar. */
+  const [activeSetIndex, setActiveSetIndex] = useState(0);
+  useEffect(() => setActiveSetIndex(0), [result]);
+  const clampedSetIndex = Math.min(activeSetIndex, sets.length - 1);
+  const activeSet = sets.length > 0 ? sets[clampedSetIndex] : null;
+
+  /* The executed script's statements, split client-side for labeling only:
+     pill tooltips, and telling an empty SELECT result ("0 rows") apart from a
+     statement with no result set ("N rows affected"). When the split doesn't
+     line up with the server's statement count, labeling degrades gracefully. */
+  const stmts = useMemo(
+    () => (tab.resultSql ? splitSqlStatements(tab.resultSql) : NO_STMTS),
+    [tab.resultSql]
+  );
+  const stmtFor = (i: number): string | null =>
+    stmts.length === sets.length ? stmts[i] ?? null : null;
+  const emptyResultSet = (s: StatementResult, i: number): boolean => {
+    if (s.rowsAffected == null) return false;
+    const stmt = stmtFor(i);
+    return stmt != null && returnsResultSet(stmt);
+  };
+  const activeIsEmptyResult =
+    activeSet != null && emptyResultSet(activeSet, clampedSetIndex);
+
+  /* Switching sets also resets the per-set view state — sort/filter/hidden
+     columns target the outgoing set's columns. */
+  const selectSet = (i: number) => {
+    setActiveSetIndex(i);
+    setSort(null);
+    setFilters([]);
+    setHiddenColumns([]);
+    setJsonDisplay({});
+    setActiveCell(null);
+    setSelectedRows([]);
+  };
+
   const viewRows = useMemo(
-    () => (result ? applyView(result.rows, filters, sort) : []),
-    [result, filters, sort]
+    () => (activeSet ? applyView(activeSet.rows, filters, sort) : []),
+    [activeSet, filters, sort]
   );
 
-  const hasResultSet = result != null && result.rowsAffected == null;
+  const hasResultSet = activeSet != null && activeSet.rowsAffected == null;
   const activeColumn =
-    activeCell && result
-      ? result.columns.find((c) => c.name === activeCell.column) ?? null
+    activeCell && activeSet
+      ? activeSet.columns.find((c) => c.name === activeCell.column) ?? null
       : null;
   const activeValue =
-    activeCell && result
+    activeCell && activeSet
       ? viewRows[activeCell.rowIndex]?.[activeCell.column]
       : undefined;
   const activeRowOrdinal = activeCell ? activeCell.rowIndex + 1 : null;
@@ -593,10 +646,49 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           ]}
         />
 
+        {sets.length > 1 && (
+          <div
+            data-el="query-result-set-tabs"
+            className="flex items-center gap-1 ml-2"
+          >
+            <span className="text-[11px] text-zinc-500 font-semibold mr-0.5">
+              Result
+            </span>
+            {sets.map((s, i) => {
+              const summary = emptyResultSet(s, i)
+                ? "0 rows"
+                : s.rowsAffected != null
+                ? `${s.rowsAffected} row${s.rowsAffected === 1 ? "" : "s"} affected`
+                : `${s.rows.length} row${s.rows.length === 1 ? "" : "s"}`;
+              const stmt = stmtFor(i);
+              return (
+                <button
+                  key={i}
+                  data-el="query-result-set-btn"
+                  onClick={() => selectSet(i)}
+                  title={
+                    stmt
+                      ? `${summary} — ${statementPreview(stmt)}`
+                      : `Statement ${i + 1}: ${summary}`
+                  }
+                  className={clsx(
+                    "min-w-6 px-1.5 py-0.5 rounded text-[11px] font-semibold tabular-nums transition-colors",
+                    i === clampedSetIndex
+                      ? "bg-accent-500 text-[#042f2e]"
+                      : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-300"
+                  )}
+                >
+                  {i + 1}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <div className="ml-auto">
           <ExportButton
             database={tab.database}
-            columns={result?.columns ?? []}
+            columns={activeSet?.columns ?? []}
             rows={
               selectedRows.length > 0
                 ? selectedRows.map((i) => viewRows[i]).filter((r): r is RowRecord => r != null)
@@ -629,28 +721,35 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         </div>
       )}
 
-      {result == null ? (
+      {result == null || activeSet == null ? (
         <div
           data-el="query-empty"
           className="flex-1 flex items-center justify-center text-zinc-600 text-xs"
         >
           Write a query above and press Execute to see results.
         </div>
-      ) : result.rowsAffected != null ? (
+      ) : activeIsEmptyResult ? (
+        <div
+          data-el="query-empty-result"
+          className="flex-1 flex items-center justify-center text-zinc-500 text-sm"
+        >
+          Query returned no rows.
+        </div>
+      ) : activeSet.rowsAffected != null ? (
         <div
           data-el="query-affected"
           className="flex-1 flex items-center justify-center text-zinc-400 text-sm"
         >
           <span className="text-emerald-400 font-semibold">
-            {result.rowsAffected}
+            {activeSet.rowsAffected}
           </span>
           <span className="ml-1.5">
-            row{result.rowsAffected === 1 ? "" : "s"} affected
+            row{activeSet.rowsAffected === 1 ? "" : "s"} affected
           </span>
         </div>
       ) : (
         <DataGrid
-          columns={result.columns}
+          columns={activeSet.columns}
           rows={viewRows}
           offset={0}
           sort={sort}
@@ -693,14 +792,18 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             <Loader2 size={12} className="animate-spin" />
             {tab.stopping ? "Stopping…" : "Running…"}
           </span>
-        ) : result == null ? (
+        ) : result == null || activeSet == null ? (
           <span className="text-zinc-600">Not run yet</span>
-        ) : result.rowsAffected != null ? (
+        ) : activeIsEmptyResult ? (
+          <span>
+            <span className="text-zinc-200">0</span> rows
+          </span>
+        ) : activeSet.rowsAffected != null ? (
           <span>
             <span className="text-zinc-200">
-              {result.rowsAffected.toLocaleString()}
+              {activeSet.rowsAffected.toLocaleString()}
             </span>{" "}
-            row{result.rowsAffected === 1 ? "" : "s"} affected
+            row{activeSet.rowsAffected === 1 ? "" : "s"} affected
           </span>
         ) : (
           <>
@@ -713,7 +816,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
                   {" "}
                   of{" "}
                   <span className="text-zinc-200">
-                    {result.rows.length.toLocaleString()}
+                    {activeSet.rows.length.toLocaleString()}
                   </span>
                 </>
               )}{" "}
@@ -721,15 +824,15 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             </span>
             <span className="text-zinc-700">·</span>
             <span>
-              <span className="text-zinc-200">{result.columns.length}</span>{" "}
-              {result.columns.length === 1 ? "col" : "cols"}
+              <span className="text-zinc-200">{activeSet.columns.length}</span>{" "}
+              {activeSet.columns.length === 1 ? "col" : "cols"}
             </span>
-            {result.truncated && (
+            {activeSet.truncated && (
               <>
                 <span className="text-zinc-700">·</span>
                 <span
                   className="text-amber-400 font-semibold"
-                  title={`Capped at ${result.rows.length.toLocaleString()} rows — the query matched more. Raise "Max rows" (or pick "No limit") to fetch more.`}
+                  title={`Capped at ${activeSet.rows.length.toLocaleString()} rows — the query matched more. Raise "Max rows" (or pick "No limit") to fetch more.`}
                 >
                   capped
                 </span>

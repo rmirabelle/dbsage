@@ -43,20 +43,28 @@ pub struct RowsResult {
     pub offset: u32,
 }
 
-/// Result of an ad-hoc query. For result-set statements (SELECT/SHOW/etc.)
-/// `columns`/`rows` carry the data and `rows_affected` is None. For statements
-/// with no result set (INSERT/UPDATE/DELETE/DDL) `rows_affected` is set and
-/// `rows` is empty.
+/// One statement's outcome within an ad-hoc query run. For result-set
+/// statements (SELECT/SHOW/etc.) `columns`/`rows` carry the data and
+/// `rows_affected` is None. For statements with no result set
+/// (INSERT/UPDATE/DELETE/DDL) `rows_affected` is set and `rows` is empty.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryResult {
+pub struct StatementResult {
     pub columns: Vec<ColumnInfo>,
     pub rows: Vec<Value>,
     pub rows_affected: Option<u64>,
-    /// Server-side execution time (statement run only, excludes row decoding), ms.
-    pub elapsed_ms: u64,
-    /// True when the result set was capped at `max_rows` and more rows existed.
+    /// True when this result set was capped at `max_rows` and more rows existed.
     pub truncated: bool,
+}
+
+/// Result of an ad-hoc query run: one entry per statement (a compound script
+/// separated by `;` produces several).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryResult {
+    pub results: Vec<StatementResult>,
+    /// Server-side execution time for the whole run (excludes row decoding), ms.
+    pub elapsed_ms: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1388,56 +1396,49 @@ pub async fn execute_query(
                 .await?;
         }
 
-        let mut rows: Vec<MySqlRow> = Vec::new();
-        let mut affected: u64 = 0;
-        let mut had_result_set = false;
-        let mut truncated = false;
+        /* A compound script yields an interleaved stream: rows (Right) for each
+           result set, then one completion marker (Left) per statement. Split on
+           the markers so every statement becomes its own StatementResult —
+           flattening them under the first statement's columns renders every
+           later set as nulls. */
+        let mut results: Vec<StatementResult> = Vec::new();
+        let mut pending: Vec<MySqlRow> = Vec::new();
         {
             let mut stream = (&mut *conn).fetch_many(sql.as_str());
             while let Some(item) = stream.try_next().await? {
                 match item {
-                    Either::Left(res) => affected += res.rows_affected(),
+                    Either::Left(res) => {
+                        let rows = std::mem::take(&mut pending);
+                        results.push(statement_result(rows, res.rows_affected(), false));
+                    }
                     Either::Right(row) => {
-                        had_result_set = true;
-                        /* Stop once we've collected the cap. Seeing one more row
-                           past the cap means the result had more — flag it and
-                           bail without buffering the rest. */
+                        /* Stop once this set has collected the cap. Seeing one
+                           more row past the cap means the result had more —
+                           flag it and bail without buffering the rest (any
+                           statements after this one don't run). */
                         if let Some(cap) = max_rows {
-                            if rows.len() as u32 >= cap {
-                                truncated = true;
+                            if pending.len() as u32 >= cap {
+                                results.push(statement_result(
+                                    std::mem::take(&mut pending),
+                                    0,
+                                    true,
+                                ));
                                 break;
                             }
                         }
-                        rows.push(row);
+                        pending.push(row);
                     }
                 }
             }
         }
+        if !pending.is_empty() {
+            results.push(statement_result(pending, 0, false));
+        }
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
-        let columns: Vec<ColumnInfo> = rows
-            .first()
-            .map(|r| {
-                result_columns(r)
-                    .into_iter()
-                    .map(|(name, data_type)| ColumnInfo {
-                        name,
-                        data_type,
-                        nullable: true,
-                        key: String::new(),
-                        comment: String::new(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let json_rows: Vec<Value> = rows.iter().map(row_to_json).collect();
-
         Ok(QueryResult {
-            columns,
-            rows: json_rows,
-            rows_affected: if had_result_set { None } else { Some(affected) },
+            results,
             elapsed_ms,
-            truncated,
         })
     }
     .await;
@@ -1448,10 +1449,39 @@ pub async fn execute_query(
     /* When truncated, we stopped reading mid-result, so the connection still has
        unsent rows queued. Detach it from the pool (dropping it closes the socket,
        which tells the server to stop) so a dirty connection isn't reused. */
-    if matches!(&outcome, Ok(r) if r.truncated) {
+    if matches!(&outcome, Ok(r) if r.results.iter().any(|s| s.truncated)) {
         let _ = conn.detach();
     }
     outcome
+}
+
+/// Package one statement's collected rows as a StatementResult. A statement
+/// that produced no rows is reported via its affected-row count (an empty
+/// SELECT is indistinguishable from DDL at this layer and shows as 0 affected).
+fn statement_result(rows: Vec<MySqlRow>, affected: u64, truncated: bool) -> StatementResult {
+    let columns: Vec<ColumnInfo> = rows
+        .first()
+        .map(|r| {
+            result_columns(r)
+                .into_iter()
+                .map(|(name, data_type)| ColumnInfo {
+                    name,
+                    data_type,
+                    nullable: true,
+                    key: String::new(),
+                    comment: String::new(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let json_rows: Vec<Value> = rows.iter().map(row_to_json).collect();
+    let had_rows = !json_rows.is_empty();
+    StatementResult {
+        columns,
+        rows: json_rows,
+        rows_affected: if had_rows { None } else { Some(affected) },
+        truncated,
+    }
 }
 
 #[derive(Debug, Serialize)]

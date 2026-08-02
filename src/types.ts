@@ -223,17 +223,24 @@ export interface RowsResult {
   offset: number;
 }
 
-/** Result of an ad-hoc query. For result-set statements (SELECT/SHOW/…),
- * `columns`/`rows` carry the data and `rowsAffected` is null. For statements
- * with no result set (INSERT/UPDATE/DELETE/DDL), `rowsAffected` is set. */
-export interface QueryResult {
+/** One statement's outcome within an ad-hoc query run. For result-set
+ * statements (SELECT/SHOW/…), `columns`/`rows` carry the data and
+ * `rowsAffected` is null. For statements with no result set
+ * (INSERT/UPDATE/DELETE/DDL), `rowsAffected` is set. */
+export interface StatementResult {
   columns: ColumnInfo[];
   rows: RowRecord[];
   rowsAffected: number | null;
-  /** Server-side execution time (statement run only), milliseconds. */
-  elapsedMs: number;
-  /** True when the result was capped at the requested max and more rows existed. */
+  /** True when this set was capped at the requested max and more rows existed. */
   truncated: boolean;
+}
+
+/** Result of an ad-hoc query run: one entry per statement (a compound script
+ * separated by `;` produces several). */
+export interface QueryResult {
+  results: StatementResult[];
+  /** Server-side execution time for the whole run, milliseconds. */
+  elapsedMs: number;
 }
 
 interface BaseTab {
@@ -395,6 +402,10 @@ export interface QueryTab extends BaseTab {
   maxRows: number | null;
   /** Last execution's result; null until the first run. */
   result: QueryResult | null;
+  /** The SQL snapshot that produced `result` (the editor may have changed
+   * since). Split client-side to label result sets and to tell an empty
+   * SELECT result apart from a statement with no result set. */
+  resultSql?: string | null;
   /** Last Explain's analysis (grade + findings); null until Explain is run. */
   analysis: AnalysisResult | null;
   loading: boolean;

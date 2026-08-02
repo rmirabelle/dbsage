@@ -12,6 +12,7 @@ import {
 } from "../lib/tableSql";
 import { notifyError, notifySuccess, notifyInfo } from "./notify";
 import { analyzeQueryBundle } from "../lib/queryAnalysis";
+import { splitSqlStatements, returnsResultSet } from "../lib/splitSql";
 import type {
   ColumnFilter,
   CreateTableTab,
@@ -1646,6 +1647,7 @@ export const useStore = create<Store>((set, get) => ({
     if (!tab || tab.kind !== "query" || tab.loading) return;
     if (!tab.sql.trim()) return;
     const startedAt = Date.now();
+    const sqlAtExecute = tab.sql;
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "query"
@@ -1664,7 +1666,6 @@ export const useStore = create<Store>((set, get) => ({
     /* Silently record this execution attempt. Backend dedupes + bumps timestamp
        on identical SQL. Skipped when no database is selected (no key). */
     if (tab.database) {
-      const sqlAtExecute = tab.sql;
       ipc
         .addQueryHistory(tab.profileId, tab.database, sqlAtExecute)
         .then((queryHistory) => {
@@ -1701,7 +1702,7 @@ export const useStore = create<Store>((set, get) => ({
       const result = await ipc.executeQuery({
         profileId: tab.profileId,
         database: tab.database,
-        sql: tab.sql,
+        sql: sqlAtExecute,
         token: tabId,
         maxRows: tab.maxRows,
       });
@@ -1713,6 +1714,7 @@ export const useStore = create<Store>((set, get) => ({
                 loading: false,
                 error: null,
                 result,
+                resultSql: sqlAtExecute,
                 analysis: null,
                 runStartedAt: null,
                 roundTripMs: Date.now() - startedAt,
@@ -1720,12 +1722,20 @@ export const useStore = create<Store>((set, get) => ({
             : t
         ),
       }));
-      if (result.rowsAffected != null) {
-        notifySuccess(
-          `${result.rowsAffected} row${
-            result.rowsAffected === 1 ? "" : "s"
-          } affected.`
+      /* Only announce affected rows for a pure DML/DDL run — when a result-set
+         statement is present (even one that returned zero rows), the grid is
+         the feedback. */
+      const stmts = splitSqlStatements(sqlAtExecute);
+      if (
+        result.results.length > 0 &&
+        result.results.every((r) => r.rowsAffected != null) &&
+        !(stmts.length === result.results.length && stmts.some(returnsResultSet))
+      ) {
+        const affected = result.results.reduce(
+          (n, r) => n + (r.rowsAffected ?? 0),
+          0
         );
+        notifySuccess(`${affected} row${affected === 1 ? "" : "s"} affected.`);
       }
     } catch (e) {
       const msg = String(e);
@@ -1777,16 +1787,20 @@ export const useStore = create<Store>((set, get) => ({
       const analysis = analyzeQueryBundle(bundle, sqlAtRun);
       /* Show the traditional EXPLAIN grid in the normal results area. */
       const result: QueryResult = {
-        columns: bundle.explainColumns.map((name) => ({
-          name,
-          dataType: "",
-          nullable: true,
-          key: "",
-        })),
-        rows: bundle.explainRows as unknown as RowRecord[],
-        rowsAffected: null,
+        results: [
+          {
+            columns: bundle.explainColumns.map((name) => ({
+              name,
+              dataType: "",
+              nullable: true,
+              key: "",
+            })),
+            rows: bundle.explainRows as unknown as RowRecord[],
+            rowsAffected: null,
+            truncated: false,
+          },
+        ],
         elapsedMs: 0,
-        truncated: false,
       };
       set((s) => ({
         tabs: s.tabs.map((t) =>
@@ -1796,6 +1810,9 @@ export const useStore = create<Store>((set, get) => ({
                 loading: false,
                 error: null,
                 result,
+                /* The result is the EXPLAIN grid, not the statement's own
+                   output — suppress statement-based labeling. */
+                resultSql: null,
                 analysis,
                 runStartedAt: null,
                 roundTripMs: Date.now() - startedAt,
