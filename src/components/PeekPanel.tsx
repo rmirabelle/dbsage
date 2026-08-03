@@ -14,8 +14,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
 import { useUi } from "../state/ui";
+import { CellRelationMenu } from "./CellRelationMenu";
 import { DataGrid } from "./DataGrid";
 import { ExpandedPanel } from "./ExpandedPanel";
+import { RelationEditDialog } from "./RelationEditDialog";
 import { WindowControls } from "./WindowControls";
 import {
   relationTargets,
@@ -242,6 +244,18 @@ export function PeekPanel({
     8,
     pickerRef
   );
+
+  /** Right-click menu on a cell + the relation dialog it opens — same as the
+   * main table view, so relations can be authored wherever you spot the need. */
+  const [cellMenu, setCellMenu] = useState<{
+    x: number;
+    y: number;
+    column: string;
+  } | null>(null);
+  const [relDialog, setRelDialog] = useState<{
+    relation: Relation | null;
+    column: string;
+  } | null>(null);
 
   /** Number of open peek windows the close-all confirmation will close; null when
    * the confirmation isn't showing. */
@@ -472,6 +486,10 @@ export function PeekPanel({
               clearActiveCellOnRowSelect
               onActiveCellChange={setActiveCell}
               onCellMenu={onCellMenu}
+              onCellContextMenu={(cell) => {
+                setPicker(null);
+                setCellMenu({ x: cell.x, y: cell.y, column: cell.column });
+              }}
               onColumnWidthsChange={setColumnWidths}
               onSortChange={setSort}
               onFilterChange={onFilterChange}
@@ -504,6 +522,34 @@ export function PeekPanel({
         </div>
       ) : (
         <div className="flex-1" />
+      )}
+
+      {cellMenu && (
+        <CellRelationMenu
+          x={cellMenu.x}
+          y={cellMenu.y}
+          profileId={profileId}
+          database={database}
+          table={target.table}
+          column={cellMenu.column}
+          onEdit={(relation) =>
+            setRelDialog({ relation, column: cellMenu.column })
+          }
+          onNew={() => setRelDialog({ relation: null, column: cellMenu.column })}
+          onClose={() => setCellMenu(null)}
+        />
+      )}
+
+      {relDialog && (
+        <RelationEditDialog
+          profileId={profileId}
+          database={database}
+          relation={relDialog.relation}
+          from={{ table: target.table, column: relDialog.column }}
+          onClose={() => setRelDialog(null)}
+          onSaved={() => setRelDialog(null)}
+          onDeleted={() => setRelDialog(null)}
+        />
       )}
 
       {picker &&

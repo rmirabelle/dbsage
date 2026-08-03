@@ -90,6 +90,29 @@ export function ColumnsVisibilityMenu({
     >
       <div className="px-3 py-1.5 border-b border-zinc-800 flex items-center justify-between gap-2">
         <span className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+          Show COLUMNS
+        </span>
+        <div className="flex items-center gap-2 text-zinc-500">
+          <button
+            data-el="columns-show-all-btn"
+            onClick={showAll}
+            className={colsAllVisible ? activeBtn : baseBtn}
+          >
+            ALL
+          </button>
+          <span className="text-zinc-700">|</span>
+          <button
+            data-el="columns-hide-all-btn"
+            onClick={hideAll}
+            className={colsNoneVisible ? activeBtn : baseBtn}
+          >
+            NONE
+          </button>
+        </div>
+      </div>
+
+      <div className="px-3 py-1.5 border-b border-zinc-800 flex items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">
           Select ROWS
         </span>
         <div className="flex items-center gap-2 text-zinc-500">
@@ -111,29 +134,6 @@ export function ColumnsVisibilityMenu({
               onClose();
             }}
             className={rowsNoneSelected ? activeBtn : baseBtn}
-          >
-            NONE
-          </button>
-        </div>
-      </div>
-
-      <div className="px-3 py-1.5 border-b border-zinc-800 flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">
-          Show COLUMNS
-        </span>
-        <div className="flex items-center gap-2 text-zinc-500">
-          <button
-            data-el="columns-show-all-btn"
-            onClick={showAll}
-            className={colsAllVisible ? activeBtn : baseBtn}
-          >
-            ALL
-          </button>
-          <span className="text-zinc-700">|</span>
-          <button
-            data-el="columns-hide-all-btn"
-            onClick={hideAll}
-            className={colsNoneVisible ? activeBtn : baseBtn}
           >
             NONE
           </button>

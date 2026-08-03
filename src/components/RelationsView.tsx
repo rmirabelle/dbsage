@@ -14,6 +14,13 @@ import {
 import clsx from "clsx";
 import { ipc } from "../ipc";
 import { singularize, pluralize } from "../lib/inflector";
+import {
+  BLANK_RELATION,
+  formFromRelation,
+  withFromColumn,
+  withSuggestedToColumn,
+  withToTable,
+} from "../lib/relationForm";
 import { useStore } from "../state/store";
 import { useUi } from "../state/ui";
 import { SearchableSelect } from "./SearchableSelect";
@@ -22,16 +29,6 @@ import { notifySuccess, notifyInfo } from "../state/notify";
 import type { Relation, RelationKind, RelationsTab } from "../types";
 
 const EMPTY_RELATIONS: Relation[] = [];
-
-const BLANK = {
-  editingId: null as string | null,
-  fromTable: "",
-  fromColumn: "",
-  kind: "has_one" as RelationKind,
-  toTable: "",
-  toColumn: "",
-  name: "",
-};
 
 export function RelationsView({ tab }: { tab: RelationsTab }) {
   const { profileId, database } = tab;
@@ -49,7 +46,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   const saveRelationDef = useStore((s) => s.saveRelation);
   const deleteRelationDef = useStore((s) => s.deleteRelation);
 
-  const [form, setForm] = useState(BLANK);
+  const [form, setForm] = useState(BLANK_RELATION);
   const [editorOpen, setEditorOpen] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
@@ -68,12 +65,12 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   const [toColumns, setToColumns] = useState<string[]>([]);
 
   const openAdd = () => {
-    setForm(BLANK);
+    setForm(BLANK_RELATION);
     setEditorOpen(true);
     setAddFocusSignal((n) => n + 1);
   };
   const closeEditor = () => {
-    setForm(BLANK);
+    setForm(BLANK_RELATION);
     setEditorOpen(false);
   };
 
@@ -241,48 +238,19 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
       .catch(() => setToColumns([]));
   }, [form.toTable, profileId, database]);
 
-  /**
-   * Suggest/validate the to-column against the target table's real columns.
-   * Fills the convention column ("id" or "{fromTable}_id") only when it exists;
-   * keeps an already-valid selection; never proposes a non-existent column.
-   */
+  /** Suggest/validate the to-column once the target table's columns land. */
   useEffect(() => {
-    setForm((f) => {
-      if (!f.toTable || toColumns.length === 0) return f;
-      if (f.toColumn && toColumns.includes(f.toColumn)) return f;
-      const desired =
-        f.kind === "has_one" ? "id" : `${singularize(f.fromTable)}_id`;
-      const next = toColumns.includes(desired) ? desired : "";
-      return next === f.toColumn ? f : { ...f, toColumn: next };
-    });
+    setForm((f) => withSuggestedToColumn(f, toColumns));
   }, [toColumns, form.kind, form.fromTable]);
-
-  /** Suggest to-column + relation name for the given to-table (Liquid's heuristics). */
-  const withToTable = (f: typeof BLANK, toTable: string): typeof BLANK => ({
-    ...f,
-    toTable,
-    // Cleared here; the effect below fills it from the target table's real
-    // columns so we never suggest a column that doesn't exist.
-    toColumn: "",
-    name: toTable ? (f.kind === "has_one" ? singularize(toTable) : toTable) : "",
-  });
 
   const onFromTableChange = (fromTable: string) => {
     if (fromTable === form.fromTable) return;
-    setForm({ ...BLANK, fromTable });
+    setForm({ ...BLANK_RELATION, fromTable });
   };
 
   const onFromColumnChange = (fromColumn: string) => {
     if (fromColumn === form.fromColumn) return;
-    const kind: RelationKind = fromColumn === "id" ? "has_many" : "has_one";
-    let next = { ...form, fromColumn, kind };
-    if (kind === "has_one") {
-      const suggested = pluralize(fromColumn.replace(/_id$/, ""));
-      next = withToTable(next, tables.includes(suggested) ? suggested : "");
-    } else {
-      next = withToTable(next, "");
-    }
-    setForm(next);
+    setForm(withFromColumn(form, fromColumn, tables));
   };
 
   const onKindChange = (kind: RelationKind) =>
@@ -294,15 +262,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   };
 
   const startEdit = (r: Relation) => {
-    setForm({
-      editingId: r.id,
-      fromTable: r.fromTable,
-      fromColumn: r.fromColumn,
-      kind: r.kind,
-      toTable: r.toTable,
-      toColumn: r.toColumn,
-      name: r.name,
-    });
+    setForm(formFromRelation(r));
     setEditorOpen(true);
   };
 

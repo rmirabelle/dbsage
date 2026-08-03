@@ -33,8 +33,10 @@ import type { DuplicateConflict } from "../state/store";
 import { notifyError, notifySuccess } from "../state/notify";
 import { helpHandlers } from "../state/help";
 import { CloseTabConfirmDialog } from "./CloseTabConfirmDialog";
+import { CellRelationMenu } from "./CellRelationMenu";
 import { DataGrid } from "./DataGrid";
 import { DatabaseView } from "./DatabaseView";
+import { RelationEditDialog } from "./RelationEditDialog";
 import { QueryView } from "./QueryView";
 import { RelationsView } from "./RelationsView";
 import { TableDesignerView } from "./TableDesignerView";
@@ -544,6 +546,18 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     /** The cell the menu is anchored to, so re-clicking it toggles closed. */
     cell: { rowIndex: number; column: string };
   } | null>(null);
+  /** Right-click menu on a cell: edit/author the relation on its column. */
+  const [cellMenu, setCellMenu] = useState<{
+    x: number;
+    y: number;
+    column: string;
+  } | null>(null);
+  /** The open relation dialog: an existing relation, or null for a new one
+   * seeded from `column`. */
+  const [relDialog, setRelDialog] = useState<{
+    relation: Relation | null;
+    column: string;
+  } | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const { style: pickerStyle } = useAnchoredPosition(
     picker?.x ?? 0,
@@ -890,6 +904,10 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onSelectionChange={(indices) => setRowsSelection(tab.id, indices)}
           onActiveCellChange={setActiveCell}
           onCellMenu={onCellMenu}
+          onCellContextMenu={(cell) => {
+            setPicker(null);
+            setCellMenu({ x: cell.x, y: cell.y, column: cell.column });
+          }}
           onColumnWidthsChange={(w) => setColumnWidths(tab.id, w)}
           onSortChange={(sort) => setRowsSort(tab.id, sort)}
           onFilterChange={(column, filter) =>
@@ -1050,6 +1068,43 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onAbort={
             dupQueue.length > 1 ? () => setDupQueue([]) : undefined
           }
+        />
+      )}
+
+      {cellMenu && (
+        <CellRelationMenu
+          x={cellMenu.x}
+          y={cellMenu.y}
+          profileId={tab.profileId}
+          database={tab.database}
+          table={tab.table}
+          column={cellMenu.column}
+          onEdit={(relation) =>
+            setRelDialog({ relation, column: cellMenu.column })
+          }
+          onNew={() => setRelDialog({ relation: null, column: cellMenu.column })}
+          onClose={() => setCellMenu(null)}
+        />
+      )}
+
+      {relDialog && (
+        <RelationEditDialog
+          profileId={tab.profileId}
+          database={tab.database}
+          relation={relDialog.relation}
+          from={{ table: tab.table, column: relDialog.column }}
+          onClose={() => setRelDialog(null)}
+          /* The store has already reloaded the relation set (which is what
+             lights up the peekable columns); refresh the rows too so the whole
+             view reflects the change. */
+          onSaved={() => {
+            setRelDialog(null);
+            refreshTab(tab.id);
+          }}
+          onDeleted={() => {
+            setRelDialog(null);
+            refreshTab(tab.id);
+          }}
         />
       )}
 

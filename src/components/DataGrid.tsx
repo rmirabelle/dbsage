@@ -4,7 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowUp,
   ArrowDown,
-  Columns,
+  Eye,
   Funnel,
   RowsPlusBottom,
   PencilSimple,
@@ -97,6 +97,15 @@ interface Props {
   onCellMenu?: (
     cell: { rowIndex: number; column: string; rect: DOMRect } | null
   ) => void;
+  /** Reports a right-click on a cell at the pointer position, so the host can
+   * open its own cell menu (the relation editor). Without it, right-clicking a
+   * cell does nothing — the row menu lives on the gutter. */
+  onCellContextMenu?: (cell: {
+    rowIndex: number;
+    column: string;
+    x: number;
+    y: number;
+  }) => void;
 }
 
 const ROW_HEIGHT = 26;
@@ -151,6 +160,7 @@ export function DataGrid({
   peekableColumns,
   hideValueTooltip = false,
   onCellMenu,
+  onCellContextMenu,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [widths, setWidths] = useState<number[]>([]);
@@ -605,15 +615,11 @@ export function DataGrid({
                     data-el="row-gutter"
                     onContextMenu={(e) => handleRowContextMenu(vItem.index, e)}
                     className={clsx(
-                      "sticky left-0 z-10 w-14 shrink-0 flex items-center justify-end pr-3 text-[10px] font-mono border-r border-zinc-900",
+                      "sticky left-0 z-10 w-14 shrink-0 border-r border-zinc-900",
                       (copyTarget || resultCopy || onDeleteRows) && "cursor-context-menu",
-                      isSelected
-                        ? "bg-[#113e36] text-emerald-200 font-semibold"
-                        : `${gutterStripe} text-zinc-600`
+                      isSelected ? "bg-[#113e36]" : gutterStripe
                     )}
-                  >
-                    {offset + vItem.index + 1}
-                  </div>
+                  />
                   {visibleColumns.map((col, ci) => {
                     const isEditingThis =
                       editing?.rowIndex === vItem.index &&
@@ -646,6 +652,21 @@ export function DataGrid({
                               ? { rowIndex: vItem.index, column: col.name, rect }
                               : null
                           )
+                        }
+                        onContext={
+                          onCellContextMenu &&
+                          ((x, y) => {
+                            onActiveCellChange({
+                              rowIndex: vItem.index,
+                              column: col.name,
+                            });
+                            onCellContextMenu({
+                              rowIndex: vItem.index,
+                              column: col.name,
+                              x,
+                              y,
+                            });
+                          })
                         }
                         onBeginEdit={() => beginEdit(vItem.index, col)}
                         onCommit={commitEdit}
@@ -901,7 +922,7 @@ function HeaderRow({
               : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
           )}
         >
-          <Columns size={15} />
+          <Eye size={15} />
         </button>
       </div>
       {columns.map((col, i) => {
@@ -1041,6 +1062,7 @@ function Cell({
   hideValueTooltip,
   onActivate,
   onMenu,
+  onContext,
   onBeginEdit,
   onCommit,
   onCancel,
@@ -1059,6 +1081,8 @@ function Cell({
   /** Single-click reports the cell rect (anchor a menu); double-click reports
    * null (dismiss it — editing starts). */
   onMenu?: (rect: DOMRect | null) => void;
+  /** Right-click, reported at the pointer position. */
+  onContext?: (x: number, y: number) => void;
   onBeginEdit: () => void;
   onCommit: (next: string | null) => void;
   onCancel: () => void;
@@ -1118,6 +1142,14 @@ function Cell({
         onMenu?.(null);
         onBeginEdit();
       }}
+      onContextMenu={
+        onContext &&
+        ((e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onContext(e.clientX, e.clientY);
+        })
+      }
       className={clsx(
         "shrink-0 px-3 py-1 border-r border-zinc-900 flex items-center font-mono text-[11.5px] whitespace-nowrap overflow-hidden text-ellipsis",
         editable && "cursor-text",

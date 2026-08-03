@@ -249,6 +249,24 @@ export function DatabaseView({ tab }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [forgetLastOpenedTable, tab.profileId, tab.database]);
 
+  /**
+   * The mouse's "back" thumb button (button 3) leaves the open table folder,
+   * mirroring what that button does in a browser. Bound on the window so it
+   * fires wherever the pointer is in the view, and only while a folder is
+   * actually open. preventDefault stops WebView2 from running its own
+   * history-back on the same press.
+   */
+  useEffect(() => {
+    if (!tab.currentFolderId) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 3) return;
+      e.preventDefault();
+      exitFolder(tab.id);
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [exitFolder, tab.currentFolderId, tab.id]);
+
   const handleTableClick = (
     name: string,
     e: React.MouseEvent | React.PointerEvent
