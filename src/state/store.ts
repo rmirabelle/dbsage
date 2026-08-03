@@ -454,6 +454,14 @@ interface Store {
     column: string,
     newValue: string | null
   ) => Promise<void>;
+
+  /** Apply a batch cell edit (one value per row, single column), then reload
+   * the page ONCE. Stops at the first failed UPDATE; the reload still runs so
+   * the grid reflects whatever was committed before the failure. */
+  updateCells: (
+    tabId: string,
+    edits: { rowIndex: number; column: string; value: string | null }[]
+  ) => Promise<void>;
   insertRow: (
     tabId: string,
     values: { column: string; value: string | null }[]
@@ -2595,6 +2603,35 @@ export const useStore = create<Store>((set, get) => ({
       value: newValue,
     });
     await loadTabPage(tabId, tab.page, set, get);
+  },
+
+  updateCells: async (tabId, edits) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows" || !tab.data) return;
+    const pkColumns = tab.data.columns.filter((c) => c.key === "PRI");
+    if (pkColumns.length === 0) {
+      throw new Error("Table has no primary key — cell editing is disabled.");
+    }
+    try {
+      for (const edit of edits) {
+        const row = tab.data.rows[edit.rowIndex];
+        if (!row) continue;
+        const pk = pkColumns.map((c) => ({
+          column: c.name,
+          value: toIpcString(row[c.name]),
+        }));
+        await ipc.updateCell({
+          profileId: tab.profileId,
+          database: tab.database,
+          table: tab.table,
+          pk,
+          column: edit.column,
+          value: edit.value,
+        });
+      }
+    } finally {
+      await loadTabPage(tabId, tab.page, set, get);
+    }
   },
 
   insertRow: async (tabId, values) => {

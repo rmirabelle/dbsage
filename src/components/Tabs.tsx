@@ -500,6 +500,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const deleteTablePreset = useStore((s) => s.deleteTablePreset);
   const clearTableView = useStore((s) => s.clearTableView);
   const updateCell = useStore((s) => s.updateCell);
+  const updateCells = useStore((s) => s.updateCells);
   const insertRow = useStore((s) => s.insertRow);
   const deleteRows = useStore((s) => s.deleteRows);
   const duplicateRows = useStore((s) => s.duplicateRows);
@@ -910,6 +911,16 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onCellEdit={(rowIndex, column, value) =>
             updateCell(tab.id, rowIndex, column, value)
           }
+          onBatchEdit={async (edits) => {
+            /**
+             * The commit reloads the page (new rows identity), which the
+             * seenRowsRef effect uses to clear activeCell — re-select on the
+             * next frame so the Inspector keeps showing the edited cell.
+             */
+            const cell = activeCell;
+            await updateCells(tab.id, edits);
+            if (cell) requestAnimationFrame(() => setActiveCell(cell));
+          }}
           onDeleteRows={hasPrimaryKey ? (indices) => deleteRows(tab.id, indices) : undefined}
           onDuplicateRows={hasPrimaryKey ? handleDuplicateRows : undefined}
         />

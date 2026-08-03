@@ -58,6 +58,13 @@ interface Props {
   onHiddenColumnsChange: (hidden: string[]) => void;
   onJsonShow: (column: string, path: string | null) => void;
   onCellEdit: (rowIndex: number, column: string, value: string | null) => Promise<void>;
+  /** Commits a batch cell-edit session (type-to-overwrite or paste): one value
+   * per row, all in a single column. The host should apply every UPDATE and
+   * reload the page once. Absent = typing/paste editing disabled (read-only
+   * grids still get cell selection and copy). */
+  onBatchEdit?: (
+    edits: { rowIndex: number; column: string; value: string | null }[]
+  ) => Promise<void>;
   /** When true, selecting a row clears the active (highlighted) cell. */
   clearActiveCellOnRowSelect?: boolean;
   /** When true, cells are never editable (no double-click edit), regardless of PK. */
@@ -147,6 +154,7 @@ export function DataGrid({
   onHiddenColumnsChange,
   onJsonShow,
   onCellEdit,
+  onBatchEdit,
   clearActiveCellOnRowSelect = false,
   readOnly = false,
   onSelectionChange,
@@ -184,12 +192,32 @@ export function DataGrid({
     null
   );
   const [saving, setSaving] = useState(false);
+  /** Excel-like cell selection: a set of rows within ONE column. Independent
+   * of row selection (gutter) — starting one clears the other. */
+  const [cellSel, setCellSel] = useState<{
+    column: string;
+    rows: Set<number>;
+  } | null>(null);
+  const [cellAnchor, setCellAnchor] = useState<number | null>(null);
+  const cellDraggingRef = useRef(false);
+  /** True once a cell drag extended past its origin — suppresses the relation
+   * menu that a clean single click would open. */
+  const cellDragMovedRef = useRef(false);
+  /** A pending multi-cell edit session. "type" mirrors one live text into every
+   * selected cell; "paste" stages one clipboard line per cell. Enter commits
+   * (via onBatchEdit), Esc reverts — nothing touches the DB until commit. */
+  const [batch, setBatch] = useState<
+    | { mode: "type"; column: string; rows: number[]; text: string }
+    | { mode: "paste"; column: string; rows: number[]; values: string[] }
+    | null
+  >(null);
 
   const hasPrimaryKey = useMemo(
     () => columns.some((c) => c.key === "PRI"),
     [columns]
   );
   const editable = hasPrimaryKey && !readOnly;
+  const canBatchEdit = editable && !!onBatchEdit;
 
   const visibleColumns = useMemo(() => {
     if (hiddenColumns.length === 0) return columns;
@@ -251,11 +279,15 @@ export function DataGrid({
     setSelectedRows(new Set());
     setAnchor(null);
     setEditing(null);
+    setCellSel(null);
+    setCellAnchor(null);
+    setBatch(null);
   }, [viewKey]);
 
   useEffect(() => {
     const onUp = () => {
       draggingRef.current = false;
+      cellDraggingRef.current = false;
     };
     window.addEventListener("mouseup", onUp);
     return () => window.removeEventListener("mouseup", onUp);
@@ -278,8 +310,15 @@ export function DataGrid({
     });
   };
 
+  /** Row selection now lives on the gutter only (like Excel's row headers) —
+   * clicking a cell selects the cell, never the row. */
   const handleRowMouseDown = (index: number, e: React.MouseEvent) => {
     if (e.button !== 0) return;
+    if (batch) cancelBatch();
+    if (cellSel) {
+      setCellSel(null);
+      setCellAnchor(null);
+    }
     if (clearActiveCellOnRowSelect && activeCell) onActiveCellChange(null);
     if (e.shiftKey) {
       const from = anchor ?? index;
@@ -299,8 +338,7 @@ export function DataGrid({
     }
     /* A plain click on the row-number gutter toggles that row's selection, so
        clicking an already-selected row's number de-selects it. */
-    const inGutter = !!(e.target as HTMLElement).closest('[data-el="row-gutter"]');
-    if (inGutter && selectedRows.has(index)) {
+    if (selectedRows.has(index)) {
       setSelectedRows((prev) => {
         const next = new Set(prev);
         next.delete(index);
@@ -314,10 +352,202 @@ export function DataGrid({
     draggingRef.current = true;
   };
 
+  const selectCellRange = (
+    column: string,
+    from: number,
+    to: number,
+    additive = false
+  ) => {
+    const [lo, hi] = from < to ? [from, to] : [to, from];
+    setCellSel((prev) => {
+      const rowsSet =
+        additive && prev && prev.column === column
+          ? new Set(prev.rows)
+          : new Set<number>();
+      for (let i = lo; i <= hi; i++) rowsSet.add(i);
+      return { column, rows: rowsSet };
+    });
+  };
+
+  const handleCellMouseDown = (
+    rowIndex: number,
+    column: string,
+    e: React.MouseEvent
+  ) => {
+    if (e.button !== 0) return;
+    if (batch) cancelBatch();
+    if (selectedRows.size) {
+      setSelectedRows(new Set());
+      setAnchor(null);
+    }
+    cellDragMovedRef.current = false;
+    onActiveCellChange({ rowIndex, column });
+    if (e.shiftKey && cellSel?.column === column && cellAnchor != null) {
+      selectCellRange(column, cellAnchor, rowIndex, e.ctrlKey || e.metaKey);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && cellSel?.column === column) {
+      setCellSel((prev) => {
+        if (!prev) return { column, rows: new Set([rowIndex]) };
+        const next = new Set(prev.rows);
+        if (next.has(rowIndex)) next.delete(rowIndex);
+        else next.add(rowIndex);
+        return { column, rows: next };
+      });
+      setCellAnchor(rowIndex);
+      return;
+    }
+    setCellSel({ column, rows: new Set([rowIndex]) });
+    setCellAnchor(rowIndex);
+    cellDraggingRef.current = true;
+  };
+
   const handleRowMouseEnter = (index: number) => {
+    /* A cell drag extends the cell selection down its anchor column no matter
+       which column the pointer is over — the selection is single-column. */
+    if (cellDraggingRef.current && cellSel && cellAnchor != null) {
+      cellDragMovedRef.current = true;
+      selectCellRange(cellSel.column, cellAnchor, index);
+      return;
+    }
     if (!draggingRef.current || anchor === null) return;
     extendSelection(anchor, index);
   };
+
+  /** The cell selection used by copy / paste / type-to-edit: the explicit
+   * selection, else the active cell as a one-cell selection. Rows ascending. */
+  const effCellSel = (): { column: string; rows: number[] } | null => {
+    if (cellSel && cellSel.rows.size > 0)
+      return {
+        column: cellSel.column,
+        rows: [...cellSel.rows].sort((a, b) => a - b),
+      };
+    if (activeCell)
+      return { column: activeCell.column, rows: [activeCell.rowIndex] };
+    return null;
+  };
+
+  const copySelectedCells = async () => {
+    const sel = effCellSel();
+    if (!sel) return;
+    const text = sel.rows
+      .map((i) => cellToText(rows[i]?.[sel.column]))
+      .join("\r\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      notifySuccess(
+        `Copied ${sel.rows.length} cell${sel.rows.length === 1 ? "" : "s"}`
+      );
+    } catch {
+      notifyError("Could not copy to the clipboard");
+    }
+  };
+
+  /** Guard shared by both batch modes: resolves the target column and rejects
+   * primary keys (one value across N rows would collide; even single-cell
+   * batch edits are routed to the double-click editor's explicit warning). */
+  const batchTargetColumn = (sel: {
+    column: string;
+    rows: number[];
+  }): ColumnInfo | null => {
+    const col = visibleColumns.find((c) => c.name === sel.column);
+    if (!col) return null;
+    if (col.key === "PRI") {
+      notifyError(
+        "Primary-key columns can't be batch-edited — double-click a cell to edit it."
+      );
+      return null;
+    }
+    return col;
+  };
+
+  const beginTypeSession = (initial: string) => {
+    const sel = effCellSel();
+    if (!sel || !canBatchEdit || !batchTargetColumn(sel)) return;
+    /* Sync the visible selection with the session so the preview and the
+       commit target the same cells (covers the active-cell-only fallback). */
+    setCellSel({ column: sel.column, rows: new Set(sel.rows) });
+    setBatch({ mode: "type", column: sel.column, rows: sel.rows, text: initial });
+  };
+
+  const startPasteSession = async () => {
+    const sel = effCellSel();
+    if (!sel || !canBatchEdit || !batchTargetColumn(sel)) return;
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      notifyError("Could not read the clipboard");
+      return;
+    }
+    if (text === "") return;
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    /* One copied value fills every selected cell (Excel fill-down); multiple
+       values map top-down, stopping at whichever side runs out first. */
+    const targets =
+      lines.length === 1 ? sel.rows : sel.rows.slice(0, lines.length);
+    const values = targets.map((_, i) =>
+      lines.length === 1 ? lines[0] : lines[i]
+    );
+    setCellSel({ column: sel.column, rows: new Set(targets) });
+    setBatch({ mode: "paste", column: sel.column, rows: targets, values });
+  };
+
+  const commitBatch = async (forceEmpty = false) => {
+    if (!batch || !onBatchEdit || saving) return;
+    const col = columns.find((c) => c.name === batch.column);
+    const nullable = col?.nullable ?? false;
+    const edits = batch.rows.map((rowIndex, i) => {
+      const raw = batch.mode === "type" ? batch.text : batch.values[i];
+      const value = raw === "" && nullable && !forceEmpty ? null : raw;
+      return { rowIndex, column: batch.column, value };
+    });
+    setSaving(true);
+    try {
+      await onBatchEdit(edits);
+      setBatch(null);
+      scrollRef.current?.focus();
+    } catch (e) {
+      notifyError(`Update failed: ${String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancelBatch = (refocusGrid = false) => {
+    setBatch(null);
+    if (refocusGrid) scrollRef.current?.focus();
+  };
+
+  /* A staged paste has no input to blur — dismiss it on any mousedown, like
+     the type session's blur-cancel. */
+  useEffect(() => {
+    if (!batch || batch.mode !== "paste") return;
+    const onDown = () => setBatch(null);
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [batch]);
+
+  /** Per-row pending preview values for the active batch session. */
+  const pendingByRow = useMemo(() => {
+    if (!batch) return null;
+    const m = new Map<number, string>();
+    if (batch.mode === "type") batch.rows.forEach((r) => m.set(r, batch.text));
+    else batch.rows.forEach((r, i) => m.set(r, batch.values[i]));
+    return m;
+  }, [batch]);
+
+  /** The cell hosting the type session's live input — the active cell when it
+   * is part of the session, else the session's first row. */
+  const batchInputRow =
+    batch?.mode === "type"
+      ? activeCell &&
+        activeCell.column === batch.column &&
+        batch.rows.includes(activeCell.rowIndex)
+        ? activeCell.rowIndex
+        : batch.rows[0]
+      : null;
 
   /* Right-click a row's number gutter → row context menu (Delete + Copy As).
      Operate on the whole selection when the clicked row is part of it;
@@ -481,18 +711,62 @@ export function DataGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Arrow keys move the active cell by one (instead of scrolling the grid).
-     Works for both the rows view and query-results grid. */
+  /* Keyboard: arrows move the active cell (Shift+Up/Down extends the cell
+     selection), Ctrl+C/V copy and paste cell values, and any printable key
+     starts a type-to-overwrite session on the selected cells. */
   const handleGridKeyDown = (e: React.KeyboardEvent) => {
     if (editing) return;
     /* Keystrokes from an editable element (e.g. the column filter menu's text
-       input, which renders through a portal) bubble up the React tree to this
-       handler. Let arrow keys move the text caret there instead of the cell. */
+       input, or the batch editor's own input, which handle their own keys)
+       bubble up the React tree to this handler — ignore them here. */
     if (
       e.target instanceof HTMLElement &&
       e.target.closest("input, textarea, select, [contenteditable='true']")
     )
       return;
+
+    /* A pending batch without a focused input (staged paste, or a type session
+       whose input scrolled out of the virtualizer): Enter commits, Esc
+       reverts. stopPropagation keeps Esc from also collapsing the Inspector. */
+    if (batch) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        void commitBatch(e.ctrlKey || e.metaKey);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelBatch();
+      }
+      return;
+    }
+
+    if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+      e.preventDefault();
+      void copySelectedCells();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+      if (canBatchEdit) {
+        e.preventDefault();
+        void startPasteSession();
+      }
+      return;
+    }
+
+    if (canBatchEdit) {
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        beginTypeSession(e.key);
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        beginTypeSession("");
+        return;
+      }
+    }
+
     if (
       e.key !== "ArrowUp" &&
       e.key !== "ArrowDown" &&
@@ -505,8 +779,8 @@ export function DataGrid({
 
     if (!activeCell) {
       onActiveCellChange({ rowIndex: 0, column: visibleColumns[0].name });
-      setSelectedRows(new Set([0]));
-      setAnchor(0);
+      setCellSel({ column: visibleColumns[0].name, rows: new Set([0]) });
+      setCellAnchor(0);
       rowVirtualizer.scrollToIndex(0);
       return;
     }
@@ -522,10 +796,28 @@ export function DataGrid({
       colIndex = Math.min(colIndex + 1, visibleColumns.length - 1);
     else if (e.key === "ArrowLeft") colIndex = Math.max(colIndex - 1, 0);
 
-    onActiveCellChange({ rowIndex, column: visibleColumns[colIndex].name });
-    /* Row selection follows the active cell, matching click behavior. */
-    setSelectedRows(new Set([rowIndex]));
-    setAnchor(rowIndex);
+    /* Shift+Up/Down extends the cell selection from its anchor, Excel-style. */
+    if (
+      e.shiftKey &&
+      (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+      cellSel &&
+      cellAnchor != null
+    ) {
+      selectCellRange(cellSel.column, cellAnchor, rowIndex);
+      onActiveCellChange({ rowIndex, column: cellSel.column });
+      rowVirtualizer.scrollToIndex(rowIndex);
+      return;
+    }
+
+    const column = visibleColumns[colIndex].name;
+    onActiveCellChange({ rowIndex, column });
+    /* Cell selection follows the active cell; row selection collapses. */
+    setCellSel({ column, rows: new Set([rowIndex]) });
+    setCellAnchor(rowIndex);
+    if (selectedRows.size) {
+      setSelectedRows(new Set());
+      setAnchor(null);
+    }
     rowVirtualizer.scrollToIndex(rowIndex);
     scrollColumnIntoView(colIndex);
   };
@@ -599,7 +891,6 @@ export function DataGrid({
                 <div
                   key={vItem.key}
                   data-el="grid-row"
-                  onMouseDown={(e) => handleRowMouseDown(vItem.index, e)}
                   onMouseEnter={() => handleRowMouseEnter(vItem.index)}
                   className={clsx(
                     "absolute left-0 right-0 flex items-stretch border-b border-zinc-900 cursor-default",
@@ -613,6 +904,7 @@ export function DataGrid({
                 >
                   <div
                     data-el="row-gutter"
+                    onMouseDown={(e) => handleRowMouseDown(vItem.index, e)}
                     onContextMenu={(e) => handleRowContextMenu(vItem.index, e)}
                     className={clsx(
                       "sticky left-0 z-10 w-14 shrink-0 border-r border-zinc-900",
@@ -627,6 +919,39 @@ export function DataGrid({
                     const isActiveCell =
                       activeCell?.rowIndex === vItem.index &&
                       activeCell.column === col.name;
+                    if (
+                      batch?.mode === "type" &&
+                      batch.column === col.name &&
+                      vItem.index === batchInputRow
+                    ) {
+                      return (
+                        <BatchCellEditor
+                          key={col.name}
+                          width={widths[ci] ?? MIN_COL_WIDTH}
+                          column={col}
+                          value={batch.text}
+                          count={batch.rows.length}
+                          saving={saving}
+                          onChange={(text) =>
+                            setBatch((b) =>
+                              b && b.mode === "type" ? { ...b, text } : b
+                            )
+                          }
+                          onCommit={(force) => void commitBatch(force)}
+                          onCancel={cancelBatch}
+                        />
+                      );
+                    }
+                    const pendingRaw =
+                      batch?.column === col.name
+                        ? pendingByRow?.get(vItem.index)
+                        : undefined;
+                    const pending =
+                      pendingRaw === undefined
+                        ? undefined
+                        : pendingRaw === "" && col.nullable
+                        ? null
+                        : pendingRaw;
                     return (
                       <Cell
                         key={col.name}
@@ -638,21 +963,24 @@ export function DataGrid({
                         isEditing={isEditingThis}
                         saving={isEditingThis && saving}
                         isActive={isActiveCell}
+                        isCellSelected={
+                          cellSel?.column === col.name &&
+                          cellSel.rows.has(vItem.index)
+                        }
+                        pending={pending}
                         isPeekable={peekableColumns?.has(col.name) ?? false}
                         hideValueTooltip={hideValueTooltip}
-                        onActivate={() =>
-                          onActiveCellChange({
-                            rowIndex: vItem.index,
-                            column: col.name,
-                          })
+                        onCellMouseDown={(e) =>
+                          handleCellMouseDown(vItem.index, col.name, e)
                         }
-                        onMenu={(rect) =>
+                        onMenu={(rect) => {
+                          if (rect && cellDragMovedRef.current) return;
                           onCellMenu?.(
                             rect
                               ? { rowIndex: vItem.index, column: col.name, rect }
                               : null
-                          )
-                        }
+                          );
+                        }}
                         onContext={
                           onCellContextMenu &&
                           ((x, y) => {
@@ -660,6 +988,20 @@ export function DataGrid({
                               rowIndex: vItem.index,
                               column: col.name,
                             });
+                            /* Right-click inside the current selection keeps
+                               it; outside, collapse to the clicked cell. */
+                            if (
+                              !(
+                                cellSel?.column === col.name &&
+                                cellSel.rows.has(vItem.index)
+                              )
+                            ) {
+                              setCellSel({
+                                column: col.name,
+                                rows: new Set([vItem.index]),
+                              });
+                              setCellAnchor(vItem.index);
+                            }
                             onCellContextMenu({
                               rowIndex: vItem.index,
                               column: col.name,
@@ -1058,9 +1400,11 @@ function Cell({
   isEditing,
   saving,
   isActive,
+  isCellSelected,
+  pending,
   isPeekable,
   hideValueTooltip,
-  onActivate,
+  onCellMouseDown,
   onMenu,
   onContext,
   onBeginEdit,
@@ -1075,9 +1419,15 @@ function Cell({
   isEditing: boolean;
   saving: boolean;
   isActive: boolean;
+  isCellSelected: boolean;
+  /** Uncommitted batch-session value shown in place of the real one — a
+   * string, null for a staged NULL, or undefined when no session covers this
+   * cell. */
+  pending: string | null | undefined;
   isPeekable: boolean;
   hideValueTooltip: boolean;
-  onActivate: () => void;
+  /** Mousedown drives cell selection (click, shift/ctrl-click, drag start). */
+  onCellMouseDown: (e: React.MouseEvent) => void;
   /** Single-click reports the cell rect (anchor a menu); double-click reports
    * null (dismiss it — editing starts). */
   onMenu?: (rect: DOMRect | null) => void;
@@ -1118,7 +1468,9 @@ function Cell({
      editable, otherwise its full value so truncated content stays readable.
      Suppressed (undefined) when the value tooltip is hidden (e.g. peeks). */
   const cellHelp = editable
-    ? `Double-click to edit${column.key === "PRI" ? " (primary key)" : ""}`
+    ? column.key === "PRI"
+      ? "Double-click to edit (primary key)"
+      : "Type to overwrite · double-click to edit"
     : hideValueTooltip
     ? undefined
     : showParts
@@ -1131,9 +1483,12 @@ function Cell({
       style={{ width }}
       data-el="grid-cell"
       data-active-cell={isActive ? "true" : undefined}
+      onMouseDown={onCellMouseDown}
       onClick={(e) => {
         e.stopPropagation();
-        onActivate();
+        /* Selection happened on mousedown; a clean unmodified click also
+           offers the relation menu. */
+        if (e.shiftKey || e.ctrlKey || e.metaKey) return;
         onMenu?.(e.currentTarget.getBoundingClientRect());
       }}
       onDoubleClick={(e) => {
@@ -1153,11 +1508,22 @@ function Cell({
       className={clsx(
         "shrink-0 px-3 py-1 border-r border-zinc-900 flex items-center font-mono text-[11.5px] whitespace-nowrap overflow-hidden text-ellipsis",
         editable && "cursor-text",
-        isActive && "ring-1 ring-inset ring-accent-400 bg-accent-500/10"
+        isCellSelected && !isActive && "bg-accent-500/20",
+        isActive && "ring-1 ring-inset ring-accent-400 bg-accent-500/10",
+        pending !== undefined && "bg-amber-500/10"
       )}
       {...(cellHelp ? helpHandlers(cellHelp) : {})}
     >
-      {showParts ? (
+      {pending !== undefined ? (
+        <span
+          className={clsx(
+            "truncate",
+            pending === null ? "italic text-amber-500/70" : "text-amber-300"
+          )}
+        >
+          {pending === null ? "NULL" : pending}
+        </span>
+      ) : showParts ? (
         <span className="truncate text-zinc-200">
           {showParts.map((part, i) => (
             <span key={part.label}>
@@ -1176,6 +1542,85 @@ function Cell({
           )}
         </span>
       )}
+    </div>
+  );
+}
+
+/** The live input of a type-to-overwrite batch session. Controlled by the
+ * grid's session state so every other selected cell can mirror the text as it
+ * is typed. Enter commits all cells, Esc reverts, blur cancels. */
+function BatchCellEditor({
+  width,
+  column,
+  value,
+  count,
+  saving,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  width: number;
+  column: ColumnInfo;
+  value: string;
+  count: number;
+  saving: boolean;
+  onChange: (next: string) => void;
+  onCommit: (forceEmpty: boolean) => void;
+  onCancel: (refocusGrid?: boolean) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+
+  const plural = count === 1 ? "" : "s";
+  return (
+    <div
+      style={{ width }}
+      className="shrink-0 px-1 border-r border-zinc-900 flex items-center bg-zinc-900"
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+    >
+      <input
+        ref={inputRef}
+        data-el="batch-editor-input"
+        value={value}
+        disabled={saving}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+            onCommit(e.ctrlKey || e.metaKey);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onCancel(true);
+          }
+        }}
+        onBlur={() => {
+          /* Disabling the input during the commit fires blur — that blur must
+             not cancel the session being saved. */
+          if (!saving) onCancel();
+        }}
+        placeholder={column.nullable ? "NULL" : ""}
+        className={clsx(
+          "w-full bg-zinc-950 border rounded px-1.5 py-0.5 text-[11.5px] font-mono text-zinc-100 outline-none focus:border-amber-400",
+          value === "" && column.nullable
+            ? "border-zinc-700 italic text-zinc-500"
+            : "border-amber-400/60"
+        )}
+        title={
+          column.nullable
+            ? `Enter = apply to ${count} cell${plural} · Esc = cancel · empty = NULL · Ctrl+Enter = empty string`
+            : `Enter = apply to ${count} cell${plural} · Esc = cancel`
+        }
+      />
     </div>
   );
 }
@@ -1247,6 +1692,9 @@ function CellEditor({
             submit(e);
           } else if (e.key === "Escape") {
             e.preventDefault();
+            /* Esc reverts the edit only — don't let it bubble to the window
+               listener that collapses the Inspector. */
+            e.stopPropagation();
             onCancel();
           }
         }}
@@ -1266,6 +1714,16 @@ function CellEditor({
       />
     </div>
   );
+}
+
+/** A cell value as clipboard text. NULL copies as an empty string — matching
+ * Excel, where empty cells copy as blank lines. */
+function cellToText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
+  return JSON.stringify(value);
 }
 
 function renderCell(value: unknown): { display: string; tone: string } {
