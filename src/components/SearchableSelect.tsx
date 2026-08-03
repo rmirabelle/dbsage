@@ -168,7 +168,7 @@ export function SearchableSelect({
         createPortal(
           <div
             ref={menuRef}
-            className="fixed z-[60] max-h-60 overflow-auto rounded border border-zinc-700 bg-zinc-900 shadow-xl shadow-black/60 py-1"
+            className="fixed z-[80] max-h-60 overflow-auto rounded border border-zinc-700 bg-zinc-900 shadow-xl shadow-black/60 py-1"
             style={{ left: rect.left, top: rect.bottom + 2, width: rect.width }}
             onMouseDown={(e) => e.preventDefault()}
           >

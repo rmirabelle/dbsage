@@ -36,7 +36,6 @@ export function CellRelationMenu({
 }) {
   const all = useStore((s) => s.relations[`${profileId}::${database}`]);
   const existing = relationsFor(all ?? [], table, column);
-  const multiple = existing.length > 1;
 
   useEffect(() => {
     const onDown = () => onClose();
@@ -78,12 +77,9 @@ export function CellRelationMenu({
         >
           <PencilSimple size={16} className="text-violet-400 shrink-0" />
           <span className="flex-1">Edit Relation</span>
-          {/* Which one, when the column carries more than a single relation. */}
-          {multiple && (
-            <span className="font-mono text-[11px] text-zinc-500">
-              {r.toTable}.{r.toColumn}
-            </span>
-          )}
+          <span className="font-mono text-[11px] text-zinc-500">
+            {r.toTable}.{r.toColumn}
+          </span>
         </button>
       ))}
       {/* Always offered: a column can carry more than one relation, so having

@@ -760,19 +760,11 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       setPicker(null);
       return;
     }
-    /* Skip the menu if every remaining target is disabled (no related rows) —
-       leaving only greyed-out items. Disabled items still show when at least one
-       target is actionable. */
-    const existence = await checkRelatedExistence(
-      tab.profileId,
-      tab.database,
-      visible,
-      value
-    );
-    if (visible.every((m) => existence[relKey(m)] === false)) {
-      setPicker(null);
-      return;
-    }
+    /* Prime the existence cache before showing the menu so targets with no
+       related rows render disabled from the first frame. The menu shows even
+       when every target is empty — greyed-out items tell the user relations
+       exist but hold no matching rows here. */
+    await checkRelatedExistence(tab.profileId, tab.database, visible, value);
     setPicker({
       x: cell.rect.left,
       y: cell.rect.bottom + 4,
