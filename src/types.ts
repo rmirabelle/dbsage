@@ -86,6 +86,16 @@ export interface ColumnInfo {
 
 export type RelationKind = "has_one" | "has_many";
 
+/** One related table that a row delete can cascade into: the rows of `table`
+ * whose `column` matches one of `values` (collected from the deleted rows).
+ * `count` is the preview — how many related rows the cascade would delete. */
+export interface CascadeTarget {
+  table: string;
+  column: string;
+  values: string[];
+  count: number;
+}
+
 /** A virtual, app-defined relationship between two tables (no MySQL FK involved). */
 export interface Relation {
   id: string;

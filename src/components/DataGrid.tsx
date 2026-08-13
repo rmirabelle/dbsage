@@ -20,6 +20,7 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type {
+  CascadeTarget,
   ColumnFilter,
   ColumnInfo,
   RowRecord,
@@ -86,8 +87,17 @@ interface Props {
    * query results, which have no db.table target for SQL-shaped copies. */
   resultCopy?: boolean;
   /** When set, the row-gutter context menu shows a Delete item that calls this
-   * with the right-clicked row's selection. The grid handles the confirmation. */
-  onDeleteRows?: (indices: number[]) => Promise<void>;
+   * with the right-clicked row's selection. The grid handles the confirmation.
+   * `cascade` carries the related-row targets the user opted to delete too
+   * (null = no cascade). */
+  onDeleteRows?: (
+    indices: number[],
+    cascade: CascadeTarget[] | null
+  ) => Promise<void>;
+  /** Computes the related-row cascade preview for the rows pending deletion
+   * (targets with matching rows only). Absent = the delete confirmation offers
+   * no cascade option. */
+  onCascadePreview?: (indices: number[]) => Promise<CascadeTarget[]>;
   /** When set, the row-gutter context menu shows a Duplicate item. The host
    * performs the copy and owns all result messaging (success/conflict/error). */
   onDuplicateRows?: (indices: number[]) => Promise<void>;
@@ -164,6 +174,7 @@ export function DataGrid({
   copyTarget,
   resultCopy = false,
   onDeleteRows,
+  onCascadePreview,
   onDuplicateRows,
   peekableColumns,
   hideValueTooltip = false,
@@ -574,13 +585,17 @@ export function DataGrid({
     setDeleteConfirm(indices);
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (cascade: CascadeTarget[] | null) => {
     const indices = deleteConfirm;
     if (!onDeleteRows || !indices || indices.length === 0) return;
-    await onDeleteRows(indices);
+    await onDeleteRows(indices, cascade);
     setSelectedRows(new Set());
     setAnchor(null);
-    notifySuccess(`Deleted ${indices.length} row${indices.length === 1 ? "" : "s"}`);
+    const related = (cascade ?? []).reduce((a, t) => a + t.count, 0);
+    notifySuccess(
+      `Deleted ${indices.length} row${indices.length === 1 ? "" : "s"}` +
+        (related > 0 ? ` and ${related} related` : "")
+    );
   };
 
   const duplicateRows = async (indices: number[]) => {
@@ -1080,6 +1095,11 @@ export function DataGrid({
       {deleteConfirm && (
         <RowDeleteConfirmDialog
           count={deleteConfirm.length}
+          cascadePreview={
+            onCascadePreview
+              ? () => onCascadePreview(deleteConfirm)
+              : undefined
+          }
           onConfirm={confirmDelete}
           onClose={() => setDeleteConfirm(null)}
         />
@@ -1239,8 +1259,20 @@ function HeaderRow({
   onColumnClick: (column: string, rect: DOMRect) => void;
   onColumnsButtonClick: (rect: DOMRect) => void;
 }) {
+  /** Any active filter (including one on a column scrolled out of view or
+   * hidden) lights a 2px amber bar across the top of the header, so a restored
+   * filter is impossible to miss. Complements — does not replace — the amber
+   * highlight on the filtered column headers themselves. */
+  const anyFiltered =
+    filterByColumn.size > 0 || Object.keys(jsonDisplay).length > 0;
   return (
-    <div data-el="grid-header" className="sticky top-0 z-20 flex items-stretch bg-zinc-900 border-b border-zinc-800 select-none">
+    <div
+      data-el="grid-header"
+      className={clsx(
+        "sticky top-0 z-20 flex items-stretch bg-zinc-900 border-b border-zinc-800 select-none",
+        anyFiltered && "border-t-2 border-t-amber-400"
+      )}
+    >
       <div className="sticky left-0 z-30 w-14 shrink-0 border-r border-zinc-800 bg-zinc-900 flex items-center justify-center">
         <button
           data-el="columns-toggle-btn"
@@ -1279,8 +1311,11 @@ function HeaderRow({
             data-column-header={col.name}
             style={{ width: widths[i] ?? MIN_COL_WIDTH }}
             className={clsx(
-              "relative shrink-0 px-3 py-1.5 border-r border-zinc-800 flex flex-col justify-center cursor-pointer hover:bg-zinc-800/60",
-              (isSorted || isFiltered) && "bg-zinc-800/40"
+              "relative shrink-0 px-3 py-1.5 border-r border-zinc-800 flex flex-col justify-center cursor-pointer",
+              isFiltered
+                ? "bg-amber-400 hover:bg-amber-300"
+                : "hover:bg-zinc-800/60",
+              !isFiltered && isSorted && "bg-zinc-800/40"
             )}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest("[data-resize-handle]"))
@@ -1292,21 +1327,39 @@ function HeaderRow({
             <div
               className={clsx(
                 "flex items-center gap-1.5 text-[12px] font-medium truncate",
-                isFiltered ? "text-amber-400" : "text-zinc-200"
+                isFiltered ? "text-black" : "text-zinc-200"
               )}
             >
               {col.key === "PRI" && (
-                <Key size={12} weight="fill" className="text-emerald-400 shrink-0" />
+                <Key
+                  size={12}
+                  weight="fill"
+                  className={clsx(
+                    "shrink-0",
+                    isFiltered ? "text-black" : "text-emerald-400"
+                  )}
+                />
               )}
               <span className="truncate flex-1">{col.name}</span>
               {isPeekable && (
-                <ShareNetwork size={12} className="text-violet-400 shrink-0" />
+                <ShareNetwork
+                  size={12}
+                  className={clsx(
+                    "shrink-0",
+                    isFiltered ? "text-black" : "text-violet-400"
+                  )}
+                />
               )}
               {isFiltered && (
-                <Funnel size={12} className="text-amber-400 shrink-0" />
+                <Funnel size={12} className="text-black shrink-0" />
               )}
               {isSorted && (
-                <span className="text-accent-400 shrink-0">
+                <span
+                  className={clsx(
+                    "shrink-0",
+                    isFiltered ? "text-black" : "text-accent-400"
+                  )}
+                >
                   {sort?.direction === "asc" ? (
                     <ArrowUp size={13} />
                   ) : (
@@ -1315,7 +1368,12 @@ function HeaderRow({
                 </span>
               )}
             </div>
-            <div className="text-[10px] text-zinc-500 truncate font-mono">
+            <div
+              className={clsx(
+                "text-[10px] truncate font-mono",
+                isFiltered ? "text-black/70" : "text-zinc-500"
+              )}
+            >
               {col.dataType}
             </div>
             <ResizeHandle

@@ -218,6 +218,7 @@ pub fn run() {
             query::update_cell,
             query::insert_row,
             query::delete_row,
+            query::delete_rows_by_values,
             query::duplicate_row,
             query::check_row_conflicts,
             query::table_exists,

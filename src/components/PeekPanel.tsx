@@ -236,6 +236,9 @@ export function PeekPanel({
     matches: RelationTarget[];
     /** The cell the menu is anchored to, so re-clicking it toggles closed. */
     cell: { rowIndex: number; column: string };
+    /** True while a newly-clicked cell's existence checks are in flight; the
+     * menu stays open with every entry disabled until they resolve. */
+    pending?: boolean;
   } | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const { style: pickerStyle } = useAnchoredPosition(
@@ -317,6 +320,10 @@ export function PeekPanel({
       setPicker(null);
       return;
     }
+    /* Moving to a different cell: keep the menu open but disable every entry
+       NOW, so the previous cell's enabled/disabled states never linger while
+       the new cell's existence checks are in flight. */
+    setPicker((p) => (p ? { ...p, pending: true } : p));
     const value = cellToFilterValue(data.rows[cell.rowIndex]?.[cell.column]);
     const matches = relationTargets(relations, target.table, cell.column);
     if (value == null || matches.length === 0) {
@@ -558,11 +565,12 @@ export function PeekPanel({
               Peek into
             </div>
             {picker.matches.map((m) => {
-              const empty = relExists[relKey(m)] === false;
+              const empty = !picker.pending && relExists[relKey(m)] === false;
+              const disabled = picker.pending || empty;
               return (
                 <button
                   key={`${m.table}::${m.column}`}
-                  disabled={empty}
+                  disabled={disabled}
                   onClick={() => {
                     setPicker(null);
                     openChild(m);
@@ -570,7 +578,7 @@ export function PeekPanel({
                   title={empty ? `No related rows in ${m.table}` : undefined}
                   className={clsx(
                     "flex w-full items-center gap-1 px-3 py-1.5 text-left text-[12px] whitespace-nowrap",
-                    empty ? "cursor-not-allowed opacity-40" : "hover:bg-zinc-800"
+                    disabled ? "cursor-not-allowed opacity-40" : "hover:bg-zinc-800"
                   )}
                 >
                   <span className="font-medium text-zinc-100">{m.table}</span>

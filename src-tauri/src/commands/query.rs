@@ -2384,6 +2384,42 @@ pub async fn delete_row(
     Ok(affected)
 }
 
+/// DELETE every row of `table` whose `column` matches one of `values` — the
+/// cascade half of a row delete (related rows in a has-many / has-one target).
+/// Returns the number of rows removed; 0 is fine (related rows may already be
+/// gone), unlike `delete_row`'s strict single-row contract.
+#[tauri::command]
+pub async fn delete_rows_by_values(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    column: String,
+    values: Vec<String>,
+) -> AppResult<u64> {
+    if values.is_empty() {
+        return Ok(0);
+    }
+
+    let pool = pool_for(&state, &profile_id).await?;
+    let columns = fetch_columns(&pool, &database, &table).await?;
+    if !columns.iter().any(|c| c.name == column) {
+        return Err(AppError::Other(format!("unknown column: {column}")));
+    }
+
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    let placeholders = vec!["?"; values.len()].join(", ");
+    let sql = format!(
+        "DELETE FROM {qualified} WHERE {} IN ({placeholders})",
+        quote_ident(&column)
+    );
+    let mut q = sqlx::query(&sql);
+    for v in &values {
+        q = q.bind(v.clone());
+    }
+    Ok(q.execute(&pool).await?.rows_affected())
+}
+
 /// INSERT a new row. `values` carries only the columns the caller supplied
 /// (omitted columns fall back to their DB default / auto-increment). A value of
 /// `None` inserts SQL NULL.

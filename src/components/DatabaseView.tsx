@@ -1099,7 +1099,11 @@ function TableTile({
       onContextMenu={onContextMenu}
       className={clsx(
         "group flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors min-w-0 break-inside-avoid",
-        renaming ? "cursor-default" : "cursor-grab active:cursor-grabbing",
+        renaming
+          ? "cursor-default"
+          : isDragging || isActiveDrag
+          ? "cursor-grabbing"
+          : "cursor-pointer",
         isSelected
           ? "bg-accent-500/15"
           : isAnyDragging

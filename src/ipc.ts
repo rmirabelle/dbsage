@@ -130,6 +130,16 @@ export const ipc = {
     pk: { column: string; value: string | null }[];
   }) => invoke<number>("delete_row", args),
 
+  /** Cascade delete: removes every row of `table` whose `column` matches one
+   * of `values`. Returns the number of rows removed (0 is fine). */
+  deleteRowsByValues: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    column: string;
+    values: string[];
+  }) => invoke<number>("delete_rows_by_values", args),
+
   /** Server-side row copy: re-inserts the row identified by `pk`, skipping
    * auto-increment/generated columns. Returns a structured outcome — "conflict"
    * means a unique/PK violation the caller can offer to edit-and-retry. */

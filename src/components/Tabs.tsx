@@ -24,6 +24,7 @@ import {
   WarningCircle as AlertCircle,
   GitDiff,
   BracketsCurly,
+  Funnel,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -50,7 +51,14 @@ import { Tooltip } from "./Tooltip";
 import appIconLarge from "../assets/app-icon-large.png";
 import { ipc } from "../ipc";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
-import type { PeekDescriptor, PeekSeed, Relation, RowsTab, Tab } from "../types";
+import type {
+  CascadeTarget,
+  PeekDescriptor,
+  PeekSeed,
+  Relation,
+  RowsTab,
+  Tab,
+} from "../types";
 import {
   relationTargets,
   peekableColumnsFor,
@@ -503,6 +511,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const updateCells = useStore((s) => s.updateCells);
   const insertRow = useStore((s) => s.insertRow);
   const deleteRows = useStore((s) => s.deleteRows);
+  const clearRowsFilters = useStore((s) => s.clearRowsFilters);
   const duplicateRows = useStore((s) => s.duplicateRows);
   const openTableEditor = useStore((s) => s.openTableEditor);
   const loadRelations = useStore((s) => s.loadRelations);
@@ -546,6 +555,9 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     matches: { table: string; column: string }[];
     /** The cell the menu is anchored to, so re-clicking it toggles closed. */
     cell: { rowIndex: number; column: string };
+    /** True while a newly-clicked cell's existence checks are in flight; the
+     * menu stays open with every entry disabled until they resolve. */
+    pending?: boolean;
   } | null>(null);
   /** Right-click menu on a cell: edit/author the relation on its column. */
   const [cellMenu, setCellMenu] = useState<{
@@ -730,6 +742,10 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       setPicker(null);
       return;
     }
+    /* Moving to a different cell: keep the menu open but disable every entry
+       NOW, so the previous cell's enabled/disabled states never linger while
+       the new cell's existence checks are in flight. */
+    setPicker((p) => (p ? { ...p, pending: true } : p));
     const value = cellToFilterValue(tab.data.rows[cell.rowIndex]?.[cell.column]);
     const matches = relationTargets(relations, tab.table, cell.column);
     if (value == null || matches.length === 0) {
@@ -772,6 +788,58 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       matches: visible,
       cell: { rowIndex: cell.rowIndex, column: cell.column },
     });
+  };
+
+  /** Related-row cascade preview for a pending delete: relations FROM this
+   * table that fan outward — has_many (one-to-many) always; has_one only when
+   * anchored on a PK column (one-to-one). A has_one hanging off an FK column
+   * is many-to-one (a shared parent) and is never offered for cascade. Only
+   * targets that actually hold matching rows are returned. */
+  const previewCascade = async (
+    indices: number[]
+  ): Promise<CascadeTarget[]> => {
+    const data = tab.data;
+    if (!data) return [];
+    const pkCols = new Set(
+      data.columns.filter((c) => c.key === "PRI").map((c) => c.name)
+    );
+    const eligible = relations.filter(
+      (r) =>
+        r.fromTable === tab.table &&
+        (r.kind === "has_many" || pkCols.has(r.fromColumn))
+    );
+    /* Two relations can share a target table.column — count each once. */
+    const seen = new Set<string>();
+    const targets: CascadeTarget[] = [];
+    await Promise.all(
+      eligible.map(async (r) => {
+        const key = `${r.toTable}::${r.toColumn}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        const values = [
+          ...new Set(
+            indices
+              .map((i) => cellToFilterValue(data.rows[i]?.[r.fromColumn]))
+              .filter((v): v is string => v != null)
+          ),
+        ];
+        if (values.length === 0) return;
+        const counts = await Promise.all(
+          values.map((v) =>
+            ipc.countRows({
+              profileId: tab.profileId,
+              database: tab.database,
+              table: r.toTable,
+              filters: [{ column: r.toColumn, op: "equals", value: v }],
+            })
+          )
+        );
+        const count = counts.reduce((a, b) => a + b, 0);
+        if (count > 0)
+          targets.push({ table: r.toTable, column: r.toColumn, values, count });
+      })
+    );
+    return targets.sort((a, b) => a.table.localeCompare(b.table));
   };
 
   return (
@@ -835,6 +903,19 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             <RefreshCw size={15} />
           )}
         </button>
+
+        {tab.filters.length > 0 && (
+          <button
+            data-el="clear-filters-btn"
+            onClick={() => clearRowsFilters(tab.id)}
+            disabled={tab.loading}
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-amber-400 text-black hover:bg-amber-300 transition-colors disabled:opacity-40"
+            {...helpHandlers("Remove every column filter")}
+          >
+            <Funnel size={15} weight="fill" />
+            Clear Filters
+          </button>
+        )}
 
         <button
           data-el="import-json-btn"
@@ -921,7 +1002,13 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             await updateCells(tab.id, edits);
             if (cell) requestAnimationFrame(() => setActiveCell(cell));
           }}
-          onDeleteRows={hasPrimaryKey ? (indices) => deleteRows(tab.id, indices) : undefined}
+          onDeleteRows={
+            hasPrimaryKey
+              ? (indices, cascade) =>
+                  deleteRows(tab.id, indices, cascade ?? undefined)
+              : undefined
+          }
+          onCascadePreview={hasPrimaryKey ? previewCascade : undefined}
           onDuplicateRows={hasPrimaryKey ? handleDuplicateRows : undefined}
         />
       ) : (
@@ -1123,11 +1210,12 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
               Peek into
             </div>
             {picker.matches.map((m) => {
-              const empty = relExists[relKey(m)] === false;
+              const empty = !picker.pending && relExists[relKey(m)] === false;
+              const disabled = picker.pending || empty;
               return (
                 <button
                   key={`${m.table}::${m.column}`}
-                  disabled={empty}
+                  disabled={disabled}
                   onClick={() => {
                     setPicker(null);
                     openPeek(m);
@@ -1137,7 +1225,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
                     : {})}
                   className={clsx(
                     "flex w-full items-center gap-1 px-3 py-1.5 text-left text-[12px] whitespace-nowrap",
-                    empty ? "cursor-not-allowed opacity-40" : "hover:bg-zinc-800"
+                    disabled ? "cursor-not-allowed opacity-40" : "hover:bg-zinc-800"
                   )}
                 >
                   <span className="font-medium text-zinc-100">{m.table}</span>

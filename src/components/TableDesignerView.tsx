@@ -390,19 +390,19 @@ function ColumnsEditor({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto px-3 py-3 bg-[#2c303c]">
-        <div className="flex items-center gap-1 px-1 pb-3">
-          <button
-            data-el="columns-add-btn"
-            onClick={onAddColumn}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
-          >
-            <span className="relative -top-px text-[19px] leading-none">+</span> Add Column
-          </button>
-          <span className="ml-auto text-[11px] text-zinc-500">
-            {columns.length} column{columns.length === 1 ? "" : "s"}
-          </span>
-        </div>
+      <div className="flex items-center gap-1 px-4 pt-3 pb-3 bg-[#2c303c]">
+        <button
+          data-el="columns-add-btn"
+          onClick={onAddColumn}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
+        >
+          <span className="relative -top-px text-[19px] leading-none">+</span> Add Column
+        </button>
+        <span className="ml-auto text-[11px] text-zinc-500">
+          {columns.length} column{columns.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto px-3 pb-3 bg-[#2c303c]">
         <div
           className={clsx(
             HEADER_GRID,
@@ -588,19 +588,19 @@ function IndexesEditor({
   return (
     <div className="flex-1 min-h-0 flex flex-col">
 
-      <div className="flex-1 min-h-0 overflow-auto px-3 py-3 bg-[#2c303c]">
-        <div className="flex items-center gap-1 px-1 pb-3">
-          <button
-            data-el="indexes-add-btn"
-            onClick={onAddIndex}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
-          >
-            <span className="relative -top-px text-[19px] leading-none">+</span> Add Index
-          </button>
-          <span className="ml-auto text-[11px] text-zinc-500">
-            {indexes.length} index{indexes.length === 1 ? "" : "es"}
-          </span>
-        </div>
+      <div className="flex items-center gap-1 px-4 pt-3 pb-3 bg-[#2c303c]">
+        <button
+          data-el="indexes-add-btn"
+          onClick={onAddIndex}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
+        >
+          <span className="relative -top-px text-[19px] leading-none">+</span> Add Index
+        </button>
+        <span className="ml-auto text-[11px] text-zinc-500">
+          {indexes.length} index{indexes.length === 1 ? "" : "es"}
+        </span>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto px-3 pb-3 bg-[#2c303c]">
         <div
           className={clsx(
             INDEX_GRID,

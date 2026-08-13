@@ -14,6 +14,7 @@ import { notifyError, notifySuccess, notifyInfo } from "./notify";
 import { analyzeQueryBundle } from "../lib/queryAnalysis";
 import { splitSqlStatements, returnsResultSet } from "../lib/splitSql";
 import type {
+  CascadeTarget,
   ColumnFilter,
   CreateTableTab,
   DatabaseDiffSide,
@@ -422,6 +423,8 @@ interface Store {
 
   setRowsSort: (tabId: string, sort: SortSpec | null) => Promise<void>;
   setRowsFilter: (tabId: string, column: string, filter: ColumnFilter | null) => Promise<void>;
+  /** Drop every column filter on the rows tab at once and reload. */
+  clearRowsFilters: (tabId: string) => Promise<void>;
   setHiddenColumns: (tabId: string, hidden: string[]) => void;
   /** Set (or clear, with null) a JSON column's display property path. */
   setJsonDisplay: (tabId: string, column: string, path: string | null) => void;
@@ -466,7 +469,11 @@ interface Store {
     tabId: string,
     values: { column: string; value: string | null }[]
   ) => Promise<void>;
-  deleteRows: (tabId: string, rowIndices: number[]) => Promise<void>;
+  deleteRows: (
+    tabId: string,
+    rowIndices: number[],
+    cascade?: CascadeTarget[]
+  ) => Promise<void>;
   /** Duplicate the given rows server-side (skipping auto-increment columns).
    * Rows that violate a unique/PK constraint come back in `conflicts` carrying a
    * snapshot of their values, so the caller can offer an edit-and-retry. */
@@ -2364,6 +2371,19 @@ export const useStore = create<Store>((set, get) => ({
     await loadTabPage(tabId, 1, set, get);
   },
 
+  clearRowsFilters: async (tabId) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows"
+          ? { ...t, filters: [], page: 1, exactTotal: null }
+          : t
+      ),
+    }));
+    const t = get().tabs.find((x) => x.id === tabId);
+    if (t && t.kind === "rows") persistColumnSetup(t);
+    await loadTabPage(tabId, 1, set, get);
+  },
+
   setHiddenColumns: (tabId, hidden) => {
     set((s) => ({
       tabs: s.tabs.map((t) =>
@@ -2652,12 +2672,23 @@ export const useStore = create<Store>((set, get) => ({
     await loadTabPage(tabId, tab.page, set, get);
   },
 
-  deleteRows: async (tabId, rowIndices) => {
+  deleteRows: async (tabId, rowIndices, cascade) => {
     const tab = get().tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "rows" || !tab.data) return;
     const pkColumns = tab.data.columns.filter((c) => c.key === "PRI");
     if (pkColumns.length === 0) {
       throw new Error("Table has no primary key - row deletion is disabled.");
+    }
+    /* Cascade first (related rows, then the rows themselves), so a failure
+       midway never leaves orphaned related rows behind. */
+    for (const c of cascade ?? []) {
+      await ipc.deleteRowsByValues({
+        profileId: tab.profileId,
+        database: tab.database,
+        table: c.table,
+        column: c.column,
+        values: c.values,
+      });
     }
     for (const rowIndex of rowIndices) {
       const row = tab.data.rows[rowIndex];
