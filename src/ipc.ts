@@ -7,6 +7,7 @@ import type {
   ColumnInfo,
   ColumnSetup,
   Folder,
+  ForeignKeyDef,
   ImportSummary,
   IndexDef,
   IniResolution,
@@ -35,6 +36,7 @@ import type {
   TableSchemaEntry,
   TableSchemaMeta,
   TableViewPreset,
+  TruncateBlocker,
 } from "./types";
 import type { QueryAnalysisInput } from "./lib/queryAnalysis/types";
 
@@ -215,6 +217,10 @@ export const ipc = {
   cancelJsonImport: () => invoke<void>("cancel_json_import"),
   truncateTable: (profileId: string, database: string, table: string) =>
     invoke<void>("truncate_table", { profileId, database, table }),
+  /** Tables holding a foreign key that points at one of `tables`, with the
+   * count of their rows that would be orphaned by the truncate. */
+  truncateBlockers: (profileId: string, database: string, tables: string[]) =>
+    invoke<TruncateBlocker[]>("truncate_blockers", { profileId, database, tables }),
   dropTable: (profileId: string, database: string, table: string) =>
     invoke<void>("drop_table", { profileId, database, table }),
   renameTable: (
@@ -227,6 +233,8 @@ export const ipc = {
     invoke<ColumnDef[]>("column_definitions", { profileId, database, table }),
   indexDefinitions: (profileId: string, database: string, table: string) =>
     invoke<IndexDef[]>("index_definitions", { profileId, database, table }),
+  foreignKeyDefinitions: (profileId: string, database: string, table: string) =>
+    invoke<ForeignKeyDef[]>("foreign_key_definitions", { profileId, database, table }),
   tableAutoIncrement: (profileId: string, database: string, table: string) =>
     invoke<number | null>("table_auto_increment", { profileId, database, table }),
   tableComment: (profileId: string, database: string, table: string) =>

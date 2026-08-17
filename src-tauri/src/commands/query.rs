@@ -1222,6 +1222,161 @@ fn push_statistics_row(out: &mut Vec<IndexDef>, r: &MySqlRow, base: usize) {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ForeignKeyDef {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub ref_schema: String,
+    pub ref_table: String,
+    pub ref_columns: Vec<String>,
+    /// "RESTRICT" | "CASCADE" | "SET NULL" | "NO ACTION" | "SET DEFAULT".
+    pub on_update: String,
+    pub on_delete: String,
+}
+
+/// Foreign-key constraints declared on `table`, used to seed the designer's
+/// Foreign Keys editor. Multi-column keys arrive as one row per column
+/// (ordered by ORDINAL_POSITION) and are folded into a single entry.
+#[tauri::command]
+pub async fn foreign_key_definitions(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<Vec<ForeignKeyDef>> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let rows = sqlx::query(
+        "SELECT k.CONSTRAINT_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_SCHEMA, \
+                k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME, \
+                r.UPDATE_RULE, r.DELETE_RULE \
+         FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k \
+         JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS r \
+           ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA \
+          AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME \
+          AND r.TABLE_NAME = k.TABLE_NAME \
+         WHERE k.TABLE_SCHEMA = ? AND k.TABLE_NAME = ? \
+           AND k.REFERENCED_TABLE_NAME IS NOT NULL \
+         ORDER BY k.CONSTRAINT_NAME, k.ORDINAL_POSITION",
+    )
+    .bind(&database)
+    .bind(&table)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut out: Vec<ForeignKeyDef> = Vec::new();
+    for r in &rows {
+        let name = get_string(r, 0);
+        let column = get_string(r, 1);
+        let ref_column = get_string(r, 4);
+        match out.iter_mut().find(|f| f.name == name) {
+            Some(existing) => {
+                existing.columns.push(column);
+                existing.ref_columns.push(ref_column);
+            }
+            None => out.push(ForeignKeyDef {
+                name,
+                columns: vec![column],
+                ref_schema: get_string(r, 2),
+                ref_table: get_string(r, 3),
+                ref_columns: vec![ref_column],
+                on_update: get_string(r, 5).to_uppercase(),
+                on_delete: get_string(r, 6).to_uppercase(),
+            }),
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TruncateBlocker {
+    /// The table being truncated that this child references.
+    pub table: String,
+    pub child_schema: String,
+    pub child_table: String,
+    pub constraint: String,
+    /// Rows in the child whose FK columns are all non-null — the rows that
+    /// would be orphaned by the truncate.
+    pub rows: u64,
+}
+
+/// For each table in `tables`, find the tables that hold a foreign key pointing
+/// at it (self-references and tables that are themselves in `tables` are
+/// skipped — truncating them too orphans nothing) and count the child rows
+/// that currently reference something. A blocker with `rows > 0` means the
+/// truncate would leave orphans.
+#[tauri::command]
+pub async fn truncate_blockers(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    tables: Vec<String>,
+) -> AppResult<Vec<TruncateBlocker>> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let mut out: Vec<TruncateBlocker> = Vec::new();
+    for table in &tables {
+        let rows = sqlx::query(
+            "SELECT TABLE_SCHEMA, TABLE_NAME, CONSTRAINT_NAME, COLUMN_NAME \
+             FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE \
+             WHERE REFERENCED_TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME = ? \
+             ORDER BY TABLE_SCHEMA, TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION",
+        )
+        .bind(&database)
+        .bind(table)
+        .fetch_all(&pool)
+        .await?;
+
+        /* Fold per-column rows into (schema, table, constraint) → columns. */
+        let mut fks: Vec<(String, String, String, Vec<String>)> = Vec::new();
+        for r in &rows {
+            let schema = get_string(r, 0);
+            let child = get_string(r, 1);
+            let constraint = get_string(r, 2);
+            let column = get_string(r, 3);
+            let same_table = schema == database && &child == table;
+            let also_truncating = schema == database && tables.contains(&child);
+            if same_table || also_truncating {
+                continue;
+            }
+            match fks
+                .iter_mut()
+                .find(|f| f.0 == schema && f.1 == child && f.2 == constraint)
+            {
+                Some(f) => f.3.push(column),
+                None => fks.push((schema, child, constraint, vec![column])),
+            }
+        }
+
+        for (schema, child, constraint, columns) in fks {
+            let cond = columns
+                .iter()
+                .map(|c| format!("{} IS NOT NULL", quote_ident(c)))
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            let sql = format!(
+                "SELECT COUNT(*) FROM {}.{} WHERE {cond}",
+                quote_ident(&schema),
+                quote_ident(&child)
+            );
+            let row = sqlx::query(&sql).fetch_one(&pool).await?;
+            let count = row
+                .try_get::<i64, _>(0)
+                .map(|v| v.max(0) as u64)
+                .or_else(|_| row.try_get::<u64, _>(0))
+                .unwrap_or(0);
+            out.push(TruncateBlocker {
+                table: table.clone(),
+                child_schema: schema,
+                child_table: child,
+                constraint,
+                rows: count,
+            });
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TableSchemaEntry {
     pub name: String,
     pub columns: Vec<ColumnDef>,
@@ -1970,9 +2125,17 @@ pub async fn truncate_table(
     let pool = pool_for(&state, &profile_id).await?;
     let mut conn = pool.acquire().await?;
     let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
-    (&mut *conn)
+    /* MySQL refuses to TRUNCATE any table another table's foreign key points
+       at, even when both tables are empty. The caller (TableActionDialog) has
+       already checked, via `truncate_blockers`, that no referencing rows exist,
+       so the constraint check is turned off for this session-scoped connection
+       only and restored afterwards. */
+    (&mut *conn).execute("SET FOREIGN_KEY_CHECKS = 0").await?;
+    let result = (&mut *conn)
         .execute(format!("TRUNCATE TABLE {qualified}").as_str())
-        .await?;
+        .await;
+    (&mut *conn).execute("SET FOREIGN_KEY_CHECKS = 1").await?;
+    result?;
     Ok(())
 }
 

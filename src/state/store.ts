@@ -5,6 +5,8 @@ import { ipc } from "../ipc";
 import {
   columnDefToDraft,
   indexDefToDraft,
+  foreignKeyDefToDraft,
+  cloneForeignKey,
   defaultIdColumn,
   buildCreateTableSql,
   buildAlterTableSql,
@@ -56,7 +58,10 @@ export function isDesignerTabDirty(tab: CreateTableTab): boolean {
       tab.originalIndexes,
       tab.indexes,
       tab.originalTableComment,
-      tab.tableComment
+      tab.tableComment,
+      tab.originalForeignKeys,
+      tab.foreignKeys,
+      tab.database
     );
     /* buildAlterTableSql returns a `--` comment when nothing changed. */
     return !alter.startsWith("--");
@@ -64,7 +69,8 @@ export function isDesignerTabDirty(tab: CreateTableTab): boolean {
   return (
     tab.tableName.trim() !== "" ||
     tab.columns.length > 0 ||
-    tab.indexes.length > 0
+    tab.indexes.length > 0 ||
+    tab.foreignKeys.length > 0
   );
 }
 
@@ -367,7 +373,12 @@ interface Store {
     patch: Partial<
       Pick<
         CreateTableTab,
-        "tableName" | "columns" | "indexes" | "autoIncrementValue" | "tableComment"
+        | "tableName"
+        | "columns"
+        | "indexes"
+        | "foreignKeys"
+        | "autoIncrementValue"
+        | "tableComment"
       >
     >
   ) => void;
@@ -1212,7 +1223,10 @@ export const useStore = create<Store>((set, get) => ({
         tab.originalIndexes,
         tab.indexes,
         tab.originalTableComment,
-        tab.tableComment
+        tab.tableComment,
+        tab.originalForeignKeys,
+        tab.foreignKeys,
+        tab.database
       );
       if (alterSql.startsWith("--")) {
         notifyInfo("No changes to apply.");
@@ -1275,7 +1289,9 @@ export const useStore = create<Store>((set, get) => ({
       name,
       tab.columns,
       tab.indexes,
-      tab.tableComment
+      tab.tableComment,
+      tab.foreignKeys,
+      tab.database
     );
     try {
       const exists = await ipc.tableExists(tab.profileId, tab.database, name);
@@ -2004,6 +2020,8 @@ export const useStore = create<Store>((set, get) => ({
       originalColumns: [],
       indexes: [],
       originalIndexes: [],
+      foreignKeys: [],
+      originalForeignKeys: [],
       autoIncrementValue: "",
       originalAutoIncrementValue: "",
       targetFolderId: folderId,
@@ -2023,14 +2041,16 @@ export const useStore = create<Store>((set, get) => ({
       set({ activeTabId: tabId });
       return;
     }
-    const [defs, idxDefs, autoInc, comment] = await Promise.all([
+    const [defs, idxDefs, fkDefs, autoInc, comment] = await Promise.all([
       ipc.columnDefinitions(profileId, database, table),
       ipc.indexDefinitions(profileId, database, table),
+      ipc.foreignKeyDefinitions(profileId, database, table),
       ipc.tableAutoIncrement(profileId, database, table),
       ipc.tableComment(profileId, database, table),
     ]);
     const columns = defs.map(columnDefToDraft);
     const indexes = idxDefs.map(indexDefToDraft);
+    const foreignKeys = fkDefs.map(foreignKeyDefToDraft);
     const ai = autoInc != null ? String(autoInc) : "";
     const tab: CreateTableTab = {
       id: tabId,
@@ -2050,6 +2070,8 @@ export const useStore = create<Store>((set, get) => ({
         ...i,
         columns: i.columns.map((c) => ({ ...c })),
       })),
+      foreignKeys,
+      originalForeignKeys: foreignKeys.map(cloneForeignKey),
       autoIncrementValue: ai,
       originalAutoIncrementValue: ai,
     };
@@ -2941,14 +2963,16 @@ async function reloadDesignerTab(
 ) {
   const tab = get().tabs.find((t) => t.id === tabId);
   if (!tab || tab.kind !== "create-table") return;
-  const [defs, idxDefs, autoInc, comment] = await Promise.all([
+  const [defs, idxDefs, fkDefs, autoInc, comment] = await Promise.all([
     ipc.columnDefinitions(tab.profileId, tab.database, tableName),
     ipc.indexDefinitions(tab.profileId, tab.database, tableName),
+    ipc.foreignKeyDefinitions(tab.profileId, tab.database, tableName),
     ipc.tableAutoIncrement(tab.profileId, tab.database, tableName),
     ipc.tableComment(tab.profileId, tab.database, tableName),
   ]);
   const columns = defs.map(columnDefToDraft);
   const indexes = idxDefs.map(indexDefToDraft);
+  const foreignKeys = fkDefs.map(foreignKeyDefToDraft);
   const ai = autoInc != null ? String(autoInc) : "";
   set((s) => ({
     tabs: s.tabs.map((t) =>
@@ -2966,6 +2990,8 @@ async function reloadDesignerTab(
               ...i,
               columns: i.columns.map((c) => ({ ...c })),
             })),
+            foreignKeys,
+            originalForeignKeys: foreignKeys.map(cloneForeignKey),
             autoIncrementValue: ai,
             originalAutoIncrementValue: ai,
           }

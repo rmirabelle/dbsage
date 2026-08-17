@@ -1,4 +1,11 @@
-import type { ColumnDef, ColumnDraft, IndexDef, IndexDraft } from "../types";
+import type {
+  ColumnDef,
+  ColumnDraft,
+  ForeignKeyDef,
+  ForeignKeyDraft,
+  IndexDef,
+  IndexDraft,
+} from "../types";
 
 interface ParsedType {
   type: string;
@@ -83,6 +90,49 @@ export function indexDefToDraft(def: IndexDef): IndexDraft {
     method: def.method,
     comment: def.comment ?? "",
   };
+}
+
+/** Convert backend foreign-key metadata into an editor draft (edit mode seed). */
+export function foreignKeyDefToDraft(def: ForeignKeyDef): ForeignKeyDraft {
+  return {
+    ...def,
+    id: crypto.randomUUID(),
+    originalName: def.name,
+    columns: [...def.columns],
+    refColumns: [...def.refColumns],
+  };
+}
+
+/** Deep-copy a foreign-key draft (for the edit-mode baseline snapshot). */
+export function cloneForeignKey(fk: ForeignKeyDraft): ForeignKeyDraft {
+  return { ...fk, columns: [...fk.columns], refColumns: [...fk.refColumns] };
+}
+
+/** Render one foreign-key constraint body (no leading ADD/comma), or null when
+ * the key is incomplete (no name, no referenced table, or a column-pair
+ * mismatch). The referenced schema is qualified only when it differs from
+ * `database`, so same-schema DDL stays portable across renamed databases. */
+export function foreignKeyDefinition(
+  fk: ForeignKeyDraft,
+  database: string
+): string | null {
+  const name = fk.name.trim();
+  const cols = fk.columns.map((c) => c.trim()).filter(Boolean);
+  const refCols = fk.refColumns.map((c) => c.trim()).filter(Boolean);
+  const refTable = fk.refTable.trim();
+  if (!name || !refTable || cols.length === 0 || cols.length !== refCols.length) {
+    return null;
+  }
+  const refSchema = fk.refSchema.trim();
+  const target =
+    refSchema && refSchema !== database
+      ? `${id(refSchema)}.${id(refTable)}`
+      : id(refTable);
+  return (
+    `CONSTRAINT ${id(name)} FOREIGN KEY (${cols.map(id).join(", ")}) ` +
+    `REFERENCES ${target} (${refCols.map(id).join(", ")}) ` +
+    `ON DELETE ${fk.onDelete} ON UPDATE ${fk.onUpdate}`
+  );
 }
 
 function quoteString(s: string): string {
@@ -172,7 +222,9 @@ export function buildCreateTableSql(
   tableName: string,
   columns: ColumnDraft[],
   indexes: IndexDraft[] = [],
-  comment = ""
+  comment = "",
+  foreignKeys: ForeignKeyDraft[] = [],
+  database = ""
 ): string {
   const defs: string[] = [];
   for (const col of columns) {
@@ -187,6 +239,11 @@ export function buildCreateTableSql(
 
   for (const idx of indexes) {
     const def = indexDefinition(idx);
+    if (def) defs.push(`  ${def}`);
+  }
+
+  for (const fk of foreignKeys) {
+    const def = foreignKeyDefinition(fk, database);
     if (def) defs.push(`  ${def}`);
   }
 
@@ -236,7 +293,10 @@ export function buildAlterTableSql(
   originalIndexes: IndexDraft[] = [],
   currentIndexes: IndexDraft[] = [],
   originalComment = "",
-  comment = ""
+  comment = "",
+  originalForeignKeys: ForeignKeyDraft[] = [],
+  currentForeignKeys: ForeignKeyDraft[] = [],
+  database = ""
 ): string {
   const clauses: string[] = [];
   const origByName = new Map(
@@ -350,6 +410,45 @@ export function buildAlterTableSql(
     }
   }
 
+  /**
+   * Foreign-key diff. Drops go into the main ALTER (so a key can be released
+   * before the columns it covers are changed); adds — new keys and the
+   * re-add half of a changed key — go into a second ALTER TABLE, because
+   * MySQL rejects dropping and adding a constraint of the same name in one
+   * statement, and the adds must see the final columns anyway.
+   */
+  const fkAdds: string[] = [];
+  const keptFkNames = new Set(
+    currentForeignKeys
+      .filter((f) => f.originalName)
+      .map((f) => f.originalName as string)
+  );
+  for (const of of originalForeignKeys) {
+    const on = of.originalName ?? of.name;
+    if (!keptFkNames.has(on)) clauses.push(`  DROP FOREIGN KEY ${id(on)}`);
+  }
+  const origFkByName = new Map(
+    originalForeignKeys.map((f) => [f.originalName ?? f.name, f])
+  );
+  for (const fk of currentForeignKeys) {
+    const def = foreignKeyDefinition(fk, database);
+    if (!fk.originalName) {
+      if (def) fkAdds.push(`  ADD ${def}`);
+      continue;
+    }
+    if (!def) {
+      /* An existing key emptied of its columns/target → drop it. */
+      clauses.push(`  DROP FOREIGN KEY ${id(fk.originalName)}`);
+      continue;
+    }
+    const orig = origFkByName.get(fk.originalName);
+    const origDef = orig ? foreignKeyDefinition(orig, database) : null;
+    if (origDef !== def) {
+      clauses.push(`  DROP FOREIGN KEY ${id(fk.originalName)}`);
+      fkAdds.push(`  ADD ${def}`);
+    }
+  }
+
   /* AUTO_INCREMENT counter. */
   const ai = autoIncrement.trim();
   if (ai !== originalAutoIncrement.trim() && /^\d+$/.test(ai)) {
@@ -367,10 +466,18 @@ export function buildAlterTableSql(
     clauses.push(`  RENAME TO ${id(newName)}`);
   }
 
-  if (clauses.length === 0) {
+  if (clauses.length === 0 && fkAdds.length === 0) {
     return `-- No changes to apply to ${id(originalName)}.`;
   }
-  return `ALTER TABLE ${id(originalName)}\n${clauses.join(",\n")};`;
+  const statements: string[] = [];
+  if (clauses.length > 0) {
+    statements.push(`ALTER TABLE ${id(originalName)}\n${clauses.join(",\n")};`);
+  }
+  if (fkAdds.length > 0) {
+    const finalName = newName || originalName;
+    statements.push(`ALTER TABLE ${id(finalName)}\n${fkAdds.join(",\n")};`);
+  }
+  return statements.join("\n\n");
 }
 
 /** Names of columns that the current edits will drop (for a data-loss warning). */

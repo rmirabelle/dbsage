@@ -233,6 +233,8 @@ pub fn run() {
             query::rename_table,
             query::column_definitions,
             query::index_definitions,
+            query::foreign_key_definitions,
+            query::truncate_blockers,
             query::table_auto_increment,
             query::table_comment,
             query::table_schema_meta,

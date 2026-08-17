@@ -10,6 +10,7 @@ import {
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
 import { notifyError, notifySuccess } from "../state/notify";
+import type { TruncateBlocker } from "../types";
 
 export type TableAction = "truncate" | "delete";
 
@@ -35,6 +36,12 @@ export function TableActionDialog({
   const [rowCount, setRowCount] = useState<number | null>(null);
   const [countError, setCountError] = useState(false);
   const [busy, setBusy] = useState(false);
+  /**
+   * Truncate only: tables holding a foreign key that points at one of ours.
+   * `null` while loading; `"error"` when the check itself failed. Any blocker
+   * with rows > 0 means the truncate would leave orphans, so it is refused.
+   */
+  const [blockers, setBlockers] = useState<TruncateBlocker[] | null | "error">(null);
 
   const isDelete = action === "delete";
   const verb = isDelete ? "Delete" : "Truncate";
@@ -63,6 +70,31 @@ export function TableActionDialog({
       cancelled = true;
     };
   }, [profileId, database, tables]);
+
+  useEffect(() => {
+    if (isDelete) return;
+    let cancelled = false;
+    setBlockers(null);
+    ipc
+      .truncateBlockers(profileId, database, tables)
+      .then((b) => {
+        if (!cancelled) setBlockers(b);
+      })
+      .catch(() => {
+        if (!cancelled) setBlockers("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDelete, profileId, database, tables]);
+
+  const orphaning =
+    Array.isArray(blockers) ? blockers.filter((b) => b.rows > 0) : [];
+  const harmlessRefs =
+    Array.isArray(blockers) ? blockers.filter((b) => b.rows === 0) : [];
+  /* Truncate waits for the FK check and refuses when it fails or finds orphans. */
+  const truncateBlocked =
+    !isDelete && (blockers === null || blockers === "error" || orphaning.length > 0);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -191,6 +223,52 @@ export function TableActionDialog({
             )}
           </div>
 
+          {orphaning.length > 0 && (
+            <div
+              data-el="truncate-orphan-block"
+              className="rounded-md border border-amber-700/60 bg-amber-950/30 px-3 py-2.5"
+            >
+              <div className="font-semibold text-amber-300">
+                Truncate blocked — rows in other tables point at{" "}
+                {multi ? "these tables" : "this table"} and would be orphaned:
+              </div>
+              <div className="mt-1.5 max-h-40 overflow-auto font-mono text-[11px] text-zinc-200 space-y-0.5">
+                {orphaning.map((b) => (
+                  <div key={`${b.childSchema}.${b.childTable}.${b.constraint}`} className="flex gap-2">
+                    <span className="truncate">
+                      {b.childSchema !== database ? `${b.childSchema}.` : ""}
+                      {b.childTable}
+                      {multi ? <span className="text-zinc-500"> → {b.table}</span> : null}
+                    </span>
+                    <span className="ml-auto shrink-0 tabular-nums text-amber-200">
+                      {b.rows.toLocaleString()} row{b.rows === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-1.5 text-[11px] text-zinc-400">
+                Delete or truncate those rows first, then try again.
+              </div>
+            </div>
+          )}
+
+          {orphaning.length === 0 && harmlessRefs.length > 0 && (
+            <div className="text-[11px] text-zinc-400">
+              Referenced by{" "}
+              <span className="font-mono text-zinc-300">
+                {Array.from(new Set(harmlessRefs.map((b) => b.childTable))).join(", ")}
+              </span>{" "}
+              — no rows there point here, so nothing will be orphaned.
+            </div>
+          )}
+
+          {!isDelete && blockers === "error" && (
+            <div className="text-[11px] text-amber-400">
+              Couldn’t check foreign keys that point at {multi ? "these tables" : "this table"},
+              so the truncate is not allowed.
+            </div>
+          )}
+
           <p className="text-[11px] text-rose-300/90">
             This action cannot be undone.
           </p>
@@ -207,10 +285,19 @@ export function TableActionDialog({
           <button
             data-el="table-action-confirm-btn"
             onClick={handleConfirm}
-            disabled={busy}
+            disabled={busy || truncateBlocked}
+            title={
+              orphaning.length > 0
+                ? "Rows in other tables would be orphaned"
+                : undefined
+            }
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-semibold bg-rose-500 text-white hover:bg-rose-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Icon size={14} />}
+            {busy || (!isDelete && blockers === null) ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Icon size={14} />
+            )}
             {busy
               ? `${verb.replace(/e$/, "")}ing…`
               : `${verb} ${multi ? `${tables.length} tables` : "table"}`}

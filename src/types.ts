@@ -582,6 +582,37 @@ export interface IndexDef {
   comment: string;
 }
 
+export type FkAction = "RESTRICT" | "CASCADE" | "SET NULL" | "NO ACTION" | "SET DEFAULT";
+
+/** Foreign-key metadata from the backend, used to seed the editor in edit mode. */
+export interface ForeignKeyDef {
+  name: string;
+  columns: string[];
+  refSchema: string;
+  refTable: string;
+  refColumns: string[];
+  onUpdate: FkAction;
+  onDelete: FkAction;
+}
+
+/** One foreign-key row in the table designer. */
+export interface ForeignKeyDraft extends ForeignKeyDef {
+  id: string;
+  /** The constraint's name as loaded (edit mode only); absent for newly-added
+   * keys. Used to diff against the live edits when generating ALTER TABLE. */
+  originalName?: string;
+}
+
+/** One table that holds a foreign key pointing at a table about to be
+ * truncated, with the number of its rows that currently reference something. */
+export interface TruncateBlocker {
+  table: string;
+  childSchema: string;
+  childTable: string;
+  constraint: string;
+  rows: number;
+}
+
 export interface CreateTableTab extends BaseTab {
   kind: "create-table";
   mode: "create" | "edit";
@@ -599,6 +630,10 @@ export interface CreateTableTab extends BaseTab {
   indexes: IndexDraft[];
   /** Edit mode: snapshot of the loaded indexes, for diffing into ALTER clauses. */
   originalIndexes: IndexDraft[];
+  /** Foreign-key constraints. */
+  foreignKeys: ForeignKeyDraft[];
+  /** Edit mode: snapshot of the loaded foreign keys, for diffing into ALTER clauses. */
+  originalForeignKeys: ForeignKeyDraft[];
   /** Edit mode: the table's next AUTO_INCREMENT value (raw input string). */
   autoIncrementValue: string;
   /** Edit mode: the loaded AUTO_INCREMENT, for change detection. Empty when the

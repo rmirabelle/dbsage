@@ -14,15 +14,19 @@ import {
   Asterisk,
   CircleNotch,
   X,
+  LinkSimple,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
+import { ipc } from "../ipc";
 import { useStore, isDesignerTabDirty } from "../state/store";
 import { useUi } from "../state/ui";
 import { buildCreateTableSql, buildAlterTableSql, typeSupportsScale } from "../lib/tableSql";
 import type {
   ColumnDraft,
   CreateTableTab,
+  FkAction,
+  ForeignKeyDraft,
   IndexColumnRef,
   IndexDraft,
   IndexMethod,
@@ -61,10 +65,23 @@ const COLUMN_TYPES = [
 const SUB_TABS = [
   { id: "columns", label: "Columns", Icon: ColumnsIcon },
   { id: "indexes", label: "Indexes", Icon: Key },
+  { id: "foreign-keys", label: "Foreign Keys", Icon: LinkSimple },
 ] as const;
 
 const INDEX_TYPES: IndexType[] = ["NORMAL", "UNIQUE", "FULLTEXT", "SPATIAL"];
 const INDEX_METHODS: IndexMethod[] = ["BTREE", "HASH"];
+const FK_ACTIONS: FkAction[] = ["RESTRICT", "CASCADE", "SET NULL", "NO ACTION", "SET DEFAULT"];
+
+const blankForeignKey = (database: string): ForeignKeyDraft => ({
+  id: crypto.randomUUID(),
+  name: "",
+  columns: [],
+  refSchema: database,
+  refTable: "",
+  refColumns: [],
+  onUpdate: "RESTRICT",
+  onDelete: "RESTRICT",
+});
 
 const blankIndex = (): IndexDraft => ({
   id: crypto.randomUUID(),
@@ -112,13 +129,18 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             tab.originalIndexes,
             tab.indexes,
             tab.originalTableComment,
-            tab.tableComment
+            tab.tableComment,
+            tab.originalForeignKeys,
+            tab.foreignKeys,
+            tab.database
           )
         : buildCreateTableSql(
             tab.tableName.trim() || "new_table",
             tab.columns,
             tab.indexes,
-            tab.tableComment
+            tab.tableComment,
+            tab.foreignKeys,
+            tab.database
           ),
     [
       isEdit,
@@ -132,6 +154,9 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
       tab.indexes,
       tab.originalTableComment,
       tab.tableComment,
+      tab.originalForeignKeys,
+      tab.foreignKeys,
+      tab.database,
     ]
   );
 
@@ -178,6 +203,18 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
     [next[idx], next[target]] = [next[target], next[idx]];
     setIndexes(next);
   };
+
+  const setForeignKeys = (foreignKeys: ForeignKeyDraft[]) =>
+    updateCreateTable(tab.id, { foreignKeys });
+
+  const addForeignKey = () =>
+    setForeignKeys([...tab.foreignKeys, blankForeignKey(tab.database)]);
+
+  const patchForeignKey = (id: string, patch: Partial<ForeignKeyDraft>) =>
+    setForeignKeys(tab.foreignKeys.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+
+  const removeForeignKey = (id: string) =>
+    setForeignKeys(tab.foreignKeys.filter((f) => f.id !== id));
 
   /** Column names available to index (the live, named draft columns). */
   const availableColumns = tab.columns
@@ -309,6 +346,18 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             onPatchIndex={patchIndex}
             onRemoveIndex={removeIndex}
             onMoveIndex={moveIndex}
+          />
+        )}
+        {activeSubTab === "foreign-keys" && (
+          <ForeignKeysEditor
+            profileId={tab.profileId}
+            database={tab.database}
+            tableName={tab.tableName}
+            foreignKeys={tab.foreignKeys}
+            availableColumns={availableColumns}
+            onAdd={addForeignKey}
+            onPatch={patchForeignKey}
+            onRemove={removeForeignKey}
           />
         )}
       </div>
@@ -868,6 +917,321 @@ function ColumnPicker({
         )}
       </div>
     </>
+  );
+}
+
+const FK_GRID =
+  "grid grid-cols-[minmax(120px,1fr)_minmax(150px,1.2fr)_130px_minmax(130px,1fr)_minmax(150px,1.2fr)_120px_120px_36px] gap-2 items-start";
+
+/** Cache key for the tables of one schema / the columns of one table. */
+const schemaKey = (schema: string, table = "") => `${schema} ${table}`;
+
+function ForeignKeysEditor({
+  profileId,
+  database,
+  tableName,
+  foreignKeys,
+  availableColumns,
+  onAdd,
+  onPatch,
+  onRemove,
+}: {
+  profileId: string;
+  database: string;
+  tableName: string;
+  foreignKeys: ForeignKeyDraft[];
+  availableColumns: string[];
+  onAdd: () => void;
+  onPatch: (id: string, patch: Partial<ForeignKeyDraft>) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [databases, setDatabases] = useState<string[]>([]);
+  /** Tables per schema and columns per schema.table, filled lazily as rows
+   * point at them. Values are `null` while a fetch is in flight. */
+  const [tablesBySchema, setTablesBySchema] = useState<Record<string, string[] | null>>({});
+  const [columnsByTable, setColumnsByTable] = useState<Record<string, string[] | null>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    ipc
+      .listDatabases(profileId)
+      .then((dbs) => {
+        if (!cancelled) setDatabases(dbs);
+      })
+      .catch(() => {
+        if (!cancelled) setDatabases([database]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId, database]);
+
+  /** Fetch the table list / column list every visible row needs, once each. */
+  useEffect(() => {
+    /* Two rows can point at the same schema/table; start each fetch once. */
+    const started = new Set<string>();
+    for (const fk of foreignKeys) {
+      const schema = fk.refSchema.trim();
+      if (!schema) continue;
+      const tk = schemaKey(schema);
+      if (!(tk in tablesBySchema) && !started.has(tk)) {
+        started.add(tk);
+        setTablesBySchema((m) => ({ ...m, [tk]: null }));
+        ipc
+          .listTables(profileId, schema)
+          .then((ts) =>
+            setTablesBySchema((m) => ({ ...m, [tk]: ts.map((t) => t.name) }))
+          )
+          .catch(() => setTablesBySchema((m) => ({ ...m, [tk]: [] })));
+      }
+      const table = fk.refTable.trim();
+      if (!table) continue;
+      const ck = schemaKey(schema, table);
+      if (!(ck in columnsByTable) && !started.has(ck)) {
+        started.add(ck);
+        setColumnsByTable((m) => ({ ...m, [ck]: null }));
+        ipc
+          .listColumns(profileId, schema, table)
+          .then((cs) =>
+            setColumnsByTable((m) => ({ ...m, [ck]: cs.map((c) => c.name) }))
+          )
+          .catch(() => setColumnsByTable((m) => ({ ...m, [ck]: [] })));
+      }
+    }
+  }, [foreignKeys, profileId, tablesBySchema, columnsByTable]);
+
+  const inputClass =
+    "w-full h-8 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[12px] text-zinc-200 outline-none focus:border-accent-500";
+
+  /** Suggest a constraint name the first time a column is chosen. */
+  const withAutoName = (fk: ForeignKeyDraft, columns: string[]): Partial<ForeignKeyDraft> => {
+    const patch: Partial<ForeignKeyDraft> = { columns };
+    if (fk.name.trim() === "" && columns.length > 0) {
+      patch.name = `fk_${tableName.trim() || "table"}_${columns[0]}`;
+    }
+    return patch;
+  };
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      <div className="flex items-center gap-1 px-4 pt-3 pb-3 bg-[#2c303c]">
+        <button
+          data-el="fks-add-btn"
+          onClick={onAdd}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
+        >
+          <span className="relative -top-px text-[19px] leading-none">+</span> Add Foreign Key
+        </button>
+        <span className="ml-auto text-[11px] text-zinc-500">
+          {foreignKeys.length} foreign key{foreignKeys.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto px-3 pb-3 bg-[#2c303c]">
+        <div
+          className={clsx(
+            FK_GRID,
+            "px-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500"
+          )}
+        >
+          <span>Name</span>
+          <span>Fields</span>
+          <span>Referenced Schema</span>
+          <span>Referenced Table</span>
+          <span>Referenced Fields</span>
+          <span>On Update</span>
+          <span>On Delete</span>
+          <span />
+        </div>
+
+        {foreignKeys.length === 0 ? (
+          <div className="px-1 py-6 text-[12px] text-zinc-500">
+            No foreign keys yet — click{" "}
+            <span className="text-emerald-300">Add Foreign Key</span> to start.
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {foreignKeys.map((fk) => {
+              const schema = fk.refSchema.trim();
+              const schemaOptions = databases.includes(schema) || !schema
+                ? databases
+                : [schema, ...databases];
+              const tables = tablesBySchema[schemaKey(schema)] ?? null;
+              const refCols = fk.refTable.trim()
+                ? columnsByTable[schemaKey(schema, fk.refTable.trim())] ?? null
+                : [];
+              return (
+                <div key={fk.id} data-el="fk-row" className={clsx(FK_GRID, "px-1")}>
+                  <input
+                    data-el="fk-name"
+                    value={fk.name}
+                    onChange={(e) => onPatch(fk.id, { name: e.target.value })}
+                    placeholder="Constraint Name"
+                    className={inputClass}
+                  />
+                  <NamePicker
+                    dataEl="fk-columns"
+                    value={fk.columns}
+                    available={availableColumns}
+                    emptyHint="Add named columns first."
+                    onChange={(columns) => onPatch(fk.id, withAutoName(fk, columns))}
+                  />
+                  <select
+                    data-el="fk-ref-schema"
+                    value={fk.refSchema}
+                    onChange={(e) =>
+                      onPatch(fk.id, {
+                        refSchema: e.target.value,
+                        refTable: "",
+                        refColumns: [],
+                      })
+                    }
+                    className={inputClass}
+                  >
+                    {schemaOptions.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    data-el="fk-ref-table"
+                    value={fk.refTable}
+                    onChange={(e) =>
+                      onPatch(fk.id, { refTable: e.target.value, refColumns: [] })
+                    }
+                    className={inputClass}
+                  >
+                    <option value="">
+                      {tables === null ? "Loading…" : "Select table…"}
+                    </option>
+                    {(tables ?? []).map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                    {fk.refTable && tables && !tables.includes(fk.refTable) && (
+                      <option value={fk.refTable}>{fk.refTable}</option>
+                    )}
+                  </select>
+                  <NamePicker
+                    dataEl="fk-ref-columns"
+                    value={fk.refColumns}
+                    available={refCols ?? []}
+                    emptyHint={
+                      !fk.refTable.trim()
+                        ? "Pick a table first."
+                        : refCols === null
+                          ? "Loading…"
+                          : "No columns"
+                    }
+                    onChange={(refColumns) => onPatch(fk.id, { refColumns })}
+                  />
+                  <select
+                    data-el="fk-on-update"
+                    value={fk.onUpdate}
+                    onChange={(e) => onPatch(fk.id, { onUpdate: e.target.value as FkAction })}
+                    className={inputClass}
+                  >
+                    {FK_ACTIONS.map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    data-el="fk-on-delete"
+                    value={fk.onDelete}
+                    onChange={(e) => onPatch(fk.id, { onDelete: e.target.value as FkAction })}
+                    className={inputClass}
+                  >
+                    {FK_ACTIONS.map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex items-center justify-end">
+                    <button
+                      data-el="fk-delete"
+                      onClick={() => onRemove(fk.id)}
+                      className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-800"
+                      aria-label="Remove foreign key"
+                      title="Remove foreign key"
+                    >
+                      <Trash size={13} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Ordered list of names in one cell: chips with a remove button, plus a
+ * dropdown underneath to append the next one. Order matters — the Nth field
+ * pairs with the Nth referenced field. */
+function NamePicker({
+  dataEl,
+  value,
+  available,
+  emptyHint,
+  onChange,
+}: {
+  dataEl: string;
+  value: string[];
+  available: string[];
+  emptyHint: string;
+  onChange: (names: string[]) => void;
+}) {
+  const selected = new Set(value);
+  const addable = available.filter((c) => !selected.has(c));
+  return (
+    <div
+      data-el={dataEl}
+      className="min-h-8 rounded border border-zinc-700 bg-zinc-950 p-1 space-y-1"
+    >
+      {value.map((name, i) => (
+        <div
+          key={name}
+          className="flex items-center gap-1 rounded bg-zinc-800/70 pl-2 pr-1 py-0.5"
+        >
+          <span className="w-3 text-[10px] tabular-nums text-zinc-500">{i + 1}</span>
+          <span className="flex-1 truncate text-[12px] text-zinc-200" title={name}>
+            {name}
+          </span>
+          <button
+            type="button"
+            onClick={() => onChange(value.filter((v) => v !== name))}
+            className="flex items-center justify-center h-5 w-5 rounded text-zinc-400 hover:text-rose-300 hover:bg-zinc-700"
+            aria-label={`Remove ${name}`}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      ))}
+      {addable.length > 0 ? (
+        <select
+          value=""
+          onChange={(e) => e.target.value && onChange([...value, e.target.value])}
+          className="w-full h-6 bg-zinc-950 border border-zinc-800 rounded px-1 text-[11px] text-zinc-300 outline-none focus:border-accent-500"
+        >
+          <option value="">+ Add…</option>
+          {addable.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <div className="px-1 leading-6 text-[11px] text-zinc-600">
+          {available.length === 0 ? emptyHint : "All added"}
+        </div>
+      )}
+    </div>
   );
 }
 
