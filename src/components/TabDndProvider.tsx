@@ -10,7 +10,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Table as Table2, PlugsConnected } from "@phosphor-icons/react";
+import { Table as Table2, PlugsConnected, Tabs } from "@phosphor-icons/react";
 import { useStore } from "../state/store";
 import { useUi } from "../state/ui";
 
@@ -25,7 +25,8 @@ type DragData =
       names: string[];
     }
   | { source: "tree"; profileId: string; db: string; table: string }
-  | { source: "connection"; profileId: string; name: string };
+  | { source: "connection"; profileId: string; name: string }
+  | { source: "tab"; tabId: string; label: string };
 
 /** What a drop target advertises (read off the droppable's data). */
 type OverData =
@@ -33,7 +34,8 @@ type OverData =
   | { kind: "dbv-up" }
   | { kind: "tree-folder"; profileId: string; db: string; folderId: string }
   | { kind: "tree-db"; profileId: string; db: string }
-  | { kind: "connection-row"; profileId: string };
+  | { kind: "connection-row"; profileId: string }
+  | { kind: "tab-slot"; tabId: string };
 
 /**
  * One drag context for a window's tab content. dnd-kit hooks (`useDraggable`,
@@ -51,7 +53,7 @@ export function TabDndProvider({ children }: { children: ReactNode }) {
   const [drag, setDrag] = useState<{
     label: string;
     count: number;
-    kind: "table" | "connection";
+    kind: "table" | "connection" | "tab";
   } | null>(null);
 
   const sensors = useSensors(
@@ -65,6 +67,8 @@ export function TabDndProvider({ children }: { children: ReactNode }) {
       setDrag({ label: a.grabbed, count: a.names.length, kind: "table" });
     else if (a.source === "connection")
       setDrag({ label: a.name, count: 1, kind: "connection" });
+    else if (a.source === "tab")
+      setDrag({ label: a.label, count: 1, kind: "tab" });
     else setDrag({ label: a.table, count: 1, kind: "table" });
   };
 
@@ -73,6 +77,13 @@ export function TabDndProvider({ children }: { children: ReactNode }) {
     const a = e.active.data.current as DragData | undefined;
     const o = e.over?.data.current as OverData | undefined;
     if (!a || !o) return;
+
+    if (a.source === "tab") {
+      if (o.kind === "tab-slot" && o.tabId !== a.tabId) {
+        useStore.getState().reorderTabs(a.tabId, o.tabId);
+      }
+      return;
+    }
 
     if (a.source === "connection") {
       if (o.kind === "connection-row" && o.profileId !== a.profileId) {
@@ -131,6 +142,8 @@ export function TabDndProvider({ children }: { children: ReactNode }) {
             <div className="inline-flex items-center gap-2 rounded border border-accent-500/60 bg-zinc-900/95 px-2.5 py-1 text-xs text-zinc-100 shadow-xl shadow-black/60">
               {drag.kind === "connection" ? (
                 <PlugsConnected size={13} className="text-accent-400 shrink-0" />
+              ) : drag.kind === "tab" ? (
+                <Tabs size={13} className="text-accent-400 shrink-0" />
               ) : (
                 <Table2 size={13} className="text-accent-400 shrink-0" />
               )}

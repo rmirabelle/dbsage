@@ -408,6 +408,9 @@ interface Store {
    * declines a destructive sub-confirmation. */
   saveDesignerTab: (tabId: string) => Promise<{ ok: boolean; error?: string }>;
   setActiveTab: (tabId: string) => void;
+  /** Move a tab so it sits where `targetId` is: dragging right drops after the
+   * target, dragging left drops before it (mirrors reorderProfiles). */
+  reorderTabs: (draggedId: string, targetId: string) => void;
   setTabPage: (tabId: string, page: number) => Promise<void>;
   setPageSize: (tabId: string, pageSize: number) => Promise<void>;
   refreshTab: (tabId: string) => Promise<void>;
@@ -2275,6 +2278,18 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   setActiveTab: (tabId) => set({ activeTabId: tabId }),
+
+  reorderTabs: (draggedId, targetId) => {
+    const tabs = get().tabs;
+    const from = tabs.findIndex((t) => t.id === draggedId);
+    const to = tabs.findIndex((t) => t.id === targetId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = tabs.filter((t) => t.id !== draggedId);
+    let insertAt = next.findIndex((t) => t.id === targetId);
+    if (from < to) insertAt += 1;
+    next.splice(insertAt, 0, tabs[from]);
+    set({ tabs: next });
+  },
 
   setTabDropActive: (active) => set({ tabDropActive: active }),
 

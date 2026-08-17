@@ -4,8 +4,10 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import {
   X,
   CircleNotch as Loader2,
@@ -100,6 +102,69 @@ export function tabTitle(tab: Tab): string {
     default:
       return tab.table;
   }
+}
+
+/**
+ * Render-prop wrapper that makes a tab both draggable (to reorder tabs) and a
+ * drop target (the tab another tab lands on). Drops are handled by
+ * `TabDndProvider` (source "tab" → `reorderTabs`).
+ */
+function TabReorderSlot({
+  tabId,
+  label,
+  index,
+  children,
+}: {
+  tabId: string;
+  label: string;
+  index: number;
+  children: (p: {
+    setNodeRef: (el: HTMLElement | null) => void;
+    listeners: ReturnType<typeof useDraggable>["listeners"];
+    dropEdge: "left" | "right" | null;
+    isDragging: boolean;
+  }) => ReactNode;
+}) {
+  const tabs = useStore((s) => s.tabs);
+  const drag = useDraggable({
+    id: `tab-drag:${tabId}`,
+    data: { source: "tab", tabId, label },
+  });
+  const drop = useDroppable({
+    id: `tab-drop:${tabId}`,
+    data: { kind: "tab-slot", tabId },
+  });
+  const setNodeRef = (el: HTMLElement | null) => {
+    drag.setNodeRef(el);
+    drop.setNodeRef(el);
+  };
+
+  /* Show the insertion line on the edge the drop will land on: dragging right
+     drops after this tab, dragging left drops before it (mirrors reorderTabs). */
+  const draggedId =
+    drop.active?.data.current?.source === "tab"
+      ? (drop.active.data.current.tabId as string)
+      : null;
+  const draggedIndex = draggedId
+    ? tabs.findIndex((t) => t.id === draggedId)
+    : -1;
+  const dropEdge: "left" | "right" | null =
+    !drop.isOver || draggedIndex < 0 || draggedIndex === index
+      ? null
+      : draggedIndex < index
+        ? "right"
+        : "left";
+
+  return (
+    <>
+      {children({
+        setNodeRef,
+        listeners: drag.listeners,
+        dropEdge,
+        isDragging: drag.isDragging,
+      })}
+    </>
+  );
 }
 
 export function Tabs() {
@@ -209,26 +274,28 @@ export function Tabs() {
         )}
       >
         <div className="flex-1 flex items-stretch overflow-x-auto">
-        {tabs.map((tab) => {
+        {tabs.map((tab, index) => {
             let primary: string;
             let prefix: string | null = null;
-            let secondary: string;
+            /* Connection and database sit on separate lines so each truncates
+               on its own — a long connection name can't swallow the database. */
+            let secondaryLines: string[];
             let Icon: ComponentType<{ size?: number; className?: string }>;
             let iconColor: string;
             let dirty = false;
             if (tab.kind === "database") {
               primary = tab.database;
-              secondary = tab.profileName;
+              secondaryLines = [tab.profileName];
               Icon = Database;
               iconColor = "text-accent-400";
             } else if (tab.kind === "relations") {
               primary = "Relations";
-              secondary = `${tab.profileName} / ${tab.database}`;
+              secondaryLines = [tab.profileName, tab.database];
               Icon = ShareNetwork;
               iconColor = "text-violet-400";
             } else if (tab.kind === "query") {
               primary = "Query";
-              secondary = `${tab.profileName} / ${tab.database}`;
+              secondaryLines = [tab.profileName, tab.database];
               Icon = Code;
               iconColor = "text-emerald-400";
             } else if (tab.kind === "create-table") {
@@ -239,7 +306,7 @@ export function Tabs() {
               } else {
                 primary = tab.tableName.trim() || "New table";
               }
-              secondary = `${tab.profileName} / ${tab.database}`;
+              secondaryLines = [tab.profileName, tab.database];
               Icon = editing ? TableEditIcon : Table2;
               iconColor = "text-orange-400";
               dirty = isDesignerTabDirty(tab);
@@ -249,12 +316,14 @@ export function Tabs() {
                 tab.table === tab.right.table
                   ? tab.table
                   : `${tab.table} ⇄ ${tab.right.table}`;
-              secondary =
+              secondaryLines = [
                 tab.profileId !== tab.right.profileId
                   ? `${tab.profileName} ⇄ ${tab.right.profileName}`
-                  : tab.database !== tab.right.database
-                    ? `${tab.database} ⇄ ${tab.right.database}`
-                    : `${tab.profileName} / ${tab.database}`;
+                  : tab.profileName,
+                tab.database !== tab.right.database
+                  ? `${tab.database} ⇄ ${tab.right.database}`
+                  : tab.database,
+              ];
               Icon = GitDiff;
               iconColor = "text-amber-400";
             } else if (tab.kind === "db-diff") {
@@ -263,23 +332,32 @@ export function Tabs() {
                 tab.database === tab.right.database
                   ? tab.database
                   : `${tab.database} ⇄ ${tab.right.database}`;
-              secondary =
+              secondaryLines = [
                 tab.profileId !== tab.right.profileId
                   ? `${tab.profileName} ⇄ ${tab.right.profileName}`
-                  : tab.profileName;
+                  : tab.profileName,
+              ];
               Icon = GitDiff;
               iconColor = "text-amber-400";
             } else {
               primary = tab.table;
-              secondary = `${tab.profileName} / ${tab.database}`;
+              secondaryLines = [tab.profileName, tab.database];
               Icon = Table2;
               iconColor = "text-emerald-400";
             }
             const tableComment =
               tab.kind === "rows" ? tab.tableComment?.trim() : undefined;
             const tabEl = (
-              <div
+              <TabReorderSlot
                 key={tab.id}
+                tabId={tab.id}
+                label={tabTitle(tab)}
+                index={index}
+              >
+                {({ setNodeRef, listeners, dropEdge, isDragging }) => (
+              <div
+                ref={setNodeRef}
+                {...listeners}
                 data-el="tab"
                 onClick={() => setActiveTab(tab.id)}
                 onContextMenu={(e) => {
@@ -288,7 +366,7 @@ export function Tabs() {
                   setTabMenu({ tab, x: e.clientX, y: e.clientY });
                 }}
                 className={clsx(
-                  "group flex items-center gap-2 pl-3 pr-1.5 border-r border-r-zinc-800/60 cursor-pointer min-w-0 max-w-[260px] shrink-0",
+                  "group relative flex items-center gap-2 pl-3 pr-1.5 border-r border-r-zinc-800/60 cursor-pointer min-w-0 max-w-[260px] shrink-0",
                   tab.id === activeTabId
                     ? "bg-zinc-900 text-zinc-100"
                     : "text-zinc-400 hover:bg-zinc-900/50",
@@ -298,9 +376,18 @@ export function Tabs() {
                      bottom border isn't overridden by the right border's color. */
                   tab.id === activeTabId && tab.kind === "query"
                     ? "border-b border-b-transparent"
-                    : "border-b border-b-zinc-800/80"
+                    : "border-b border-b-zinc-800/80",
+                  isDragging && "opacity-50"
                 )}
               >
+                {dropEdge && (
+                  <div
+                    className={clsx(
+                      "pointer-events-none absolute top-0 bottom-0 z-10 w-0.5 bg-accent-400",
+                      dropEdge === "left" ? "-left-px" : "-right-px"
+                    )}
+                  />
+                )}
                 <Icon
                   size={26}
                   className={clsx(
@@ -308,10 +395,10 @@ export function Tabs() {
                     tab.id !== activeTabId && "opacity-60"
                   )}
                 />
-                <div className="min-w-0 flex flex-col leading-tight py-2.5">
+                <div className="min-w-0 flex flex-col leading-tight py-1.5">
                   <span
                     data-el="tab-title"
-                    className="text-[13px] font-semibold mb-1 flex items-baseline min-w-0"
+                    className="text-[13px] font-semibold mb-0.5 flex items-baseline min-w-0"
                   >
                     {prefix && (
                       <span className="text-[10px] text-zinc-500 font-normal uppercase mr-1 shrink-0">
@@ -329,9 +416,21 @@ export function Tabs() {
                       </span>
                     )}
                   </span>
-                  <span data-el="tab-subtitle" className="text-[10px] text-zinc-500 truncate">
-                    {secondary}
-                  </span>
+                  {secondaryLines.map((line, i) => (
+                    <span
+                      key={i}
+                      data-el="tab-subtitle"
+                      className={clsx(
+                        "text-[10px] truncate",
+                        /* First line is the connection → connection green;
+                           second line is the database → database blue. */
+                        i === 0 ? "text-lime-400" : "text-accent-400",
+                        tab.id !== activeTabId && "opacity-60"
+                      )}
+                    >
+                      {line}
+                    </span>
+                  ))}
                 </div>
                 {tab.kind !== "database" && (
                   <button
@@ -359,6 +458,8 @@ export function Tabs() {
                   <X size={14} />
                 </button>
               </div>
+                )}
+              </TabReorderSlot>
             );
             if (!tableComment) return tabEl;
             return (
