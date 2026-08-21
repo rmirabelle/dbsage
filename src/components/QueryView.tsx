@@ -7,6 +7,7 @@ import {
   CaretDown,
   Binoculars,
   BracketsCurly,
+  Funnel,
   Gauge,
   Database,
   PlugsConnected,
@@ -683,6 +684,18 @@ export function QueryView({ tab }: { tab: QueryTab }) {
               );
             })}
           </div>
+        )}
+
+        {filters.length > 0 && (
+          <button
+            data-el="clear-filters-btn"
+            onClick={() => setFilters([])}
+            title="Remove every column filter"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-amber-400 text-black hover:bg-amber-300 transition-colors"
+          >
+            <Funnel size={15} weight="fill" />
+            Clear Filters
+          </button>
         )}
 
         <div className="ml-auto">

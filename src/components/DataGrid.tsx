@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import {
   ArrowUp,
   ArrowDown,
@@ -126,6 +127,8 @@ interface Props {
 }
 
 const ROW_HEIGHT = 26;
+/** Peek windows shorter than this grow to it while a column menu is open. */
+const PEEK_MENU_MIN_HEIGHT = 520;
 const MIN_COL_WIDTH = 80;
 const MAX_INITIAL_COL_WIDTH = 360;
 const ROW_GUTTER_W = 56; // pinned row-number gutter
@@ -192,6 +195,34 @@ export function DataGrid({
   const [columnsMenu, setColumnsMenu] = useState<{ x: number; y: number } | null>(
     null
   );
+
+  /**
+   * A peek window sized down to a few rows leaves no room for the column
+   * menus (header sort/filter menu, show/hide columns list). While one is
+   * open in a too-short peek window, extend the window's bottom edge to a
+   * workable minimum height, then snap back to the previous size when the
+   * menu closes. Main/tab windows are never resized.
+   */
+  const columnMenuOpen = menu != null || columnsMenu != null;
+  useEffect(() => {
+    if (!columnMenuOpen) return;
+    const win = getCurrentWindow();
+    if (!win.label.startsWith("peek-")) return;
+    if (window.innerHeight >= PEEK_MENU_MIN_HEIGHT) return;
+    let cancelled = false;
+    let prev: { width: number; height: number } | null = null;
+    void (async () => {
+      const scale = await win.scaleFactor();
+      const size = (await win.innerSize()).toLogical(scale);
+      if (cancelled) return;
+      prev = { width: size.width, height: size.height };
+      await win.setSize(new LogicalSize(size.width, PEEK_MENU_MIN_HEIGHT));
+    })();
+    return () => {
+      cancelled = true;
+      if (prev) void win.setSize(new LogicalSize(prev.width, prev.height));
+    };
+  }, [columnMenuOpen]);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(
     () => new Set(initialSelectedRows ?? [])
   );

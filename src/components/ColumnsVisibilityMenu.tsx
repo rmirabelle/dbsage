@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Eye, EyeSlash } from "@phosphor-icons/react";
 import clsx from "clsx";
@@ -39,6 +39,16 @@ export function ColumnsVisibilityMenu({
   const ref = useRef<HTMLDivElement>(null);
   const hiddenSet = new Set(hidden);
 
+  /* Track the viewport height while open: a too-short peek window grows while
+     a column menu is open (see DataGrid), and the height cap below must follow
+     the new size or the extra room goes unused. */
+  const [viewportHeight, setViewportHeight] = useState(window.innerHeight);
+  useEffect(() => {
+    const onResize = () => setViewportHeight(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (!ref.current) return;
@@ -77,8 +87,8 @@ export function ColumnsVisibilityMenu({
      the full menu height up front — in a short window (e.g. a peek) reserving
      MENU_MAX_HEIGHT would push `top` to the corner and detach the menu. Instead
      cap the height to whatever space is left below the anchor. */
-  const top = Math.max(8, Math.min(window.innerHeight - 60, anchor.y));
-  const maxHeight = Math.min(MENU_MAX_HEIGHT, window.innerHeight - top - 8);
+  const top = Math.max(8, Math.min(viewportHeight - 60, anchor.y));
+  const maxHeight = Math.min(MENU_MAX_HEIGHT, viewportHeight - top - 8);
 
   return createPortal(
     <div

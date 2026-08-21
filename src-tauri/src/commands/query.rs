@@ -1,4 +1,7 @@
-use crate::db::mysql::{get_opt_string, get_string, quote_ident, result_columns, row_to_json};
+use crate::db::mysql::{
+    disambiguate, get_opt_string, get_string, quote_ident, result_columns, row_to_json,
+    row_to_json_named,
+};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use futures_util::TryStreamExt;
@@ -6,7 +9,7 @@ use mysql_async::prelude::Queryable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::mysql::MySqlRow;
-use sqlx::{Either, Executor, MySqlPool, Row};
+use sqlx::{Column, Either, Executor, MySqlPool, Row};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -1555,8 +1558,9 @@ pub async fn execute_query(
            result set, then one completion marker (Left) per statement. Split on
            the markers so every statement becomes its own StatementResult —
            flattening them under the first statement's columns renders every
-           later set as nulls. */
-        let mut results: Vec<StatementResult> = Vec::new();
+           later set as nulls. Raw rows are kept until the stream ends so
+           duplicate column names can be resolved first (see below). */
+        let mut raw: Vec<(Vec<MySqlRow>, u64, bool)> = Vec::new();
         let mut pending: Vec<MySqlRow> = Vec::new();
         {
             let mut stream = (&mut *conn).fetch_many(sql.as_str());
@@ -1564,7 +1568,7 @@ pub async fn execute_query(
                 match item {
                     Either::Left(res) => {
                         let rows = std::mem::take(&mut pending);
-                        results.push(statement_result(rows, res.rows_affected(), false));
+                        raw.push((rows, res.rows_affected(), false));
                     }
                     Either::Right(row) => {
                         /* Stop once this set has collected the cap. Seeing one
@@ -1573,11 +1577,7 @@ pub async fn execute_query(
                            statements after this one don't run). */
                         if let Some(cap) = max_rows {
                             if pending.len() as u32 >= cap {
-                                results.push(statement_result(
-                                    std::mem::take(&mut pending),
-                                    0,
-                                    true,
-                                ));
+                                raw.push((std::mem::take(&mut pending), 0, true));
                                 break;
                             }
                         }
@@ -1587,9 +1587,29 @@ pub async fn execute_query(
             }
         }
         if !pending.is_empty() {
-            results.push(statement_result(pending, 0, false));
+            raw.push((pending, 0, false));
         }
         let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        /* A single-statement run whose result repeats a column name (SELECT *
+           over a JOIN where several tables have `id`) gets its repeats labeled
+           "table.name" via a metadata lookup; anything else (multi-statement
+           scripts, lookup failure) falls back to "name (2)" suffixes. */
+        let mut names: Option<Vec<String>> = None;
+        if raw.len() == 1 {
+            if let Some(first) = raw[0].0.first() {
+                if has_duplicate_names(first) {
+                    names =
+                        table_prefixed_names(&app, &profile_id, &database, &sql, first).await;
+                }
+            }
+        }
+        let results: Vec<StatementResult> = raw
+            .into_iter()
+            .map(|(rows, affected, truncated)| {
+                statement_result(rows, affected, truncated, names.take())
+            })
+            .collect();
 
         Ok(QueryResult {
             results,
@@ -1613,23 +1633,34 @@ pub async fn execute_query(
 /// Package one statement's collected rows as a StatementResult. A statement
 /// that produced no rows is reported via its affected-row count (an empty
 /// SELECT is indistinguishable from DDL at this layer and shows as 0 affected).
-fn statement_result(rows: Vec<MySqlRow>, affected: u64, truncated: bool) -> StatementResult {
-    let columns: Vec<ColumnInfo> = rows
-        .first()
-        .map(|r| {
-            result_columns(r)
-                .into_iter()
-                .map(|(name, data_type)| ColumnInfo {
-                    name,
-                    data_type,
-                    nullable: true,
-                    key: String::new(),
-                    comment: String::new(),
-                })
-                .collect()
+/// `names`, when given (and matching the column count), overrides the display
+/// names for both the column list and the row-object keys.
+fn statement_result(
+    rows: Vec<MySqlRow>,
+    affected: u64,
+    truncated: bool,
+    names: Option<Vec<String>>,
+) -> StatementResult {
+    let base = rows.first().map(result_columns).unwrap_or_default();
+    let names = names.filter(|n| n.len() == base.len());
+    let columns: Vec<ColumnInfo> = base
+        .into_iter()
+        .enumerate()
+        .map(|(i, (name, data_type))| ColumnInfo {
+            name: names.as_ref().map(|n| n[i].clone()).unwrap_or(name),
+            data_type,
+            nullable: true,
+            key: String::new(),
+            comment: String::new(),
         })
-        .unwrap_or_default();
-    let json_rows: Vec<Value> = rows.iter().map(row_to_json).collect();
+        .collect();
+    let json_rows: Vec<Value> = rows
+        .iter()
+        .map(|r| match &names {
+            Some(n) => row_to_json_named(r, n),
+            None => row_to_json(r),
+        })
+        .collect();
     let had_rows = !json_rows.is_empty();
     StatementResult {
         columns,
@@ -1637,6 +1668,74 @@ fn statement_result(rows: Vec<MySqlRow>, affected: u64, truncated: bool) -> Stat
         rows_affected: if had_rows { None } else { Some(affected) },
         truncated,
     }
+}
+
+/// True when the result row repeats a column name (e.g. `SELECT *` over a JOIN
+/// where several tables have an `id`).
+fn has_duplicate_names(row: &MySqlRow) -> bool {
+    let mut seen = HashSet::new();
+    row.columns().iter().any(|c| !seen.insert(c.name()))
+}
+
+/**
+ * Resolve display names for a duplicate-named result set by preparing the
+ * statement on a dedicated metadata connection: the prepare response reports
+ * each column's source table (the alias, when the query aliases one), which
+ * sqlx result rows do not expose. Only repeated names get the "table.name"
+ * prefix; unique columns keep their bare name. Returns None — callers fall
+ * back to "name (2)" suffixes — when the password lookup, connect, or prepare
+ * fails (e.g. statements the prepared protocol rejects), or when the prepared
+ * metadata doesn't line up with the executed result.
+ */
+async fn table_prefixed_names(
+    app: &AppHandle,
+    profile_id: &str,
+    database: &str,
+    sql: &str,
+    first_row: &MySqlRow,
+) -> Option<Vec<String>> {
+    if database.trim().is_empty() {
+        return None;
+    }
+    let profile = crate::store::profiles::get(app, profile_id).ok()?;
+    let password = crate::store::secrets::get_password(profile_id).ok()??;
+    let opts = copy_dest_opts(&profile, &password, database);
+    let mut conn = mysql_async::Conn::new(opts).await.ok()?;
+    let meta_columns = match conn.prep(sql).await {
+        Ok(stmt) => stmt.columns().to_vec(),
+        Err(_) => {
+            let _ = conn.disconnect().await;
+            return None;
+        }
+    };
+    let _ = conn.disconnect().await;
+
+    let cols = first_row.columns();
+    if meta_columns.len() != cols.len() {
+        return None;
+    }
+    let mut counts: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+    for c in cols {
+        *counts.entry(c.name()).or_insert(0) += 1;
+    }
+    let mut out: Vec<String> = Vec::with_capacity(cols.len());
+    for (i, c) in cols.iter().enumerate() {
+        let base = c.name();
+        if meta_columns[i].name_str() != base {
+            return None;
+        }
+        let table = meta_columns[i].table_str();
+        let name = if counts[base] > 1 && !table.is_empty() {
+            format!("{table}.{base}")
+        } else {
+            base.to_string()
+        };
+        /* Prefixing can still collide (e.g. `SELECT id, id FROM t` — same
+           table twice); suffix those the usual way. */
+        let name = disambiguate(&name, |n| out.iter().any(|o| o == n));
+        out.push(name);
+    }
+    Some(out)
 }
 
 #[derive(Debug, Serialize)]

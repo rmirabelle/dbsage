@@ -69,24 +69,59 @@ pub fn get_opt_string(row: &MySqlRow, i: usize) -> Option<String> {
 }
 
 /// Decode a MySQL row into a JSON object, mapping column types to portable JSON values.
+/// Duplicate column names (e.g. `SELECT *` over a JOIN where both tables have `id`)
+/// are disambiguated the same way `result_columns` does, so no value is silently
+/// overwritten and every column header finds its value in the row object.
 pub fn row_to_json(row: &MySqlRow) -> Value {
     let mut obj = serde_json::Map::with_capacity(row.columns().len());
     for (i, col) in row.columns().iter().enumerate() {
-        let name = col.name().to_string();
+        let name = disambiguate(col.name(), |n| obj.contains_key(n));
         let value = decode_column(row, i, col.type_info().name());
         obj.insert(name, value);
     }
     Value::Object(obj)
 }
 
+/// Decode a MySQL row into a JSON object keyed by the given display names
+/// (one per column, in column order). Used when the caller has resolved
+/// duplicate column names itself (e.g. "table.name" labels for a JOIN).
+pub fn row_to_json_named(row: &MySqlRow, names: &[String]) -> Value {
+    let mut obj = serde_json::Map::with_capacity(names.len());
+    for (i, col) in row.columns().iter().enumerate() {
+        let value = decode_column(row, i, col.type_info().name());
+        obj.insert(names[i].clone(), value);
+    }
+    Value::Object(obj)
+}
+
 /// Derive display columns (name, SQL type name) from an arbitrary result row.
 /// Used by the ad-hoc query runner, which has no INFORMATION_SCHEMA metadata to
-/// describe the columns of a free-form result set.
+/// describe the columns of a free-form result set. Duplicate names become
+/// "name (2)", "name (3)", ... — matching `row_to_json`, which walks the same
+/// columns in the same order.
 pub fn result_columns(row: &MySqlRow) -> Vec<(String, String)> {
-    row.columns()
-        .iter()
-        .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
-        .collect()
+    let mut out: Vec<(String, String)> = Vec::with_capacity(row.columns().len());
+    for c in row.columns() {
+        let name = disambiguate(c.name(), |n| out.iter().any(|(taken, _)| taken == n));
+        out.push((name, c.type_info().name().to_string()));
+    }
+    out
+}
+
+/// Return `name` unchanged when free, otherwise the first free "name (2)",
+/// "name (3)", ... per the caller's `taken` predicate.
+pub fn disambiguate(name: &str, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(name) {
+        return name.to_string();
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{name} ({n})");
+        if !taken(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 fn decode_column(row: &MySqlRow, i: usize, ty: &str) -> Value {
