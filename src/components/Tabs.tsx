@@ -33,7 +33,6 @@ import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { useStore, isDesignerTabDirty } from "../state/store";
-import type { DuplicateConflict } from "../state/store";
 import { useUi } from "../state/ui";
 import { notifyError, notifySuccess } from "../state/notify";
 import { helpHandlers } from "../state/help";
@@ -54,7 +53,7 @@ import { Tooltip } from "./Tooltip";
 import appIconLarge from "../assets/app-icon-large.png";
 import { ipc } from "../ipc";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
-import { useRelationsMenuLayer } from "../lib/useRelationsMenuLayer";
+import { useNativeMenuLayer } from "../lib/useNativeMenuLayer";
 import type {
   CascadeTarget,
   PeekSeed,
@@ -610,9 +609,9 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const updateCell = useStore((s) => s.updateCell);
   const updateCells = useStore((s) => s.updateCells);
   const insertRow = useStore((s) => s.insertRow);
+  const insertRows = useStore((s) => s.insertRows);
   const deleteRows = useStore((s) => s.deleteRows);
   const clearRowsFilters = useStore((s) => s.clearRowsFilters);
-  const duplicateRows = useStore((s) => s.duplicateRows);
   const openTableEditor = useStore((s) => s.openTableEditor);
   const loadRelations = useStore((s) => s.loadRelations);
   const setRowsActiveCell = useStore((s) => s.setRowsActiveCell);
@@ -633,22 +632,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const setExpanded = (open: boolean) => setTabInspectorOpen(tab.id, open);
   const [insertOpen, setInsertOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  /** Rows whose duplicate hit a unique/PK conflict, awaiting edit-and-retry.
-   * Shown one at a time; submitting or cancelling advances to the next. */
-  const [dupQueue, setDupQueue] = useState<DuplicateConflict[]>([]);
-
-  const handleDuplicateRows = async (indices: number[]) => {
-    const { okCount, conflicts, errors } = await duplicateRows(tab.id, indices);
-    if (okCount > 0) {
-      notifySuccess(
-        `Duplicated ${okCount} row${okCount === 1 ? "" : "s"} in "${tab.table}"`
-      );
-    }
-    for (const message of errors) {
-      notifyError(`Couldn't duplicate a row: ${message}`);
-    }
-    if (conflicts.length > 0) setDupQueue(conflicts);
-  };
   const [picker, setPicker] = useState<{
     x: number;
     y: number;
@@ -673,7 +656,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     8,
     pickerRef
   );
-  useRelationsMenuLayer(picker !== null);
+  useNativeMenuLayer(picker !== null);
 
   /** The relation menu never blocks interaction with a backdrop. Dismiss it on
    * left-click outside, any key, or scrolling; right-clicks on grid cells are
@@ -974,13 +957,13 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           )}
         </button>
 
-        {tab.filters.length > 0 && (
+        {(tab.filters.length > 0 || tab.hiddenColumns.length > 0) && (
           <button
             data-el="clear-filters-btn"
             onClick={() => clearRowsFilters(tab.id)}
             disabled={tab.loading}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-amber-400 text-black hover:bg-amber-300 transition-colors disabled:opacity-40"
-            {...helpHandlers("Remove every column filter")}
+            {...helpHandlers("Remove every filter and show all columns")}
           >
             <Funnel size={15} weight="fill" />
             Clear Filters
@@ -1050,6 +1033,10 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onCellContextMenu={(cell) => {
             void openRelationsMenu(cell);
           }}
+          onCellCopyMenuOpen={() => {
+            pickerRequestRef.current += 1;
+            setPicker(null);
+          }}
           onColumnWidthsChange={(w) => setColumnWidths(tab.id, w)}
           onSortChange={(sort) => setRowsSort(tab.id, sort)}
           onFilterChange={(column, filter) =>
@@ -1070,6 +1057,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             await updateCells(tab.id, edits);
             if (cell) requestAnimationFrame(() => setActiveCell(cell));
           }}
+          onInsertRows={(rows) => insertRows(tab.id, rows)}
           onDeleteRows={
             hasPrimaryKey
               ? (indices, cascade) =>
@@ -1077,7 +1065,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
               : undefined
           }
           onCascadePreview={hasPrimaryKey ? previewCascade : undefined}
-          onDuplicateRows={hasPrimaryKey ? handleDuplicateRows : undefined}
+          canDuplicateRows={hasPrimaryKey}
         />
       ) : (
         <div className="flex-1" />
@@ -1181,51 +1169,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           table={tab.table}
           onClose={() => setImportOpen(false)}
           onImported={() => refreshTab(tab.id)}
-        />
-      )}
-
-      {dupQueue.length > 0 && (
-        <InsertRowDialog
-          key={dupQueue.length}
-          profileId={tab.profileId}
-          database={tab.database}
-          table={tab.table}
-          heading={
-            dupQueue.length > 1
-              ? `Duplicate row (${dupQueue.length} conflicts left)`
-              : "Duplicate row"
-          }
-          submitText="Insert copy"
-          seed={dupQueue[0].seed}
-          validate={async (values) => {
-            const conflicts = await ipc.checkRowConflicts({
-              profileId: tab.profileId,
-              database: tab.database,
-              table: tab.table,
-              values,
-            });
-            if (conflicts.length === 0) return null;
-            const columns = conflicts.flatMap((c) => c.columns);
-            const groups = conflicts.map((c) =>
-              c.columns.length === 1
-                ? `"${c.columns[0]}"`
-                : `(${c.columns.map((x) => `"${x}"`).join(", ")})`
-            );
-            const message =
-              `A row already exists with the same ${groups.join(" and ")}. ` +
-              `Change at least one highlighted value${
-                conflicts.length > 1 ? " in each group" : ""
-              } to insert a copy.`;
-            return { columns, message };
-          }}
-          onSubmit={async (values) => {
-            await insertRow(tab.id, values);
-            notifySuccess(`Duplicated a row into "${tab.table}"`);
-          }}
-          onClose={() => setDupQueue((q) => q.slice(1))}
-          onAbort={
-            dupQueue.length > 1 ? () => setDupQueue([]) : undefined
-          }
         />
       )}
 

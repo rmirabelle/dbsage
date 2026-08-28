@@ -15,6 +15,7 @@ import {
   Key,
   Trash,
   Copy,
+  XCircle,
   BracketsCurly,
   FileCsv,
   MicrosoftExcelLogo,
@@ -34,6 +35,7 @@ import { ColumnsVisibilityMenu } from "./ColumnsVisibilityMenu";
 import { RowDeleteConfirmDialog } from "./RowDeleteConfirmDialog";
 import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
+import { useNativeMenuLayer } from "../lib/useNativeMenuLayer";
 import {
   buildCopyText,
   buildResultCopyText,
@@ -60,12 +62,17 @@ interface Props {
   onHiddenColumnsChange: (hidden: string[]) => void;
   onJsonShow: (column: string, path: string | null) => void;
   onCellEdit: (rowIndex: number, column: string, value: string | null) => Promise<void>;
-  /** Commits a batch cell-edit session (type-to-overwrite or paste): one value
-   * per row, all in a single column. The host should apply every UPDATE and
-   * reload the page once. Absent = typing/paste editing disabled (read-only
-   * grids still get cell selection and copy). */
+  /** Commits a batch cell-edit session (type-to-overwrite or rectangular
+   * paste). The host should apply every UPDATE and reload the page once.
+   * Absent = typing/paste editing disabled (read-only grids still get cell
+   * selection and copy). */
   onBatchEdit?: (
     edits: { rowIndex: number; column: string; value: string | null }[]
+  ) => Promise<void>;
+  /** Append rows containing only the selected columns. Omitted columns use
+   * their database defaults, matching the regular Insert Row flow. */
+  onInsertRows?: (
+    rows: { column: string; value: string | null }[][]
   ) => Promise<void>;
   /** When true, selecting a row clears the active (highlighted) cell. */
   clearActiveCellOnRowSelect?: boolean;
@@ -99,9 +106,9 @@ interface Props {
    * (targets with matching rows only). Absent = the delete confirmation offers
    * no cascade option. */
   onCascadePreview?: (indices: number[]) => Promise<CascadeTarget[]>;
-  /** When set, the row-gutter context menu shows a Duplicate item. The host
-   * performs the copy and owns all result messaging (success/conflict/error). */
-  onDuplicateRows?: (indices: number[]) => Promise<void>;
+  /** Show Duplicate in the row-gutter context menu. Duplicates are staged as
+   * local draft rows and use `onInsertRows` only when the user presses Enter. */
+  canDuplicateRows?: boolean;
   /** Column names that participate in a relation — marked with the relation icon
    * in their header to signal a peek can be launched from them. */
   peekableColumns?: Set<string>;
@@ -117,6 +124,9 @@ interface Props {
     x: number;
     y: number;
   }) => void;
+  /** Lets the host dismiss its single-cell menu when a rectangular Copy menu
+   * takes over the same right-click gesture. */
+  onCellCopyMenuOpen?: () => void;
 }
 
 const ROW_HEIGHT = 26;
@@ -145,6 +155,36 @@ interface MenuAnchor {
   y: number;
 }
 
+interface CellPoint {
+  rowIndex: number;
+  column: string;
+}
+
+interface CellRange {
+  anchor: CellPoint;
+  focus: CellPoint;
+}
+
+interface ResolvedCellRange {
+  rows: number[];
+  columns: string[];
+}
+
+interface DraftRow {
+  id: number;
+  /** Missing key = omitted from INSERT, so the database supplies its default. */
+  values: Partial<Record<string, string | null>>;
+}
+
+interface DraftBatch {
+  afterRowIndex: number;
+  rows: DraftRow[];
+}
+
+type DisplayRow =
+  | { kind: "stored"; sourceIndex: number; row: RowRecord }
+  | { kind: "draft"; draft: DraftRow };
+
 export function DataGrid({
   columns,
   rows,
@@ -161,6 +201,7 @@ export function DataGrid({
   onJsonShow,
   onCellEdit,
   onBatchEdit,
+  onInsertRows,
   clearActiveCellOnRowSelect = false,
   readOnly = false,
   onSelectionChange,
@@ -171,10 +212,11 @@ export function DataGrid({
   resultCopy = false,
   onDeleteRows,
   onCascadePreview,
-  onDuplicateRows,
+  canDuplicateRows = false,
   peekableColumns,
   hideValueTooltip = false,
   onCellContextMenu,
+  onCellCopyMenuOpen,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [widths, setWidths] = useState<number[]>([]);
@@ -184,6 +226,12 @@ export function DataGrid({
     y: number;
     indices: number[];
   } | null>(null);
+  const [cellCopyMenu, setCellCopyMenu] = useState<{
+    x: number;
+    y: number;
+    selection: ResolvedCellRange;
+  } | null>(null);
+  useNativeMenuLayer(cellCopyMenu !== null);
   const [columnsMenu, setColumnsMenu] = useState<{ x: number; y: number } | null>(
     null
   );
@@ -226,22 +274,24 @@ export function DataGrid({
     null
   );
   const [saving, setSaving] = useState(false);
-  /** Excel-like cell selection: a set of rows within ONE column. Independent
-   * of row selection (gutter) — starting one clears the other. */
-  const [cellSel, setCellSel] = useState<{
-    column: string;
-    rows: Set<number>;
-  } | null>(null);
-  const [cellAnchor, setCellAnchor] = useState<number | null>(null);
+  /** Excel-like rectangular cell selection. Independent of row selection
+   * (gutter) — starting one clears the other. */
+  const [cellSel, setCellSel] = useState<CellRange | null>(null);
   const cellDraggingRef = useRef(false);
   /** A pending multi-cell edit session. "type" mirrors one live text into every
    * selected cell; "paste" stages one clipboard line per cell. Enter commits
    * (via onBatchEdit), Esc reverts — nothing touches the DB until commit. */
   const [batch, setBatch] = useState<
-    | { mode: "type"; column: string; rows: number[]; text: string }
-    | { mode: "paste"; column: string; rows: number[]; values: string[] }
+    | { mode: "type"; cells: CellPoint[]; text: string }
+    | {
+        mode: "paste";
+        edits: { rowIndex: number; column: string; value: string | null }[];
+      }
     | null
   >(null);
+  const draftIdRef = useRef(0);
+  const [draftBatch, setDraftBatch] = useState<DraftBatch | null>(null);
+  const [draftSaving, setDraftSaving] = useState(false);
 
   const hasPrimaryKey = useMemo(
     () => columns.some((c) => c.key === "PRI"),
@@ -255,6 +305,53 @@ export function DataGrid({
     const hidden = new Set(hiddenColumns);
     return columns.filter((c) => !hidden.has(c.name));
   }, [columns, hiddenColumns]);
+
+  const resolvedCellSel = useMemo<ResolvedCellRange | null>(() => {
+    if (!cellSel) return null;
+    const anchorColumn = visibleColumns.findIndex(
+      (c) => c.name === cellSel.anchor.column
+    );
+    const focusColumn = visibleColumns.findIndex(
+      (c) => c.name === cellSel.focus.column
+    );
+    if (anchorColumn < 0 || focusColumn < 0) return { rows: [], columns: [] };
+
+    const [rowLo, rowHi] =
+      cellSel.anchor.rowIndex <= cellSel.focus.rowIndex
+        ? [cellSel.anchor.rowIndex, cellSel.focus.rowIndex]
+        : [cellSel.focus.rowIndex, cellSel.anchor.rowIndex];
+    const [columnLo, columnHi] =
+      anchorColumn <= focusColumn
+        ? [anchorColumn, focusColumn]
+        : [focusColumn, anchorColumn];
+    return {
+      rows: Array.from({ length: rowHi - rowLo + 1 }, (_, i) => rowLo + i),
+      columns: visibleColumns.slice(columnLo, columnHi + 1).map((c) => c.name),
+    };
+  }, [cellSel, visibleColumns]);
+
+  const displayRows = useMemo<DisplayRow[]>(() => {
+    if (!draftBatch) {
+      return rows.map((row, sourceIndex) => ({
+        kind: "stored" as const,
+        sourceIndex,
+        row,
+      }));
+    }
+    const out: DisplayRow[] = [];
+    rows.forEach((row, sourceIndex) => {
+      out.push({ kind: "stored", sourceIndex, row });
+      if (sourceIndex === draftBatch.afterRowIndex) {
+        out.push(
+          ...draftBatch.rows.map((draft) => ({
+            kind: "draft" as const,
+            draft,
+          }))
+        );
+      }
+    });
+    return out;
+  }, [rows, draftBatch]);
 
   /* Stable identity for the visible column set (names + order). */
   const columnKey = useMemo(
@@ -311,9 +408,21 @@ export function DataGrid({
     setAnchor(null);
     setEditing(null);
     setCellSel(null);
-    setCellAnchor(null);
     setBatch(null);
   }, [viewKey]);
+
+  /* Draft rows survive hide/show-column changes so a required hidden column
+     can be revealed and completed. Page/sort/filter/schema changes cancel the
+     local draft batch because its insertion point would no longer be stable. */
+  const draftViewKey = `${columns.map((column) => column.name).join(" ")}|${offset}|${JSON.stringify(
+    sort
+  )}|${JSON.stringify(filters)}`;
+  const draftClearGuardRef = useRef(draftViewKey);
+  useEffect(() => {
+    if (draftClearGuardRef.current === draftViewKey) return;
+    draftClearGuardRef.current = draftViewKey;
+    setDraftBatch(null);
+  }, [draftViewKey]);
 
   useEffect(() => {
     const onUp = () => {
@@ -348,7 +457,6 @@ export function DataGrid({
     if (batch) cancelBatch();
     if (cellSel) {
       setCellSel(null);
-      setCellAnchor(null);
     }
     if (clearActiveCellOnRowSelect && activeCell) onActiveCellChange(null);
     if (e.shiftKey) {
@@ -383,23 +491,6 @@ export function DataGrid({
     draggingRef.current = true;
   };
 
-  const selectCellRange = (
-    column: string,
-    from: number,
-    to: number,
-    additive = false
-  ) => {
-    const [lo, hi] = from < to ? [from, to] : [to, from];
-    setCellSel((prev) => {
-      const rowsSet =
-        additive && prev && prev.column === column
-          ? new Set(prev.rows)
-          : new Set<number>();
-      for (let i = lo; i <= hi; i++) rowsSet.add(i);
-      return { column, rows: rowsSet };
-    });
-  };
-
   const handleCellMouseDown = (
     rowIndex: number,
     column: string,
@@ -411,97 +502,224 @@ export function DataGrid({
       setSelectedRows(new Set());
       setAnchor(null);
     }
-    onActiveCellChange({ rowIndex, column });
-    if (e.shiftKey && cellSel?.column === column && cellAnchor != null) {
-      selectCellRange(column, cellAnchor, rowIndex, e.ctrlKey || e.metaKey);
+    const point = { rowIndex, column };
+    onActiveCellChange(point);
+    if ((e.shiftKey || e.ctrlKey || e.metaKey) && cellSel) {
+      setCellSel({ anchor: cellSel.anchor, focus: point });
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && cellSel?.column === column) {
-      setCellSel((prev) => {
-        if (!prev) return { column, rows: new Set([rowIndex]) };
-        const next = new Set(prev.rows);
-        if (next.has(rowIndex)) next.delete(rowIndex);
-        else next.add(rowIndex);
-        return { column, rows: next };
-      });
-      setCellAnchor(rowIndex);
-      return;
-    }
-    setCellSel({ column, rows: new Set([rowIndex]) });
-    setCellAnchor(rowIndex);
+    setCellSel({ anchor: point, focus: point });
     cellDraggingRef.current = true;
   };
 
+  const handleCellMouseEnter = (rowIndex: number, column: string) => {
+    if (!cellDraggingRef.current) return;
+    const focus = { rowIndex, column };
+    setCellSel((current) =>
+      current ? { anchor: current.anchor, focus } : null
+    );
+    onActiveCellChange(focus);
+  };
+
   const handleRowMouseEnter = (index: number) => {
-    /* A cell drag extends the cell selection down its anchor column no matter
-       which column the pointer is over — the selection is single-column. */
-    if (cellDraggingRef.current && cellSel && cellAnchor != null) {
-      selectCellRange(cellSel.column, cellAnchor, index);
-      return;
-    }
     if (!draggingRef.current || anchor === null) return;
     extendSelection(anchor, index);
   };
 
   /** The cell selection used by copy / paste / type-to-edit: the explicit
-   * selection, else the active cell as a one-cell selection. Rows ascending. */
-  const effCellSel = (): { column: string; rows: number[] } | null => {
-    if (cellSel && cellSel.rows.size > 0)
-      return {
-        column: cellSel.column,
-        rows: [...cellSel.rows].sort((a, b) => a - b),
-      };
+   * selection, else the active cell as a one-cell selection. */
+  const effCellSel = (): ResolvedCellRange | null => {
+    if (
+      resolvedCellSel &&
+      resolvedCellSel.rows.length > 0 &&
+      resolvedCellSel.columns.length > 0
+    )
+      return resolvedCellSel;
     if (activeCell)
-      return { column: activeCell.column, rows: [activeCell.rowIndex] };
+      return { columns: [activeCell.column], rows: [activeCell.rowIndex] };
     return null;
   };
 
   const copySelectedCells = async () => {
     const sel = effCellSel();
     if (!sel) return;
-    const text = sel.rows
-      .map((i) => cellToText(rows[i]?.[sel.column]))
-      .join("\r\n");
+    const text = selectionTsv(rows, sel);
     try {
       await navigator.clipboard.writeText(text);
+      const count = sel.rows.length * sel.columns.length;
       notifySuccess(
-        `Copied ${sel.rows.length} cell${sel.rows.length === 1 ? "" : "s"}`
+        `Copied ${count} cell${count === 1 ? "" : "s"}`
       );
     } catch {
       notifyError("Could not copy to the clipboard");
     }
   };
 
-  /** Guard shared by both batch modes: resolves the target column and rejects
-   * primary keys (one value across N rows would collide; even single-cell
-   * batch edits are routed to the double-click editor's explicit warning). */
-  const batchTargetColumn = (sel: {
-    column: string;
-    rows: number[];
-  }): ColumnInfo | null => {
-    const col = visibleColumns.find((c) => c.name === sel.column);
-    if (!col) return null;
-    if (col.key === "PRI") {
+  const copyCellSelection = async (
+    selection: ResolvedCellRange,
+    format: "Tab-delimited" | "JSON"
+  ) => {
+    setCellCopyMenu(null);
+    const text =
+      format === "JSON"
+        ? selectionJson(rows, selection)
+        : selectionTsv(rows, selection);
+    try {
+      await navigator.clipboard.writeText(text);
+      notifySuccess(
+        `Copied ${selection.rows.length} row${
+          selection.rows.length === 1 ? "" : "s"
+        }, ${selection.columns.length} column${
+          selection.columns.length === 1 ? "" : "s"
+        } as ${format}`
+      );
+    } catch {
+      notifyError("Could not copy to the clipboard");
+    }
+  };
+
+  const stageRowsAsDrafts = (rowIndices: number[], columnNames: string[]) => {
+    setCellCopyMenu(null);
+    setRowMenu(null);
+    if (!onInsertRows) return;
+    if (draftBatch) {
+      notifyError("Commit or cancel the current new rows first.");
+      return;
+    }
+    const drafts = rowIndices
+      .map((rowIndex) => rows[rowIndex])
+      .filter((row): row is RowRecord => row != null)
+      .map((row) => {
+        const values: DraftRow["values"] = {};
+        for (const column of columnNames) {
+          const info = columns.find((candidate) => candidate.name === column);
+          if (info && !isServerGenerated(info)) {
+            values[column] = cellToInsertValue(row[column]);
+          }
+        }
+        return { id: ++draftIdRef.current, values };
+      });
+    if (drafts.length === 0) return;
+    const afterRowIndex = Math.max(...rowIndices);
+    setBatch(null);
+    setEditing(null);
+    setDraftBatch({ afterRowIndex, rows: drafts });
+    requestAnimationFrame(() => {
+      rowVirtualizer.scrollToIndex(afterRowIndex + 1, { align: "center" });
+    });
+  };
+
+  const stageSelectionAsRows = (selection: ResolvedCellRange) => {
+    stageRowsAsDrafts(selection.rows, selection.columns);
+  };
+
+  const updateDraftCell = (
+    draftId: number,
+    column: string,
+    value: string | null
+  ) => {
+    setDraftBatch((current) =>
+      current
+        ? {
+            ...current,
+            rows: current.rows.map((draft) =>
+              draft.id === draftId
+                ? { ...draft, values: { ...draft.values, [column]: value } }
+                : draft
+            ),
+          }
+        : null
+    );
+  };
+
+  const cancelDraftRows = () => {
+    if (draftSaving) return;
+    setDraftBatch(null);
+    scrollRef.current?.focus();
+  };
+
+  const commitDraftRows = async () => {
+    if (!draftBatch || !onInsertRows || draftSaving) return;
+    const inserts = draftBatch.rows.map((draft) =>
+      Object.entries(draft.values)
+        .filter(([column]) => {
+          const info = columns.find((candidate) => candidate.name === column);
+          return !info || !isServerGenerated(info);
+        })
+        .map(([column, value]) => {
+          const info = columns.find((candidate) => candidate.name === column);
+          return {
+            column,
+            value: value === "" && info?.nullable ? null : value ?? null,
+          };
+        })
+    );
+    setDraftSaving(true);
+    try {
+      await onInsertRows(inserts);
+      setDraftBatch(null);
+      notifySuccess(
+        `Appended ${inserts.length} new row${inserts.length === 1 ? "" : "s"}`
+      );
+    } catch (e) {
+      notifyError(`Could not commit new rows: ${String(e)}`);
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
+  const stageSelectionNull = (selection: ResolvedCellRange) => {
+    setCellCopyMenu(null);
+    if (!canBatchEdit) return;
+    const notNullable = selection.columns.filter(
+      (name) => !columns.find((column) => column.name === name)?.nullable
+    );
+    if (notNullable.length > 0) {
+      notifyError(
+        `Cannot set non-nullable column${notNullable.length === 1 ? "" : "s"} to NULL: ${notNullable.join(", ")}`
+      );
+      return;
+    }
+    if (!validateBatchColumns(selection.columns)) return;
+    const edits = selection.rows.flatMap((rowIndex) =>
+      selection.columns.map((column) => ({
+        rowIndex,
+        column,
+        value: null,
+      }))
+    );
+    setBatch({ mode: "paste", edits });
+  };
+
+  /** Batch operations reject primary-key targets; direct PK editing remains
+   * available through the guarded double-click editor. */
+  const validateBatchColumns = (columnNames: string[]): boolean => {
+    const targetColumns = columnNames
+      .map((name) => visibleColumns.find((c) => c.name === name))
+      .filter((c): c is ColumnInfo => c != null);
+    if (targetColumns.length !== columnNames.length) return false;
+    if (targetColumns.some((c) => c.key === "PRI")) {
       notifyError(
         "Primary-key columns can't be batch-edited — double-click a cell to edit it."
       );
-      return null;
+      return false;
     }
-    return col;
+    return true;
   };
 
   const beginTypeSession = (initial: string) => {
     const sel = effCellSel();
-    if (!sel || !canBatchEdit || !batchTargetColumn(sel)) return;
-    /* Sync the visible selection with the session so the preview and the
-       commit target the same cells (covers the active-cell-only fallback). */
-    setCellSel({ column: sel.column, rows: new Set(sel.rows) });
-    setBatch({ mode: "type", column: sel.column, rows: sel.rows, text: initial });
+    if (!sel || !canBatchEdit) return;
+    if (!validateBatchColumns(sel.columns)) return;
+    const cells = sel.rows.flatMap((rowIndex) =>
+      sel.columns.map((column) => ({ rowIndex, column }))
+    );
+    setBatch({ mode: "type", cells, text: initial });
   };
 
   const startPasteSession = async () => {
     const sel = effCellSel();
-    if (!sel || !canBatchEdit || !batchTargetColumn(sel)) return;
+    if (!sel || !canBatchEdit) return;
     let text: string;
     try {
       text = await navigator.clipboard.readText();
@@ -510,28 +728,70 @@ export function DataGrid({
       return;
     }
     if (text === "") return;
-    const lines = text.replace(/\r\n?/g, "\n").split("\n");
-    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
-    /* One copied value fills every selected cell (Excel fill-down); multiple
-       values map top-down, stopping at whichever side runs out first. */
-    const targets =
-      lines.length === 1 ? sel.rows : sel.rows.slice(0, lines.length);
-    const values = targets.map((_, i) =>
-      lines.length === 1 ? lines[0] : lines[i]
-    );
-    setCellSel({ column: sel.column, rows: new Set(targets) });
-    setBatch({ mode: "paste", column: sel.column, rows: targets, values });
+    const matrix = text.replace(/\r\n?/g, "\n").split("\n");
+    if (matrix.length > 1 && matrix[matrix.length - 1] === "") matrix.pop();
+    const values = matrix.map((line) => line.split("\t"));
+    const oneValue = values.length === 1 && values[0].length === 1;
+    const edits: {
+      rowIndex: number;
+      column: string;
+      value: string | null;
+    }[] = [];
+
+    if (oneValue && (sel.rows.length > 1 || sel.columns.length > 1)) {
+      for (const rowIndex of sel.rows) {
+        for (const column of sel.columns) {
+          edits.push({ rowIndex, column, value: values[0][0] });
+        }
+      }
+    } else {
+      const start = activeCell ?? {
+        rowIndex: sel.rows[0],
+        column: sel.columns[0],
+      };
+      const startColumn = visibleColumns.findIndex(
+        (c) => c.name === start.column
+      );
+      if (startColumn < 0) return;
+      values.forEach((line, rowOffset) => {
+        const rowIndex = start.rowIndex + rowOffset;
+        if (rowIndex >= rows.length) return;
+        line.forEach((value, columnOffset) => {
+          const column = visibleColumns[startColumn + columnOffset]?.name;
+          if (column) edits.push({ rowIndex, column, value });
+        });
+      });
+    }
+    if (edits.length === 0) return;
+    const targetColumns = [...new Set(edits.map((edit) => edit.column))];
+    if (!validateBatchColumns(targetColumns)) return;
+
+    const last = edits[edits.length - 1];
+    setCellSel({
+      anchor: { rowIndex: edits[0].rowIndex, column: edits[0].column },
+      focus: { rowIndex: last.rowIndex, column: last.column },
+    });
+    setBatch({ mode: "paste", edits });
   };
 
   const commitBatch = async (forceEmpty = false) => {
     if (!batch || !onBatchEdit || saving) return;
-    const col = columns.find((c) => c.name === batch.column);
-    const nullable = col?.nullable ?? false;
-    const edits = batch.rows.map((rowIndex, i) => {
-      const raw = batch.mode === "type" ? batch.text : batch.values[i];
-      const value = raw === "" && nullable && !forceEmpty ? null : raw;
-      return { rowIndex, column: batch.column, value };
-    });
+    const edits =
+      batch.mode === "type"
+        ? batch.cells.map(({ rowIndex, column }) => {
+            const nullable =
+              columns.find((c) => c.name === column)?.nullable ?? false;
+            const value =
+              batch.text === "" && nullable && !forceEmpty ? null : batch.text;
+            return { rowIndex, column, value };
+          })
+        : batch.edits.map((edit) => {
+            const nullable =
+              columns.find((c) => c.name === edit.column)?.nullable ?? false;
+            const value =
+              edit.value === "" && nullable && !forceEmpty ? null : edit.value;
+            return { ...edit, value };
+          });
     setSaving(true);
     try {
       await onBatchEdit(edits);
@@ -558,31 +818,41 @@ export function DataGrid({
     return () => window.removeEventListener("mousedown", onDown);
   }, [batch]);
 
-  /** Per-row pending preview values for the active batch session. */
-  const pendingByRow = useMemo(() => {
+  /** Per-cell pending preview values for the active batch session. */
+  const pendingByCell = useMemo(() => {
     if (!batch) return null;
-    const m = new Map<number, string>();
-    if (batch.mode === "type") batch.rows.forEach((r) => m.set(r, batch.text));
-    else batch.rows.forEach((r, i) => m.set(r, batch.values[i]));
+    const m = new Map<string, string | null>();
+    if (batch.mode === "type") {
+      batch.cells.forEach(({ rowIndex, column }) =>
+        m.set(cellKey(rowIndex, column), batch.text)
+      );
+    } else {
+      batch.edits.forEach((edit) =>
+        m.set(cellKey(edit.rowIndex, edit.column), edit.value)
+      );
+    }
     return m;
   }, [batch]);
 
   /** The cell hosting the type session's live input — the active cell when it
-   * is part of the session, else the session's first row. */
-  const batchInputRow =
+   * is part of the session, else the session's first cell. */
+  const batchInputCell =
     batch?.mode === "type"
       ? activeCell &&
-        activeCell.column === batch.column &&
-        batch.rows.includes(activeCell.rowIndex)
-        ? activeCell.rowIndex
-        : batch.rows[0]
+        batch.cells.some(
+          (cell) =>
+            cell.rowIndex === activeCell.rowIndex &&
+            cell.column === activeCell.column
+        )
+        ? activeCell
+        : batch.cells[0]
       : null;
 
   /* Right-click a row's number gutter → row context menu (Delete + Copy As).
      Operate on the whole selection when the clicked row is part of it;
      otherwise select just that row and operate on it. */
   const handleRowContextMenu = (index: number, e: React.MouseEvent) => {
-    if (!copyTarget && !resultCopy && !onDeleteRows && !onDuplicateRows) return;
+    if (!copyTarget && !resultCopy && !onDeleteRows && !canDuplicateRows) return;
     e.preventDefault();
     e.stopPropagation();
     let indices: number[];
@@ -616,14 +886,12 @@ export function DataGrid({
     );
   };
 
-  const duplicateRows = async (indices: number[]) => {
-    setRowMenu(null);
-    if (!onDuplicateRows || indices.length === 0) return;
-    try {
-      await onDuplicateRows(indices);
-    } catch (e) {
-      notifyError(`Duplicate failed: ${String(e)}`);
-    }
+  const duplicateRows = (indices: number[]) => {
+    if (!canDuplicateRows || indices.length === 0) return;
+    stageRowsAsDrafts(
+      indices,
+      columns.map((column) => column.name)
+    );
   };
 
   const copyRowsAs = async (
@@ -712,7 +980,7 @@ export function DataGrid({
   );
 
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: displayRows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
@@ -744,7 +1012,7 @@ export function DataGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Keyboard: arrows move the active cell (Shift+Up/Down extends the cell
+  /* Keyboard: arrows move the active cell (Shift+arrows extends the cell
      selection), Ctrl+C/V copy and paste cell values, and any printable key
      starts a type-to-overwrite session on the selected cells. */
   const handleGridKeyDown = (e: React.KeyboardEvent) => {
@@ -757,6 +1025,18 @@ export function DataGrid({
       e.target.closest("input, textarea, select, [contenteditable='true']")
     )
       return;
+
+    if (draftBatch) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void commitDraftRows();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelDraftRows();
+      }
+      return;
+    }
 
     /* A pending batch without a focused input (staged paste, or a type session
        whose input scrolled out of the virtualizer): Enter commits, Esc
@@ -811,9 +1091,9 @@ export function DataGrid({
     e.preventDefault();
 
     if (!activeCell) {
-      onActiveCellChange({ rowIndex: 0, column: visibleColumns[0].name });
-      setCellSel({ column: visibleColumns[0].name, rows: new Set([0]) });
-      setCellAnchor(0);
+      const point = { rowIndex: 0, column: visibleColumns[0].name };
+      onActiveCellChange(point);
+      setCellSel({ anchor: point, focus: point });
       rowVirtualizer.scrollToIndex(0);
       return;
     }
@@ -829,24 +1109,21 @@ export function DataGrid({
       colIndex = Math.min(colIndex + 1, visibleColumns.length - 1);
     else if (e.key === "ArrowLeft") colIndex = Math.max(colIndex - 1, 0);
 
-    /* Shift+Up/Down extends the cell selection from its anchor, Excel-style. */
-    if (
-      e.shiftKey &&
-      (e.key === "ArrowUp" || e.key === "ArrowDown") &&
-      cellSel &&
-      cellAnchor != null
-    ) {
-      selectCellRange(cellSel.column, cellAnchor, rowIndex);
-      onActiveCellChange({ rowIndex, column: cellSel.column });
+    const column = visibleColumns[colIndex].name;
+    /* Shift+any arrow extends the rectangle from its original anchor. */
+    if (e.shiftKey && cellSel) {
+      const focus = { rowIndex, column };
+      setCellSel({ anchor: cellSel.anchor, focus });
+      onActiveCellChange(focus);
       rowVirtualizer.scrollToIndex(rowIndex);
+      scrollColumnIntoView(colIndex);
       return;
     }
 
-    const column = visibleColumns[colIndex].name;
-    onActiveCellChange({ rowIndex, column });
+    const point = { rowIndex, column };
+    onActiveCellChange(point);
     /* Cell selection follows the active cell; row selection collapses. */
-    setCellSel({ column, rows: new Set([rowIndex]) });
-    setCellAnchor(rowIndex);
+    setCellSel({ anchor: point, focus: point });
     if (selectedRows.size) {
       setSelectedRows(new Set());
       setAnchor(null);
@@ -911,8 +1188,28 @@ export function DataGrid({
             }}
           >
             {rowVirtualizer.getVirtualItems().map((vItem) => {
-              const row = rows[vItem.index];
-              const isSelected = selectedRows.has(vItem.index);
+              const entry = displayRows[vItem.index];
+              if (!entry) return null;
+              if (entry.kind === "draft") {
+                return (
+                  <DraftGridRow
+                    key={`draft-${entry.draft.id}`}
+                    draft={entry.draft}
+                    columns={visibleColumns}
+                    widths={widths}
+                    top={vItem.start}
+                    saving={draftSaving}
+                    focusFirst={entry.draft.id === draftBatch?.rows[0]?.id}
+                    onChange={(column, value) =>
+                      updateDraftCell(entry.draft.id, column, value)
+                    }
+                    onCommit={() => void commitDraftRows()}
+                    onCancel={cancelDraftRows}
+                  />
+                );
+              }
+              const { row, sourceIndex } = entry;
+              const isSelected = selectedRows.has(sourceIndex);
               const stripe = vItem.index % 2 === 0 ? "bg-zinc-950" : "bg-zinc-900/30";
               /* The pinned row-number gutter must be OPAQUE, or columns scrolled
                  underneath it show through. The odd-row stripe (bg-zinc-900/30)
@@ -924,7 +1221,7 @@ export function DataGrid({
                 <div
                   key={vItem.key}
                   data-el="grid-row"
-                  onMouseEnter={() => handleRowMouseEnter(vItem.index)}
+                  onMouseEnter={() => handleRowMouseEnter(sourceIndex)}
                   className={clsx(
                     "absolute left-0 right-0 flex items-stretch border-b border-zinc-900 cursor-default",
                     isSelected ? "bg-emerald-900/60" : stripe,
@@ -937,8 +1234,8 @@ export function DataGrid({
                 >
                   <div
                     data-el="row-gutter"
-                    onMouseDown={(e) => handleRowMouseDown(vItem.index, e)}
-                    onContextMenu={(e) => handleRowContextMenu(vItem.index, e)}
+                    onMouseDown={(e) => handleRowMouseDown(sourceIndex, e)}
+                    onContextMenu={(e) => handleRowContextMenu(sourceIndex, e)}
                     className={clsx(
                       "sticky left-0 z-10 w-14 shrink-0 border-r border-zinc-900",
                       (copyTarget || resultCopy || onDeleteRows) && "cursor-context-menu",
@@ -947,15 +1244,15 @@ export function DataGrid({
                   />
                   {visibleColumns.map((col, ci) => {
                     const isEditingThis =
-                      editing?.rowIndex === vItem.index &&
+                      editing?.rowIndex === sourceIndex &&
                       editing.column === col.name;
                     const isActiveCell =
-                      activeCell?.rowIndex === vItem.index &&
+                      activeCell?.rowIndex === sourceIndex &&
                       activeCell.column === col.name;
                     if (
                       batch?.mode === "type" &&
-                      batch.column === col.name &&
-                      vItem.index === batchInputRow
+                      batchInputCell?.column === col.name &&
+                      sourceIndex === batchInputCell.rowIndex
                     ) {
                       return (
                         <BatchCellEditor
@@ -963,7 +1260,7 @@ export function DataGrid({
                           width={widths[ci] ?? MIN_COL_WIDTH}
                           column={col}
                           value={batch.text}
-                          count={batch.rows.length}
+                          count={batch.cells.length}
                           saving={saving}
                           onChange={(text) =>
                             setBatch((b) =>
@@ -975,10 +1272,9 @@ export function DataGrid({
                         />
                       );
                     }
-                    const pendingRaw =
-                      batch?.column === col.name
-                        ? pendingByRow?.get(vItem.index)
-                        : undefined;
+                    const pendingRaw = pendingByCell?.get(
+                      cellKey(sourceIndex, col.name)
+                    );
                     const pending =
                       pendingRaw === undefined
                         ? undefined
@@ -997,45 +1293,56 @@ export function DataGrid({
                         saving={isEditingThis && saving}
                         isActive={isActiveCell}
                         isCellSelected={
-                          cellSel?.column === col.name &&
-                          cellSel.rows.has(vItem.index)
+                          resolvedCellSel?.columns.includes(col.name) === true &&
+                          resolvedCellSel.rows.includes(sourceIndex)
                         }
                         pending={pending}
                         isPeekable={peekableColumns?.has(col.name) ?? false}
                         hideValueTooltip={hideValueTooltip}
                         onCellMouseDown={(e) =>
-                          handleCellMouseDown(vItem.index, col.name, e)
+                          handleCellMouseDown(sourceIndex, col.name, e)
+                        }
+                        onCellMouseEnter={() =>
+                          handleCellMouseEnter(sourceIndex, col.name)
                         }
                         onContext={
-                          onCellContextMenu &&
+                          (onCellContextMenu || copyTarget) &&
                           ((x, y) => {
-                            onActiveCellChange({
-                              rowIndex: vItem.index,
+                            const point = {
+                              rowIndex: sourceIndex,
                               column: col.name,
-                            });
+                            };
+                            onActiveCellChange(point);
                             /* Right-click inside the current selection keeps
                                it; outside, collapse to the clicked cell. */
-                            if (
-                              !(
-                                cellSel?.column === col.name &&
-                                cellSel.rows.has(vItem.index)
-                              )
-                            ) {
-                              setCellSel({
-                                column: col.name,
-                                rows: new Set([vItem.index]),
+                            const inSelection =
+                              resolvedCellSel?.columns.includes(col.name) === true &&
+                              resolvedCellSel.rows.includes(sourceIndex);
+                            const multiSelection =
+                              inSelection &&
+                              (resolvedCellSel.rows.length > 1 ||
+                                resolvedCellSel.columns.length > 1);
+                            if (multiSelection && copyTarget) {
+                              onCellCopyMenuOpen?.();
+                              setCellCopyMenu({
+                                x,
+                                y,
+                                selection: resolvedCellSel,
                               });
-                              setCellAnchor(vItem.index);
+                              return;
                             }
-                            onCellContextMenu({
-                              rowIndex: vItem.index,
+                            if (!inSelection) {
+                              setCellSel({ anchor: point, focus: point });
+                            }
+                            onCellContextMenu?.({
+                              rowIndex: sourceIndex,
                               column: col.name,
                               x,
                               y,
                             });
                           })
                         }
-                        onBeginEdit={() => beginEdit(vItem.index, col)}
+                        onBeginEdit={() => beginEdit(sourceIndex, col)}
                         onCommit={commitEdit}
                         onCancel={() => setEditing(null)}
                       />
@@ -1091,7 +1398,7 @@ export function DataGrid({
           canCopy={!!copyTarget}
           canCopyResult={resultCopy}
           canDelete={!!onDeleteRows}
-          canDuplicate={!!onDuplicateRows}
+          canDuplicate={canDuplicateRows && !!onInsertRows}
           onPick={(format, label) => copyRowsAs(format, label, rowMenu.indices)}
           onPickResult={(format, label) =>
             copyResultsAs(format, label, rowMenu.indices)
@@ -1099,6 +1406,26 @@ export function DataGrid({
           onDelete={() => deleteRows(rowMenu.indices)}
           onDuplicate={() => duplicateRows(rowMenu.indices)}
           onClose={() => setRowMenu(null)}
+        />
+      )}
+
+      {cellCopyMenu && (
+        <CellSelectionCopyMenu
+          x={cellCopyMenu.x}
+          y={cellCopyMenu.y}
+          rowCount={cellCopyMenu.selection.rows.length}
+          columnCount={cellCopyMenu.selection.columns.length}
+          canInsert={!!onInsertRows}
+          canSetNull={!!onBatchEdit}
+          onInsert={() => stageSelectionAsRows(cellCopyMenu.selection)}
+          onSetNull={() => stageSelectionNull(cellCopyMenu.selection)}
+          onCopyTsv={() =>
+            void copyCellSelection(cellCopyMenu.selection, "Tab-delimited")
+          }
+          onCopyJson={() =>
+            void copyCellSelection(cellCopyMenu.selection, "JSON")
+          }
+          onClose={() => setCellCopyMenu(null)}
         />
       )}
 
@@ -1115,6 +1442,176 @@ export function DataGrid({
         />
       )}
     </div>
+  );
+}
+
+function DraftGridRow({
+  draft,
+  columns,
+  widths,
+  top,
+  saving,
+  focusFirst,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  draft: DraftRow;
+  columns: ColumnInfo[];
+  widths: number[];
+  top: number;
+  saving: boolean;
+  focusFirst: boolean;
+  onChange: (column: string, value: string | null) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const firstEditable = columns.findIndex((column) => !isServerGenerated(column));
+  return (
+    <div
+      data-el="draft-grid-row"
+      className="absolute left-0 right-0 flex items-stretch border-y border-amber-500/50 bg-amber-500/10 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.08)]"
+      style={{
+        height: ROW_HEIGHT,
+        transform: `translateY(${top}px)`,
+      }}
+      {...helpHandlers(
+        "New row draft · edit values, Enter commits all drafts, Escape cancels"
+      )}
+    >
+      <div className="sticky left-0 z-10 flex w-14 shrink-0 items-center justify-center border-r border-amber-500/30 bg-[#3b321f] text-[9px] font-bold uppercase tracking-wide text-amber-300">
+        New
+      </div>
+      {columns.map((column, index) => {
+        const generated = isServerGenerated(column);
+        const supplied = Object.prototype.hasOwnProperty.call(
+          draft.values,
+          column.name
+        );
+        const value = draft.values[column.name];
+        return (
+          <input
+            key={column.name}
+            data-el="draft-cell"
+            autoFocus={focusFirst && index === firstEditable}
+            style={{ width: widths[index] ?? MIN_COL_WIDTH }}
+            value={value ?? ""}
+            disabled={saving || generated}
+            placeholder={
+              generated
+                ? "auto"
+                : supplied && value === null
+                ? "NULL"
+                : "default"
+            }
+            onChange={(event) => onChange(column.name, event.target.value)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onCommit();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                onCancel();
+              }
+            }}
+            className={clsx(
+              "h-full shrink-0 border-r border-amber-500/20 bg-transparent px-3 font-mono text-[11.5px] text-amber-100 outline-none placeholder:text-amber-600/60 focus:bg-amber-500/15 focus:ring-1 focus:ring-inset focus:ring-amber-400",
+              generated && "cursor-not-allowed italic text-amber-600"
+            )}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function CellSelectionCopyMenu({
+  x,
+  y,
+  rowCount,
+  columnCount,
+  canInsert,
+  canSetNull,
+  onInsert,
+  onSetNull,
+  onCopyTsv,
+  onCopyJson,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  rowCount: number;
+  columnCount: number;
+  canInsert: boolean;
+  canSetNull: boolean;
+  onInsert: () => void;
+  onSetNull: () => void;
+  onCopyTsv: () => void;
+  onCopyJson: () => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onDown = () => onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  const { ref, style } = useAnchoredPosition(x, y);
+  return createPortal(
+    <div
+      ref={ref}
+      data-el="cell-copy-menu"
+      style={style}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
+    >
+      <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+        Copy {rowCount} row{rowCount === 1 ? "" : "s"}, {columnCount} column
+        {columnCount === 1 ? "" : "s"}
+      </div>
+      {canInsert && (
+        <button
+          onClick={onInsert}
+          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-emerald-200 hover:bg-emerald-950/50 whitespace-nowrap"
+        >
+          <RowsPlusBottom size={14} className="shrink-0 text-emerald-400" />
+          To New Rows
+        </button>
+      )}
+      {canSetNull && (
+        <button
+          onClick={onSetNull}
+          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-amber-200 hover:bg-amber-950/50 whitespace-nowrap"
+        >
+          <XCircle size={14} className="shrink-0 text-amber-400" />
+          Set to NULL
+        </button>
+      )}
+      <button
+        onClick={onCopyTsv}
+        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 whitespace-nowrap"
+      >
+        <MicrosoftExcelLogo size={14} className="shrink-0 text-zinc-400" />
+        Tab-delimited (Excel)
+      </button>
+      <button
+        onClick={onCopyJson}
+        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-zinc-800 whitespace-nowrap"
+      >
+        <BracketsCurly size={14} className="shrink-0 text-zinc-400" />
+        JSON
+      </button>
+    </div>,
+    document.body
   );
 }
 
@@ -1473,6 +1970,7 @@ function Cell({
   isPeekable,
   hideValueTooltip,
   onCellMouseDown,
+  onCellMouseEnter,
   onContext,
   onBeginEdit,
   onCommit,
@@ -1495,6 +1993,8 @@ function Cell({
   hideValueTooltip: boolean;
   /** Mousedown drives cell selection (click, shift/ctrl-click, drag start). */
   onCellMouseDown: (e: React.MouseEvent) => void;
+  /** Extends a drag selection into this cell. */
+  onCellMouseEnter: () => void;
   /** Right-click, reported at the pointer position. */
   onContext?: (x: number, y: number) => void;
   onBeginEdit: () => void;
@@ -1542,12 +2042,18 @@ function Cell({
     : typeof value === "string"
     ? value
     : display;
+  const hoverHelp = cellHelp ? helpHandlers(cellHelp) : null;
   return (
     <div
       style={{ width }}
       data-el="grid-cell"
       data-active-cell={isActive ? "true" : undefined}
       onMouseDown={onCellMouseDown}
+      onMouseEnter={() => {
+        onCellMouseEnter();
+        hoverHelp?.onMouseEnter();
+      }}
+      onMouseLeave={hoverHelp?.onMouseLeave}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => {
         if (!editable) return;
@@ -1569,7 +2075,6 @@ function Cell({
         isActive && "ring-1 ring-inset ring-accent-400 bg-accent-500/10",
         pending !== undefined && "bg-amber-500/10"
       )}
-      {...(cellHelp ? helpHandlers(cellHelp) : {})}
     >
       {pending !== undefined ? (
         <span
@@ -1781,6 +2286,46 @@ function cellToText(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean")
     return String(value);
   return JSON.stringify(value);
+}
+
+const cellKey = (rowIndex: number, column: string) =>
+  `${rowIndex}\u0000${column}`;
+
+/** Excel clipboard cells cannot contain literal tabs/newlines without changing
+ * the pasted rectangle, so flatten them to spaces. */
+function cellToTsv(value: unknown): string {
+  return cellToText(value).replace(/[\t\r\n]+/g, " ");
+}
+
+function selectionTsv(rows: RowRecord[], selection: ResolvedCellRange): string {
+  return selection.rows
+    .map((rowIndex) => {
+      const row = rows[rowIndex];
+      return selection.columns
+        .map((column) => cellToTsv(row?.[column]))
+        .join("\t");
+    })
+    .join("\r\n");
+}
+
+function selectionJson(rows: RowRecord[], selection: ResolvedCellRange): string {
+  const picked = selection.rows.map((rowIndex) => {
+    const row = rows[rowIndex];
+    return Object.fromEntries(
+      selection.columns.map((column) => [column, row?.[column] ?? null])
+    );
+  });
+  return JSON.stringify(picked, null, 2);
+}
+
+function cellToInsertValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return cellToText(value);
+}
+
+function isServerGenerated(column: ColumnInfo): boolean {
+  const extra = column.extra?.toLowerCase() ?? "";
+  return extra.includes("auto_increment") || extra.includes("generated");
 }
 
 function renderCell(value: unknown): { display: string; tone: string } {

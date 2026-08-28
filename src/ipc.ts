@@ -126,6 +126,13 @@ export const ipc = {
     values: { column: string; value: string | null }[];
   }) => invoke<number>("insert_row", args),
 
+  insertRows: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    rows: { column: string; value: string | null }[][];
+  }) => invoke<number>("insert_rows", args),
+
   deleteRow: (args: {
     profileId: string;
     database: string;

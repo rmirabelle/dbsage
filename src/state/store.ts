@@ -437,7 +437,7 @@ interface Store {
 
   setRowsSort: (tabId: string, sort: SortSpec | null) => Promise<void>;
   setRowsFilter: (tabId: string, column: string, filter: ColumnFilter | null) => Promise<void>;
-  /** Drop every column filter on the rows tab at once and reload. */
+  /** Drop every column filter, restore hidden columns, and reload. */
   clearRowsFilters: (tabId: string) => Promise<void>;
   setHiddenColumns: (tabId: string, hidden: string[]) => void;
   /** Set (or clear, with null) a JSON column's display property path. */
@@ -472,9 +472,9 @@ interface Store {
     newValue: string | null
   ) => Promise<void>;
 
-  /** Apply a batch cell edit (one value per row, single column), then reload
-   * the page ONCE. Stops at the first failed UPDATE; the reload still runs so
-   * the grid reflects whatever was committed before the failure. */
+  /** Apply a batch cell edit across one or more columns, then reload the page
+   * ONCE. Stops at the first failed UPDATE; the reload still runs so the grid
+   * reflects whatever was committed before the failure. */
   updateCells: (
     tabId: string,
     edits: { rowIndex: number; column: string; value: string | null }[]
@@ -482,6 +482,11 @@ interface Store {
   insertRow: (
     tabId: string,
     values: { column: string; value: string | null }[]
+  ) => Promise<void>;
+  /** Append several partial rows, then reload the current page once. */
+  insertRows: (
+    tabId: string,
+    rows: { column: string; value: string | null }[][]
   ) => Promise<void>;
   deleteRows: (
     tabId: string,
@@ -2412,7 +2417,13 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "rows"
-          ? { ...t, filters: [], page: 1, exactTotal: null }
+          ? {
+              ...t,
+              filters: [],
+              hiddenColumns: [],
+              page: 1,
+              exactTotal: null,
+            }
           : t
       ),
     }));
@@ -2701,6 +2712,23 @@ export const useStore = create<Store>((set, get) => ({
       values,
     });
     /* Row count changed — drop the exact count and reload the current page. */
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: null } : t
+      ),
+    }));
+    await loadTabPage(tabId, tab.page, set, get);
+  },
+
+  insertRows: async (tabId, rows) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows" || rows.length === 0) return;
+    await ipc.insertRows({
+      profileId: tab.profileId,
+      database: tab.database,
+      table: tab.table,
+      rows,
+    });
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: null } : t

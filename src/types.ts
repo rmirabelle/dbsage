@@ -80,6 +80,8 @@ export interface ColumnInfo {
   dataType: string;
   nullable: boolean;
   key: string;
+  /** MySQL EXTRA metadata (for example auto_increment or generated). */
+  extra?: string;
   /** The column's COMMENT, if any. Empty/absent when the column has none. */
   comment?: string;
 }

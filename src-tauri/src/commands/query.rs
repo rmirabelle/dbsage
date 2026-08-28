@@ -30,6 +30,10 @@ pub struct ColumnInfo {
     pub data_type: String,
     pub nullable: bool,
     pub key: String,
+    /// MySQL EXTRA metadata, used by draft-row insertion to leave generated
+    /// and auto-increment values to the server.
+    #[serde(default)]
+    pub extra: String,
     /// The column's COMMENT, if any (empty string when none). Surfaced as a
     /// styled tooltip on the table-view column header.
     #[serde(default)]
@@ -430,7 +434,7 @@ async fn fetch_columns(
     table: &str,
 ) -> AppResult<Vec<ColumnInfo>> {
     let rows = sqlx::query(
-        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT \
+        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT, EXTRA \
          FROM INFORMATION_SCHEMA.COLUMNS \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
          ORDER BY ORDINAL_POSITION",
@@ -447,6 +451,7 @@ async fn fetch_columns(
             nullable: get_string(r, 2) == "YES",
             key: get_string(r, 3),
             comment: get_string(r, 4),
+            extra: get_string(r, 5),
         })
         .collect())
 }
@@ -1651,6 +1656,7 @@ fn statement_result(
             data_type,
             nullable: true,
             key: String::new(),
+            extra: String::new(),
             comment: String::new(),
         })
         .collect();
@@ -2727,6 +2733,64 @@ pub async fn insert_row(
 
     let result = q.execute(&pool).await?;
     Ok(result.rows_affected())
+}
+
+/// Atomically INSERT several partial rows. Every row may provide a different
+/// column set; omitted columns use their database default / auto-increment.
+/// The transaction prevents a later validation or constraint failure from
+/// leaving only the earlier draft rows committed.
+#[tauri::command]
+pub async fn insert_rows(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    rows: Vec<Vec<PkValue>>,
+) -> AppResult<u64> {
+    if rows.is_empty() {
+        return Err(AppError::Other("no rows provided to insert".into()));
+    }
+
+    let pool = pool_for(&state, &profile_id).await?;
+    let columns = fetch_columns(&pool, &database, &table).await?;
+    let column_set: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    for values in &rows {
+        for value in values {
+            if !column_set.contains(value.column.as_str()) {
+                return Err(AppError::Other(format!(
+                    "unknown column: {}",
+                    value.column
+                )));
+            }
+        }
+    }
+
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    let mut tx = pool.begin().await?;
+    let mut inserted = 0;
+    for values in &rows {
+        let sql = if values.is_empty() {
+            format!("INSERT INTO {qualified} () VALUES ()")
+        } else {
+            let cols = values
+                .iter()
+                .map(|value| quote_ident(&value.column))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            format!("INSERT INTO {qualified} ({cols}) VALUES ({placeholders})")
+        };
+        let mut query = sqlx::query(&sql);
+        for value in values {
+            query = match &value.value {
+                Some(value) => query.bind(value.clone()),
+                None => query.bind(Option::<String>::None),
+            };
+        }
+        inserted += query.execute(&mut *tx).await?.rows_affected();
+    }
+    tx.commit().await?;
+    Ok(inserted)
 }
 
 #[derive(Debug, Serialize)]

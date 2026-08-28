@@ -33,7 +33,7 @@ import {
 } from "../lib/relatedExistence";
 import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
-import { useRelationsMenuLayer } from "../lib/useRelationsMenuLayer";
+import { useNativeMenuLayer } from "../lib/useNativeMenuLayer";
 import type {
   ColumnFilter,
   PeekTarget,
@@ -235,7 +235,7 @@ export function PeekPanel({
     8,
     pickerRef
   );
-  useRelationsMenuLayer(picker !== null);
+  useNativeMenuLayer(picker !== null);
 
   const [relDialog, setRelDialog] = useState<{
     relation: Relation | null;
