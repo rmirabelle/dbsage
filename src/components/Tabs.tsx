@@ -54,6 +54,7 @@ import { Tooltip } from "./Tooltip";
 import appIconLarge from "../assets/app-icon-large.png";
 import { ipc } from "../ipc";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
+import { useRelationsMenuLayer } from "../lib/useRelationsMenuLayer";
 import type {
   CascadeTarget,
   PeekSeed,
@@ -672,6 +673,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     8,
     pickerRef
   );
+  useRelationsMenuLayer(picker !== null);
 
   /** The relation menu never blocks interaction with a backdrop. Dismiss it on
    * left-click outside, any key, or scrolling; right-clicks on grid cells are
@@ -769,11 +771,11 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     [relations, tab.table]
   );
 
-  /* A relation-cell selection represents the whole row. Broadcast every
-     relation source value from that row so any open peek follows correctly,
-     even when it was launched from a different relation-enabled column. */
+  /* Selecting any cell identifies its whole row. Broadcast every relation
+     source value from that row so open peeks keep following even when the
+     clicked cell itself is not a relation source column. */
   useEffect(() => {
-    if (!activeCell || !activeRow || !peekableColumns.has(activeCell.column)) return;
+    if (!activeRow) return;
     for (const sourceColumn of peekableColumns) {
       const value = cellToFilterValue(activeRow[sourceColumn]);
       if (value == null) continue;
@@ -785,7 +787,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         value,
       });
     }
-  }, [activeCell, activeRow, peekableColumns, tab.table, tab.profileId, tab.database]);
+  }, [activeRow, peekableColumns, tab.table, tab.profileId, tab.database]);
 
   /** Launch a peek for a relation in its own OS window, placed just below the
    * active cell (screen px). The window persists until closed manually. */
@@ -1254,7 +1256,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             ref={pickerRef}
             data-el="related-picker"
             style={pickerStyle}
-            className="dbs-context-menu fixed z-50 w-max overflow-hidden rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-zinc-200"
+            className="dbs-context-menu fixed z-50 w-max overflow-hidden rounded border border-violet-500 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-zinc-200"
           >
             <div
               style={{ fontSize: 13 * tabsZoom }}
@@ -1269,23 +1271,19 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
                   setPicker(null);
                   setRelDialog({ relation: null, column });
                 }}
-                className="inline-flex items-center gap-1.5 rounded bg-zinc-800 px-2 py-1 font-semibold text-zinc-300 transition-colors hover:bg-zinc-700"
+                className="inline-flex items-center gap-1.5 rounded bg-violet-500 px-2 py-1 font-semibold text-white transition-colors hover:bg-violet-400"
                 aria-label="New Relation"
                 title={`New relation from ${picker.cell.column}`}
               >
-                <Plus size={13} weight="bold" className="text-violet-300" />
+                <Plus size={13} weight="bold" />
                 New Relation
               </button>
             </div>
-            {picker.matches.some((m) => m.direct) && (
-              <div className="border-t border-zinc-800 px-3 pt-2 pb-1 text-[10px] text-zinc-500">
-                Related on this column
-              </div>
-            )}
-            {picker.matches.filter((m) => m.direct).map((m) => {
+            {picker.matches.map((m) => {
               const noValue = m.value == null;
               const empty = !picker.pending && !noValue && !m.exists;
               const disabled = picker.pending || noValue || empty;
+              const label = m.relation.name?.trim() || m.table;
               return (
                 <div
                   key={m.relation.id}
@@ -1309,9 +1307,18 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
                         : "hover:bg-zinc-800"
                     )}
                   >
-                    <span className="flex-1">
-                      <span className="font-medium text-zinc-100">{m.table}</span>
-                      <span className="font-mono text-zinc-500">.{m.column}</span>
+                    <span
+                      className={clsx(
+                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                        m.relation.kind === "has_many"
+                          ? "bg-accent-500/15 text-accent-300"
+                          : "bg-amber-500/15 text-amber-300"
+                      )}
+                    >
+                      {m.relation.kind === "has_many" ? "has many" : "has one"}
+                    </span>
+                    <span className="flex-1 font-medium text-zinc-100">
+                      {label}
                     </span>
                   </button>
                   <button
@@ -1324,65 +1331,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
                       });
                     }}
                     className="flex w-9 shrink-0 items-center justify-center border-l border-zinc-800 text-violet-400 hover:bg-zinc-800 hover:text-violet-300"
-                    aria-label={`Edit relation to ${m.table}.${m.column}`}
-                    title="Edit relation"
-                  >
-                    <PencilSimple size={16} />
-                  </button>
-                </div>
-              );
-            })}
-            {picker.matches.some((m) => !m.direct) && (
-              <div className="border-t border-zinc-800 px-3 pt-2 pb-1 text-[10px] text-zinc-500">
-                Related on other columns
-              </div>
-            )}
-            {picker.matches.filter((m) => !m.direct).map((m) => {
-              const noValue = m.value == null;
-              const empty = !picker.pending && !noValue && !m.exists;
-              const disabled = picker.pending || noValue || empty;
-              return (
-                <div
-                  key={m.relation.id}
-                  className="flex items-stretch whitespace-nowrap"
-                >
-                  <button
-                    disabled={disabled}
-                    onClick={() => {
-                      setPicker(null);
-                      openPeek(m);
-                    }}
-                    {...(noValue
-                      ? helpHandlers(`${m.sourceColumn} is NULL in this row`)
-                      : empty
-                      ? helpHandlers(`No related rows in ${m.table}`)
-                      : {})}
-                    className={clsx(
-                      "flex min-w-0 flex-1 items-center gap-4 px-3 py-1.5 text-left text-[12px]",
-                      disabled
-                        ? "cursor-not-allowed opacity-40"
-                        : "hover:bg-zinc-800"
-                    )}
-                  >
-                    <span className="flex-1">
-                      <span className="font-medium text-zinc-100">{m.table}</span>
-                      <span className="font-mono text-zinc-500">.{m.column}</span>
-                    </span>
-                    <span className="text-[10px] text-zinc-600">
-                      via <span className="font-mono text-zinc-500">{m.sourceColumn}</span>
-                    </span>
-                  </button>
-                  <button
-                    data-el="relation-picker-edit"
-                    onClick={() => {
-                      setPicker(null);
-                      setRelDialog({
-                        relation: m.relation,
-                        column: m.sourceColumn,
-                      });
-                    }}
-                    className="flex w-9 shrink-0 items-center justify-center border-l border-zinc-800 text-violet-400 hover:bg-zinc-800 hover:text-violet-300"
-                    aria-label={`Edit relation to ${m.table}.${m.column}`}
+                    aria-label={`Edit relation ${label}`}
                     title="Edit relation"
                   >
                     <PencilSimple size={16} />

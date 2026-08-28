@@ -109,6 +109,11 @@ export interface Relation {
   updatedAt: string;
 }
 
+export interface RelationsImportPreview {
+  database: string;
+  count: number;
+}
+
 /** Per-category item counts — used both for an import result and for previewing
  * what an encrypted state file contains. */
 export interface StateCounts {

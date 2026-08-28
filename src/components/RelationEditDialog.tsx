@@ -22,11 +22,8 @@ import { SearchableSelect } from "./SearchableSelect";
 import type { Relation, RelationKind } from "../types";
 
 /**
- * Modal editor for a single relation, launched by right-clicking a grid cell.
- * Same fields and same suggestion heuristics as the Relations tab's side panel
- * (both drive `lib/relationForm`), but seeded from the cell you clicked: the
- * from-table/column are known up front, and for a new relation the kind, target
- * table/column and accessor name are guessed from the column name.
+ * Shared modal editor for a single relation. Context-menu creation seeds it
+ * from the clicked table/column; Relations view opens the same dialog unseeded.
  */
 export function RelationEditDialog({
   profileId,
@@ -41,8 +38,8 @@ export function RelationEditDialog({
   database: string;
   /** The relation being edited, or null to author a new one. */
   relation: Relation | null;
-  /** The clicked cell's table/column — seeds the FROM side of a new relation. */
-  from: { table: string; column: string };
+  /** Optional clicked cell — seeds the FROM side of context-menu creation. */
+  from?: { table: string; column: string };
   onClose: () => void;
   /** Fired after a successful save (the host closes and refreshes). */
   onSaved: () => void;
@@ -55,7 +52,11 @@ export function RelationEditDialog({
   const [form, setForm] = useState(() =>
     relation
       ? formFromRelation(relation)
-      : { ...BLANK_RELATION, fromTable: from.table, fromColumn: from.column }
+      : {
+          ...BLANK_RELATION,
+          fromTable: from?.table ?? "",
+          fromColumn: from?.column ?? "",
+        }
   );
   const [tables, setTables] = useState<string[]>([]);
   const [fromColumns, setFromColumns] = useState<string[]>([]);
@@ -89,7 +90,7 @@ export function RelationEditDialog({
    * a ref, not a dependency list, since the form it seeds is also the thing the
    * user then edits.
    */
-  const seededRef = useRef(relation != null);
+  const seededRef = useRef(relation != null || !from?.column);
   useEffect(() => {
     if (seededRef.current || tables.length === 0) return;
     seededRef.current = true;
@@ -270,14 +271,19 @@ export function RelationEditDialog({
               />
             </div>
 
-            <span className="text-right">Name</span>
+            <span className="text-right">Label</span>
             <input
               data-el="rel-dlg-name"
               value={form.name}
               onChange={(e) =>
                 setForm((f) => ({ ...f, name: e.target.value }))
               }
-              placeholder="optional accessor name"
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+                e.preventDefault();
+                void onSave();
+              }}
+              placeholder="optional relation label"
               className={clsx(selectClass, "w-full")}
             />
           </div>

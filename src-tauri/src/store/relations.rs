@@ -167,6 +167,32 @@ pub fn delete(app: &AppHandle, host: &str, database: &str, id: &str) -> AppResul
     Ok(())
 }
 
+/// Replace one database's complete relation set. Used by the Relations view's
+/// explicit overwrite import; other hosts and databases remain untouched.
+pub fn replace_database(
+    app: &AppHandle,
+    host: &str,
+    database: &str,
+    relations: Vec<Relation>,
+) -> AppResult<usize> {
+    let count = relations.len();
+    let mut file = load_file(app)?;
+    if relations.is_empty() {
+        if let Some(by_db) = file.get_mut(host) {
+            by_db.remove(database);
+        }
+        if file.get(host).is_some_and(BTreeMap::is_empty) {
+            file.remove(host);
+        }
+    } else {
+        file.entry(host.to_string())
+            .or_default()
+            .insert(database.to_string(), relations);
+    }
+    save_file(app, &file)?;
+    Ok(count)
+}
+
 pub fn export_all(app: &AppHandle) -> AppResult<RelationsFile> {
     load_file(app)
 }

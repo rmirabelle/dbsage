@@ -1,58 +1,59 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Trash,
-  Plus,
   Copy,
+  DownloadSimple,
+  UploadSimple,
   ArrowsClockwise,
   ShareNetwork,
   Warning,
   CircleNotch as Loader2,
   X,
-  FloppyDisk,
   MagnifyingGlass,
 } from "@phosphor-icons/react";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import clsx from "clsx";
 import { ipc } from "../ipc";
 import { singularize, pluralize } from "../lib/inflector";
-import {
-  BLANK_RELATION,
-  formFromRelation,
-  withFromColumn,
-  withSuggestedToColumn,
-  withToTable,
-} from "../lib/relationForm";
 import { useStore } from "../state/store";
-import { useUi } from "../state/ui";
-import { SearchableSelect } from "./SearchableSelect";
 import { CopyRelationsDialog } from "./CopyRelationsDialog";
+import { RelationEditDialog } from "./RelationEditDialog";
 import { notifySuccess, notifyInfo } from "../state/notify";
-import type { Relation, RelationKind, RelationsTab } from "../types";
+import type {
+  Relation,
+  RelationsImportPreview,
+  RelationsTab,
+} from "../types";
 
 const EMPTY_RELATIONS: Relation[] = [];
+const RELATIONS_FILE_FILTER = [
+  { name: "DB Sage Relations", extensions: ["json"] },
+];
 
 export function RelationsView({ tab }: { tab: RelationsTab }) {
   const { profileId, database } = tab;
-  const editorWidth = useUi((s) => s.relationsEditorWidth);
-  const setEditorWidth = useUi((s) => s.setRelationsEditorWidth);
 
-  const [tables, setTables] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
 
   const relations =
     useStore((s) => s.relations[`${profileId}::${database}`]) ??
     EMPTY_RELATIONS;
   const loadRelations = useStore((s) => s.loadRelations);
-  const saveRelationDef = useStore((s) => s.saveRelation);
   const deleteRelationDef = useStore((s) => s.deleteRelation);
 
-  const [form, setForm] = useState(BLANK_RELATION);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [relationDialog, setRelationDialog] = useState<
+    Relation | "new" | null
+  >(null);
   const [copyOpen, setCopyOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [addFocusSignal, setAddFocusSignal] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [pendingImport, setPendingImport] = useState<{
+    path: string;
+    preview: RelationsImportPreview;
+  } | null>(null);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -61,18 +62,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   useEffect(() => {
     searchRef.current?.focus();
   }, []);
-  const [fromColumns, setFromColumns] = useState<string[]>([]);
-  const [toColumns, setToColumns] = useState<string[]>([]);
-
-  const openAdd = () => {
-    setForm(BLANK_RELATION);
-    setEditorOpen(true);
-    setAddFocusSignal((n) => n + 1);
-  };
-  const closeEditor = () => {
-    setForm(BLANK_RELATION);
-    setEditorOpen(false);
-  };
+  const openAdd = () => setRelationDialog("new");
 
   /** Delete every relation defined on this database, then refresh. */
   const onClearAll = async () => {
@@ -108,7 +98,6 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
     try {
       const ts = await ipc.listTables(profileId, database);
       const tableNames = ts.map((t) => t.name);
-      setTables(tableNames);
       const tableSet = new Set(tableNames);
       const current = await ipc.listRelations(profileId, database);
 
@@ -163,7 +152,68 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
     }
   };
 
-  const sortedTables = useMemo(() => [...tables].sort(), [tables]);
+  const onExport = async () => {
+    if (exporting || importing) return;
+    const path = await save({
+      defaultPath: `${database}-relations.json`,
+      filters: RELATIONS_FILE_FILTER,
+    });
+    if (!path) return;
+
+    setExporting(true);
+    setError(null);
+    try {
+      const count = await ipc.exportRelationsFile(profileId, database, path);
+      notifySuccess(
+        `Exported ${count} relation${count === 1 ? "" : "s"} from ${database}.`
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const onChooseImport = async () => {
+    if (exporting || importing) return;
+    const picked = await open({
+      multiple: false,
+      filters: RELATIONS_FILE_FILTER,
+    });
+    if (typeof picked !== "string") return;
+
+    setError(null);
+    try {
+      const preview = await ipc.previewRelationsImport(picked);
+      setPendingImport({ path: picked, preview });
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const onConfirmImport = async () => {
+    if (!pendingImport || importing) return;
+    setImporting(true);
+    setError(null);
+    try {
+      const count = await ipc.importRelationsFile(
+        profileId,
+        database,
+        pendingImport.path
+      );
+      await loadRelations(profileId, database);
+      setRelationDialog(null);
+      setPendingImport(null);
+      notifySuccess(
+        `Imported ${count} relation${count === 1 ? "" : "s"} into ${database}.`
+      );
+    } catch (e) {
+      setPendingImport(null);
+      setError(String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const sortedRelations = useMemo(
     () =>
@@ -209,132 +259,16 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   }, [visibleRelations]);
 
   useEffect(() => {
-    ipc
-      .listTables(profileId, database)
-      .then((ts) => setTables(ts.map((t) => t.name)))
-      .catch((e) => setError(String(e)));
     loadRelations(profileId, database).catch((e) => setError(String(e)));
   }, [profileId, database, loadRelations]);
-
-  useEffect(() => {
-    if (!form.fromTable) {
-      setFromColumns([]);
-      return;
-    }
-    ipc
-      .listColumns(profileId, database, form.fromTable)
-      .then((cols) => setFromColumns(cols.map((c) => c.name)))
-      .catch(() => setFromColumns([]));
-  }, [form.fromTable, profileId, database]);
-
-  useEffect(() => {
-    if (!form.toTable) {
-      setToColumns([]);
-      return;
-    }
-    ipc
-      .listColumns(profileId, database, form.toTable)
-      .then((cols) => setToColumns(cols.map((c) => c.name)))
-      .catch(() => setToColumns([]));
-  }, [form.toTable, profileId, database]);
-
-  /** Suggest/validate the to-column once the target table's columns land. */
-  useEffect(() => {
-    setForm((f) => withSuggestedToColumn(f, toColumns));
-  }, [toColumns, form.kind, form.fromTable]);
-
-  const onFromTableChange = (fromTable: string) => {
-    if (fromTable === form.fromTable) return;
-    setForm({ ...BLANK_RELATION, fromTable });
-  };
-
-  const onFromColumnChange = (fromColumn: string) => {
-    if (fromColumn === form.fromColumn) return;
-    setForm(withFromColumn(form, fromColumn, tables));
-  };
-
-  const onKindChange = (kind: RelationKind) =>
-    setForm(withToTable({ ...form, kind }, form.toTable));
-
-  const onToTableChange = (toTable: string) => {
-    if (toTable === form.toTable) return;
-    setForm(withToTable(form, toTable));
-  };
-
-  const startEdit = (r: Relation) => {
-    setForm(formFromRelation(r));
-    setEditorOpen(true);
-  };
-
-  const canSave =
-    form.fromTable && form.fromColumn && form.toTable && form.toColumn;
-
-  /** When editing, the loaded relation; used to gate Save on an actual change. */
-  const editingOriginal = form.editingId
-    ? relations.find((r) => r.id === form.editingId) ?? null
-    : null;
-  const isDirty =
-    !editingOriginal ||
-    form.fromTable !== editingOriginal.fromTable ||
-    form.fromColumn !== editingOriginal.fromColumn ||
-    form.kind !== editingOriginal.kind ||
-    form.toTable !== editingOriginal.toTable ||
-    form.toColumn !== editingOriginal.toColumn ||
-    form.name.trim() !== editingOriginal.name.trim();
-
-  const onSave = async () => {
-    if (!canSave || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await saveRelationDef({
-        profileId,
-        database,
-        id: form.editingId,
-        fromTable: form.fromTable,
-        fromColumn: form.fromColumn,
-        toTable: form.toTable,
-        toColumn: form.toColumn,
-        kind: form.kind,
-        name: form.name.trim(),
-      });
-      closeEditor();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const onDelete = async (id: string) => {
     try {
       await deleteRelationDef(profileId, database, id);
-      if (form.editingId === id) closeEditor();
     } catch (e) {
       setError(String(e));
     }
   };
-
-  const startResize = (e: React.PointerEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = editorWidth;
-    const onMove = (ev: PointerEvent) =>
-      setEditorWidth(startW + (startX - ev.clientX));
-    const onUp = () => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-  };
-
-  const selectClass =
-    "bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[12px] text-zinc-200 outline-none focus:border-accent-500 disabled:opacity-50";
 
   return (
     <div
@@ -359,7 +293,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         <button
           data-el="add-relationship-btn"
           onClick={openAdd}
-          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-white hover:bg-violet-400 transition-colors"
           title="Add a relation"
         >
           <span className="relative -top-px text-[19px] leading-none">+</span> Relation
@@ -396,6 +330,29 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           aria-label="Refresh relations"
         >
           <ArrowsClockwise size={15} className={refreshing ? "animate-spin" : undefined} />
+        </button>
+        <button
+          data-el="export-relations-btn"
+          onClick={onExport}
+          disabled={exporting || importing}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Export relations to a file"
+        >
+          {exporting ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <DownloadSimple size={14} />
+          )}
+          Export
+        </button>
+        <button
+          data-el="import-relations-btn"
+          onClick={onChooseImport}
+          disabled={exporting || importing}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Import relations from a file"
+        >
+          <UploadSimple size={14} /> Import
         </button>
       </div>
 
@@ -445,13 +402,8 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                         <li
                           key={r.id}
                           data-el="relation-row"
-                          onClick={() => startEdit(r)}
-                          className={clsx(
-                            "group flex items-center gap-2 px-3 py-1.5 cursor-pointer",
-                            form.editingId === r.id
-                              ? "bg-accent-500/10"
-                              : "hover:bg-zinc-800/60"
-                          )}
+                          onClick={() => setRelationDialog(r)}
+                          className="group flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-zinc-800/60"
                         >
                           <span
                             className={clsx(
@@ -491,120 +443,6 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           </div>
         </div>
 
-        {editorOpen && (
-          <>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          onPointerDown={startResize}
-          className="w-1 shrink-0 cursor-col-resize bg-zinc-800/60 hover:bg-accent-500/40 transition-colors"
-        />
-
-        <div
-          data-el="relations-editor"
-          style={{ width: editorWidth }}
-          className="shrink-0 overflow-auto px-4 py-4 bg-[#2c303c]"
-        >
-          <div className="mb-5 flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
-              {form.editingId ? "Edit relation" : "Add relation"}
-            </span>
-            <button
-              data-el="rel-editor-close"
-              onClick={closeEditor}
-              className="text-zinc-500 hover:text-zinc-200"
-              aria-label="Close"
-            >
-              <X size={15} />
-            </button>
-          </div>
-          <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-[12px] text-zinc-400">
-              <span className="text-right">From</span>
-              <div className="flex items-center gap-2">
-                <SearchableSelect
-                  dataEl="rel-from-table"
-                  value={form.fromTable}
-                  options={sortedTables}
-                  placeholder="table…"
-                  onChange={onFromTableChange}
-                  className="flex-1"
-                  focusSignal={addFocusSignal}
-                />
-                <SearchableSelect
-                  dataEl="rel-from-column"
-                  value={form.fromColumn}
-                  options={fromColumns}
-                  placeholder="column…"
-                  disabled={!form.fromTable}
-                  onChange={onFromColumnChange}
-                  className="flex-1"
-                />
-              </div>
-
-              <span className="text-right">Type</span>
-              <select
-                data-el="rel-kind"
-                value={form.kind}
-                onChange={(e) => onKindChange(e.target.value as RelationKind)}
-                className={clsx(selectClass, "w-40")}
-              >
-                <option value="has_one">has one</option>
-                <option value="has_many">has many</option>
-              </select>
-
-              <span className="text-right">To</span>
-              <div className="flex items-center gap-2">
-                <SearchableSelect
-                  dataEl="rel-to-table"
-                  value={form.toTable}
-                  options={sortedTables}
-                  placeholder="table…"
-                  onChange={onToTableChange}
-                  className="flex-1"
-                />
-                <SearchableSelect
-                  dataEl="rel-to-column"
-                  value={form.toColumn}
-                  options={toColumns}
-                  placeholder="column…"
-                  disabled={!form.toTable}
-                  onChange={(v) => setForm({ ...form, toColumn: v })}
-                  className="flex-1"
-                />
-              </div>
-
-              <span className="text-right">Name</span>
-              <input
-                data-el="rel-name"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="optional accessor name"
-                className={clsx(selectClass, "w-full")}
-              />
-            </div>
-
-            <div className="mt-3 flex items-center justify-end gap-2">
-              {form.editingId && (
-                <button
-                  onClick={closeEditor}
-                  className="px-2 py-1 rounded text-[11px] text-zinc-300 hover:bg-zinc-800"
-                >
-                  Cancel edit
-                </button>
-              )}
-              <button
-                data-el="rel-save-btn"
-                onClick={onSave}
-                disabled={!canSave || saving || !isDirty}
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
-              >
-                {form.editingId ? <FloppyDisk size={13} /> : <Plus size={13} />}
-                {form.editingId ? "Save Relation" : "Add relation"}
-              </button>
-            </div>
-        </div>
-          </>
-        )}
       </div>
 
       <CopyRelationsDialog
@@ -614,6 +452,18 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         relations={relations}
         onClose={() => setCopyOpen(false)}
       />
+
+      {relationDialog && (
+        <RelationEditDialog
+          key={relationDialog === "new" ? "new" : relationDialog.id}
+          profileId={profileId}
+          database={database}
+          relation={relationDialog === "new" ? null : relationDialog}
+          onClose={() => setRelationDialog(null)}
+          onSaved={() => setRelationDialog(null)}
+          onDeleted={() => setRelationDialog(null)}
+        />
+      )}
 
       {clearOpen && (
         <div
@@ -677,6 +527,82 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                   <Trash size={14} />
                 )}
                 {clearing ? "Clearing…" : "Clear All"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingImport && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => !importing && setPendingImport(null)}
+        >
+          <div
+            data-el="import-relations-dialog"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            className="w-[460px] max-w-[90vw] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Warning size={18} weight="fill" className="text-amber-400" />
+                <h2 className="text-sm font-semibold text-zinc-100">
+                  Overwrite existing relations?
+                </h2>
+              </div>
+              {!importing && (
+                <button
+                  onClick={() => setPendingImport(null)}
+                  className="text-zinc-500 hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+
+            <div className="px-4 py-4 space-y-3 text-[12px] leading-relaxed text-zinc-300">
+              <p>
+                Import{" "}{pendingImport.preview.count}{" "}
+                relation{pendingImport.preview.count === 1 ? "" : "s"} from{" "}
+                <span className="font-mono text-zinc-100">
+                  {pendingImport.preview.database}
+                </span>{" "}
+                into{" "}
+                <span className="font-mono text-zinc-100">{database}</span>?
+              </p>
+              <p className="text-amber-300">
+                This will overwrite all {relations.length} existing relation
+                {relations.length === 1 ? "" : "s"} in {database}. This cannot
+                be undone.
+              </p>
+              <p className="break-all text-[11px] text-zinc-500">
+                {pendingImport.path}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-4 py-3">
+              <button
+                onClick={() => setPendingImport(null)}
+                disabled={importing}
+                className="px-3 py-1.5 rounded text-[12px] text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                data-el="import-relations-confirm"
+                onClick={onConfirmImport}
+                disabled={importing}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-semibold bg-amber-500 text-amber-950 hover:bg-amber-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {importing ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <UploadSimple size={14} />
+                )}
+                {importing ? "Importing…" : "Overwrite & Import"}
               </button>
             </div>
           </div>

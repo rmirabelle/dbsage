@@ -552,7 +552,7 @@ export function DatabaseView({ tab }: Props) {
               openRelations(tab.profileId, tab.profileName, tab.database)
             }
             style={{ fontSize: 13 }}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-violet-950 hover:bg-violet-400 transition-colors"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-white hover:bg-violet-400 transition-colors"
             {...helpHandlers("Open the relations view for this database")}
           >
             <ShareNetwork size={17} /> Relations

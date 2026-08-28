@@ -22,7 +22,6 @@ interface UiState {
   tabsZoom: number;
   focusedPane: PaneId;
   expandedPanelHeight: number;
-  relationsEditorWidth: number;
   sqlPaneHeight: number;
   analysisPanelWidth: number;
   tableCopyPrompt: TableCopyPrompt | null;
@@ -33,7 +32,6 @@ interface UiState {
   resetZoom: (pane: PaneId) => void;
   setFocusedPane: (pane: PaneId) => void;
   setExpandedPanelHeight: (px: number) => void;
-  setRelationsEditorWidth: (px: number) => void;
   setSqlPaneHeight: (px: number) => void;
   setAnalysisPanelWidth: (px: number) => void;
   openTableCopyPrompt: (prompt: TableCopyPrompt) => void;
@@ -49,8 +47,6 @@ const ZOOM_MAX = 2.0;
 const ZOOM_STEP = 0.1;
 const PANEL_MIN = 80;
 const PANEL_MAX = 1200;
-const RELATIONS_EDITOR_MIN = 320;
-const RELATIONS_EDITOR_MAX = 760;
 const SQL_PANE_MIN = 80;
 const SQL_PANE_MAX = 800;
 const ANALYSIS_PANEL_MIN = 360;
@@ -61,7 +57,6 @@ interface Persisted {
   treeZoom?: number;
   tabsZoom?: number;
   expandedPanelHeight?: number;
-  relationsEditorWidth?: number;
   sqlPaneHeight?: number;
   analysisPanelWidth?: number;
 }
@@ -88,7 +83,6 @@ const savePersisted = (state: UiState) => {
       treeZoom: state.treeZoom,
       tabsZoom: state.tabsZoom,
       expandedPanelHeight: state.expandedPanelHeight,
-      relationsEditorWidth: state.relationsEditorWidth,
       sqlPaneHeight: state.sqlPaneHeight,
       analysisPanelWidth: state.analysisPanelWidth,
     };
@@ -109,11 +103,6 @@ export const useUi = create<UiState>((set, get) => ({
     persisted.expandedPanelHeight ?? 240,
     PANEL_MIN,
     PANEL_MAX
-  ),
-  relationsEditorWidth: clamp(
-    persisted.relationsEditorWidth ?? 460,
-    RELATIONS_EDITOR_MIN,
-    RELATIONS_EDITOR_MAX
   ),
   sqlPaneHeight: clamp(persisted.sqlPaneHeight ?? 200, SQL_PANE_MIN, SQL_PANE_MAX),
   analysisPanelWidth: clamp(
@@ -151,17 +140,6 @@ export const useUi = create<UiState>((set, get) => ({
 
   setExpandedPanelHeight: (px) => {
     set({ expandedPanelHeight: clamp(Math.round(px), PANEL_MIN, PANEL_MAX) });
-    savePersisted(get());
-  },
-
-  setRelationsEditorWidth: (px) => {
-    set({
-      relationsEditorWidth: clamp(
-        Math.round(px),
-        RELATIONS_EDITOR_MIN,
-        RELATIONS_EDITOR_MAX
-      ),
-    });
     savePersisted(get());
   },
 
@@ -205,13 +183,6 @@ window.addEventListener("storage", (e) => {
       }),
       ...(p.expandedPanelHeight != null && {
         expandedPanelHeight: clamp(p.expandedPanelHeight, PANEL_MIN, PANEL_MAX),
-      }),
-      ...(p.relationsEditorWidth != null && {
-        relationsEditorWidth: clamp(
-          p.relationsEditorWidth,
-          RELATIONS_EDITOR_MIN,
-          RELATIONS_EDITOR_MAX
-        ),
       }),
       ...(p.sqlPaneHeight != null && {
         sqlPaneHeight: clamp(p.sqlPaneHeight, SQL_PANE_MIN, SQL_PANE_MAX),

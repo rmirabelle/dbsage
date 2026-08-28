@@ -23,6 +23,7 @@ import type {
   QueryHistoryItem,
   QueryResult,
   Relation,
+  RelationsImportPreview,
   RestoreOptions,
   RowsResult,
   SavedQuery,
@@ -305,6 +306,20 @@ export const ipc = {
   }) => invoke<Relation>("save_relation", args),
   deleteRelation: (profileId: string, database: string, id: string) =>
     invoke<void>("delete_relation", { profileId, database, id }),
+  exportRelationsFile: (
+    profileId: string,
+    database: string,
+    path: string
+  ) =>
+    invoke<number>("export_relations_file", { profileId, database, path }),
+  previewRelationsImport: (path: string) =>
+    invoke<RelationsImportPreview>("preview_relations_import", { path }),
+  importRelationsFile: (
+    profileId: string,
+    database: string,
+    path: string
+  ) =>
+    invoke<number>("import_relations_file", { profileId, database, path }),
 
   listFolders: (profileId: string, database: string) =>
     invoke<Folder[]>("list_folders", { profileId, database }),
