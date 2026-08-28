@@ -11,6 +11,7 @@ import {
   CaretDown,
   ArrowUp,
   ArrowDown,
+  DotsSixVertical,
   Asterisk,
   CircleNotch,
   X,
@@ -175,12 +176,18 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
   const removeColumn = (id: string) =>
     setColumns(tab.columns.filter((c) => c.id !== id));
 
-  const moveColumn = (id: string, direction: -1 | 1) => {
-    const idx = tab.columns.findIndex((c) => c.id === id);
-    const target = idx + direction;
-    if (idx < 0 || target < 0 || target >= tab.columns.length) return;
-    const next = tab.columns.slice();
-    [next[idx], next[target]] = [next[target], next[idx]];
+  const reorderColumn = (
+    id: string,
+    targetId: string,
+    edge: "before" | "after"
+  ) => {
+    if (id === targetId) return;
+    const dragged = tab.columns.find((c) => c.id === id);
+    if (!dragged) return;
+    const next = tab.columns.filter((c) => c.id !== id);
+    const targetIndex = next.findIndex((c) => c.id === targetId);
+    if (targetIndex < 0) return;
+    next.splice(targetIndex + (edge === "after" ? 1 : 0), 0, dragged);
     setColumns(next);
   };
 
@@ -335,7 +342,7 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             onAddColumn={addColumn}
             onPatchColumn={patchColumn}
             onRemoveColumn={removeColumn}
-            onMoveColumn={moveColumn}
+            onReorderColumn={reorderColumn}
           />
         )}
         {activeSubTab === "indexes" && (
@@ -393,7 +400,7 @@ function ColumnsEditor({
   onAddColumn,
   onPatchColumn,
   onRemoveColumn,
-  onMoveColumn,
+  onReorderColumn,
 }: {
   columns: ColumnDraft[];
   focusColumnId: string | null;
@@ -401,12 +408,61 @@ function ColumnsEditor({
   onAddColumn: () => void;
   onPatchColumn: (id: string, patch: Partial<ColumnDraft>) => void;
   onRemoveColumn: (id: string) => void;
-  onMoveColumn: (id: string, direction: -1 | 1) => void;
+  onReorderColumn: (
+    id: string,
+    targetId: string,
+    edge: "before" | "after"
+  ) => void;
 }) {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(
     () => new Set(columns.filter(columnHasAdvanced).map((c) => c.id))
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    id: string;
+    edge: "before" | "after";
+  } | null>(null);
+
+  const clearDrag = () => {
+    setDraggedColumnId(null);
+    setDropTarget(null);
+  };
+
+  const dragOverColumn = (
+    e: React.DragEvent<HTMLDivElement>,
+    targetId: string
+  ) => {
+    if (!draggedColumnId || draggedColumnId === targetId) {
+      setDropTarget(null);
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const from = columns.findIndex((c) => c.id === draggedColumnId);
+    const to = columns.findIndex((c) => c.id === targetId);
+    if (from < 0 || to < 0) return;
+    setDropTarget({ id: targetId, edge: from < to ? "after" : "before" });
+  };
+
+  const dropColumn = (
+    e: React.DragEvent<HTMLDivElement>,
+    targetId: string
+  ) => {
+    e.preventDefault();
+    if (draggedColumnId && draggedColumnId !== targetId) {
+      const from = columns.findIndex((c) => c.id === draggedColumnId);
+      const to = columns.findIndex((c) => c.id === targetId);
+      const edge =
+        dropTarget?.id === targetId
+          ? dropTarget.edge
+          : from < to
+          ? "after"
+          : "before";
+      onReorderColumn(draggedColumnId, targetId, edge);
+    }
+    clearDrag();
+  };
 
   /** Focus + select the freshly-added column's name input. */
   useEffect(() => {
@@ -477,8 +533,28 @@ function ColumnsEditor({
           <div className="space-y-0.5">
             {columns.map((col, index) => {
               const open = expandedRows.has(col.id);
+              const targetEdge =
+                dropTarget?.id === col.id ? dropTarget.edge : null;
               return (
-                <div key={col.id}>
+                <div
+                  key={col.id}
+                  data-dragging={draggedColumnId === col.id ? "true" : undefined}
+                  onDragOver={(e) => dragOverColumn(e, col.id)}
+                  onDrop={(e) => dropColumn(e, col.id)}
+                  className={clsx(
+                    "relative",
+                    draggedColumnId === col.id && "opacity-50"
+                  )}
+                >
+                  {targetEdge && (
+                    <div
+                      data-el="column-drop-indicator"
+                      className={clsx(
+                        "pointer-events-none absolute left-1 right-1 z-30 h-[2px] bg-blue-400 shadow-[0_0_6px_rgba(96,165,250,0.9)]",
+                        targetEdge === "before" ? "-top-px" : "-bottom-px"
+                      )}
+                    />
+                  )}
                   <div data-el="column-row" className={clsx(HEADER_GRID, "px-1")}>
                     <button
                       data-el="col-expand"
@@ -569,24 +645,41 @@ function ColumnsEditor({
                     />
                     <div className="flex items-center justify-end gap-0.5">
                       <button
-                        data-el="col-move-up"
-                        onClick={() => onMoveColumn(col.id, -1)}
-                        disabled={index === 0}
-                        className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-500"
-                        aria-label="Move column up"
-                        title="Move up"
+                        data-el="col-drag-handle"
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData("text/plain", col.id);
+                          setDraggedColumnId(col.id);
+                          setDropTarget(null);
+                        }}
+                        onDragEnd={clearDrag}
+                        onKeyDown={(e) => {
+                          if (!e.altKey) return;
+                          if (e.key === "ArrowUp" && index > 0) {
+                            e.preventDefault();
+                            onReorderColumn(
+                              col.id,
+                              columns[index - 1].id,
+                              "before"
+                            );
+                          } else if (
+                            e.key === "ArrowDown" &&
+                            index < columns.length - 1
+                          ) {
+                            e.preventDefault();
+                            onReorderColumn(
+                              col.id,
+                              columns[index + 1].id,
+                              "after"
+                            );
+                          }
+                        }}
+                        className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-blue-300 hover:bg-zinc-800 cursor-grab active:cursor-grabbing"
+                        aria-label={`Drag ${col.name || "column"} to reorder`}
+                        title="Drag to reorder · Alt+Up/Down"
                       >
-                        <ArrowUp size={13} />
-                      </button>
-                      <button
-                        data-el="col-move-down"
-                        onClick={() => onMoveColumn(col.id, 1)}
-                        disabled={index === columns.length - 1}
-                        className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-500"
-                        aria-label="Move column down"
-                        title="Move down"
-                      >
-                        <ArrowDown size={13} />
+                        <DotsSixVertical size={16} weight="bold" />
                       </button>
                       <button
                         data-el="col-delete"

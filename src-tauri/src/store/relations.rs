@@ -103,6 +103,28 @@ pub fn save(
         .entry(database.to_string())
         .or_default();
 
+    let editing_index = id
+        .filter(|s| !s.is_empty())
+        .and_then(|id| list.iter().position(|r| r.id == id));
+    let same_endpoint = |r: &Relation| {
+        r.from_table == from_table
+            && r.from_column == from_column
+            && r.to_table == to_table
+            && r.to_column == to_column
+    };
+    let already_had_endpoint = editing_index
+        .map(|index| same_endpoint(&list[index]))
+        .unwrap_or(false);
+    let duplicates_another = list
+        .iter()
+        .enumerate()
+        .any(|(index, r)| Some(index) != editing_index && same_endpoint(r));
+    if duplicates_another && !already_had_endpoint {
+        return Err(AppError::Other(format!(
+            "relation already exists: {from_table}.{from_column} -> {to_table}.{to_column}"
+        )));
+    }
+
     if let Some(id) = id.filter(|s| !s.is_empty()) {
         if let Some(r) = list.iter_mut().find(|r| r.id == id) {
             r.from_table = from_table.to_string();

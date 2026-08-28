@@ -108,16 +108,9 @@ interface Props {
   /** Suppress the native hover tooltip showing a cell's full value (used in peek
    * windows, where the value tooltip is noise). */
   hideValueTooltip?: boolean;
-  /** Reports a single-click on a cell (after it becomes active) with the cell's
-   * on-screen rect, so the host can anchor a menu to it — e.g. the relation
-   * dropdown on peekable cells. Called with null on double-click (edit begins),
-   * so an open menu can be dismissed. */
-  onCellMenu?: (
-    cell: { rowIndex: number; column: string; rect: DOMRect } | null
-  ) => void;
   /** Reports a right-click on a cell at the pointer position, so the host can
-   * open its own cell menu (the relation editor). Without it, right-clicking a
-   * cell does nothing — the row menu lives on the gutter. */
+   * open its own cell menu. Without it, right-clicking a cell does nothing —
+   * the row menu lives on the gutter. */
   onCellContextMenu?: (cell: {
     rowIndex: number;
     column: string;
@@ -181,7 +174,6 @@ export function DataGrid({
   onDuplicateRows,
   peekableColumns,
   hideValueTooltip = false,
-  onCellMenu,
   onCellContextMenu,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -242,9 +234,6 @@ export function DataGrid({
   } | null>(null);
   const [cellAnchor, setCellAnchor] = useState<number | null>(null);
   const cellDraggingRef = useRef(false);
-  /** True once a cell drag extended past its origin — suppresses the relation
-   * menu that a clean single click would open. */
-  const cellDragMovedRef = useRef(false);
   /** A pending multi-cell edit session. "type" mirrors one live text into every
    * selected cell; "paste" stages one clipboard line per cell. Enter commits
    * (via onBatchEdit), Esc reverts — nothing touches the DB until commit. */
@@ -422,7 +411,6 @@ export function DataGrid({
       setSelectedRows(new Set());
       setAnchor(null);
     }
-    cellDragMovedRef.current = false;
     onActiveCellChange({ rowIndex, column });
     if (e.shiftKey && cellSel?.column === column && cellAnchor != null) {
       selectCellRange(column, cellAnchor, rowIndex, e.ctrlKey || e.metaKey);
@@ -448,7 +436,6 @@ export function DataGrid({
     /* A cell drag extends the cell selection down its anchor column no matter
        which column the pointer is over — the selection is single-column. */
     if (cellDraggingRef.current && cellSel && cellAnchor != null) {
-      cellDragMovedRef.current = true;
       selectCellRange(cellSel.column, cellAnchor, index);
       return;
     }
@@ -1019,14 +1006,6 @@ export function DataGrid({
                         onCellMouseDown={(e) =>
                           handleCellMouseDown(vItem.index, col.name, e)
                         }
-                        onMenu={(rect) => {
-                          if (rect && cellDragMovedRef.current) return;
-                          onCellMenu?.(
-                            rect
-                              ? { rowIndex: vItem.index, column: col.name, rect }
-                              : null
-                          );
-                        }}
                         onContext={
                           onCellContextMenu &&
                           ((x, y) => {
@@ -1494,7 +1473,6 @@ function Cell({
   isPeekable,
   hideValueTooltip,
   onCellMouseDown,
-  onMenu,
   onContext,
   onBeginEdit,
   onCommit,
@@ -1517,9 +1495,6 @@ function Cell({
   hideValueTooltip: boolean;
   /** Mousedown drives cell selection (click, shift/ctrl-click, drag start). */
   onCellMouseDown: (e: React.MouseEvent) => void;
-  /** Single-click reports the cell rect (anchor a menu); double-click reports
-   * null (dismiss it — editing starts). */
-  onMenu?: (rect: DOMRect | null) => void;
   /** Right-click, reported at the pointer position. */
   onContext?: (x: number, y: number) => void;
   onBeginEdit: () => void;
@@ -1573,17 +1548,10 @@ function Cell({
       data-el="grid-cell"
       data-active-cell={isActive ? "true" : undefined}
       onMouseDown={onCellMouseDown}
-      onClick={(e) => {
-        e.stopPropagation();
-        /* Selection happened on mousedown; a clean unmodified click also
-           offers the relation menu. */
-        if (e.shiftKey || e.ctrlKey || e.metaKey) return;
-        onMenu?.(e.currentTarget.getBoundingClientRect());
-      }}
+      onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => {
         if (!editable) return;
         e.stopPropagation();
-        onMenu?.(null);
         onBeginEdit();
       }}
       onContextMenu={
