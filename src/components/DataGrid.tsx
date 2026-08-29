@@ -15,6 +15,7 @@ import {
   Key,
   Trash,
   Copy,
+  Article,
   XCircle,
   BracketsCurly,
   FileCsv,
@@ -33,6 +34,7 @@ import { ColumnHeaderMenu } from "./ColumnHeaderMenu";
 import { Tooltip } from "./Tooltip";
 import { ColumnsVisibilityMenu } from "./ColumnsVisibilityMenu";
 import { RowDeleteConfirmDialog } from "./RowDeleteConfirmDialog";
+import { FormViewDialog } from "./FormViewDialog";
 import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { useNativeMenuLayer } from "../lib/useNativeMenuLayer";
@@ -44,7 +46,7 @@ import {
   type CopyAsFormat,
   type ResultCopyFormat,
 } from "../lib/copyAs";
-import { notifyError, notifySuccess } from "../state/notify";
+import { notifyError, notifyInfo, notifySuccess } from "../state/notify";
 import { helpHandlers } from "../state/help";
 
 interface Props {
@@ -225,7 +227,9 @@ export function DataGrid({
     x: number;
     y: number;
     indices: number[];
+    focusIndex: number;
   } | null>(null);
+  const [formRowIndex, setFormRowIndex] = useState<number | null>(null);
   const [cellCopyMenu, setCellCopyMenu] = useState<{
     x: number;
     y: number;
@@ -689,6 +693,15 @@ export function DataGrid({
       }))
     );
     setBatch({ mode: "paste", edits });
+    /* The context-menu button owns focus when this action fires. Once its
+       portal unmounts, explicitly return focus to the grid so its staged-edit
+       Enter/Escape handler remains active. */
+    requestAnimationFrame(() => scrollRef.current?.focus());
+    notifyInfo(
+      `NULL staged for ${edits.length} cell${
+        edits.length === 1 ? "" : "s"
+      } — press Enter to apply or Escape to cancel.`
+    );
   };
 
   /** Batch operations reject primary-key targets; direct PK editing remains
@@ -863,7 +876,12 @@ export function DataGrid({
       setSelectedRows(new Set([index]));
       setAnchor(index);
     }
-    setRowMenu({ x: e.clientX, y: e.clientY, indices });
+    setRowMenu({ x: e.clientX, y: e.clientY, indices, focusIndex: index });
+  };
+
+  const openFormView = (rowIndex: number) => {
+    setRowMenu(null);
+    setFormRowIndex(rowIndex);
   };
 
   /* Open the in-app confirmation; the actual delete runs from confirmDelete. */
@@ -1399,6 +1417,8 @@ export function DataGrid({
           canCopyResult={resultCopy}
           canDelete={!!onDeleteRows}
           canDuplicate={canDuplicateRows && !!onInsertRows}
+          canOpenForm={!!copyTarget}
+          onOpenForm={() => openFormView(rowMenu.focusIndex)}
           onPick={(format, label) => copyRowsAs(format, label, rowMenu.indices)}
           onPickResult={(format, label) =>
             copyResultsAs(format, label, rowMenu.indices)
@@ -1439,6 +1459,17 @@ export function DataGrid({
           }
           onConfirm={confirmDelete}
           onClose={() => setDeleteConfirm(null)}
+        />
+      )}
+
+      {formRowIndex !== null && copyTarget && rows[formRowIndex] && (
+        <FormViewDialog
+          table={copyTarget.table}
+          columns={columns}
+          rows={rows}
+          initialRowIndex={formRowIndex}
+          offset={offset}
+          onClose={() => setFormRowIndex(null)}
         />
       )}
     </div>
@@ -1574,6 +1605,18 @@ function CellSelectionCopyMenu({
       onMouseDown={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
     >
+      {canSetNull && (
+        <>
+          <button
+            onClick={onSetNull}
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-amber-200 hover:bg-amber-950/50 whitespace-nowrap"
+          >
+            <XCircle size={14} className="shrink-0 text-amber-400" />
+            Set to NULL
+          </button>
+          <div className="my-1 border-t border-zinc-800" />
+        </>
+      )}
       <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
         Copy {rowCount} row{rowCount === 1 ? "" : "s"}, {columnCount} column
         {columnCount === 1 ? "" : "s"}
@@ -1585,15 +1628,6 @@ function CellSelectionCopyMenu({
         >
           <RowsPlusBottom size={14} className="shrink-0 text-emerald-400" />
           To New Rows
-        </button>
-      )}
-      {canSetNull && (
-        <button
-          onClick={onSetNull}
-          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-amber-200 hover:bg-amber-950/50 whitespace-nowrap"
-        >
-          <XCircle size={14} className="shrink-0 text-amber-400" />
-          Set to NULL
         </button>
       )}
       <button
@@ -1623,6 +1657,8 @@ function RowContextMenu({
   canCopyResult,
   canDelete,
   canDuplicate,
+  canOpenForm,
+  onOpenForm,
   onPick,
   onPickResult,
   onDelete,
@@ -1636,6 +1672,8 @@ function RowContextMenu({
   canCopyResult: boolean;
   canDelete: boolean;
   canDuplicate: boolean;
+  canOpenForm: boolean;
+  onOpenForm: () => void;
   onPick: (format: CopyAsFormat, label: string) => void;
   onPickResult: (format: ResultCopyFormat, label: string) => void;
   onDelete: () => void;
@@ -1664,19 +1702,28 @@ function RowContextMenu({
       onMouseDown={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 w-max rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-zinc-200"
     >
-      {canDuplicate && (
+      {canOpenForm && (
         <>
           <button
-            onClick={onDuplicate}
-            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-emerald-200 hover:bg-emerald-950/50 whitespace-nowrap"
+            onClick={onOpenForm}
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-zinc-100 hover:bg-zinc-800 whitespace-nowrap"
           >
-            <Copy size={14} className="text-emerald-400 shrink-0" />
-            Duplicate {count} row{count === 1 ? "" : "s"}
+            <Article size={14} className="shrink-0 text-emerald-400" />
+            Form View
           </button>
-          {(canDelete || canCopy || canCopyResult) && (
+          {(canDuplicate || canDelete || canCopy || canCopyResult) && (
             <div className="my-1 border-t border-zinc-800" />
           )}
         </>
+      )}
+      {canDuplicate && (
+        <button
+          onClick={onDuplicate}
+          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-emerald-200 hover:bg-emerald-950/50 whitespace-nowrap"
+        >
+          <Copy size={14} className="text-emerald-400 shrink-0" />
+          Duplicate {count} row{count === 1 ? "" : "s"}
+        </button>
       )}
       {canDelete && (
         <>
@@ -1766,12 +1813,14 @@ function HeaderRow({
   onColumnClick: (column: string, rect: DOMRect) => void;
   onColumnsButtonClick: (rect: DOMRect) => void;
 }) {
-  /** Any active filter (including one on a column scrolled out of view or
-   * hidden) lights a 2px amber bar across the top of the header, so a restored
-   * filter is impossible to miss. Complements — does not replace — the amber
-   * highlight on the filtered column headers themselves. */
+  /** Any active filter — value/JSON filters or column visibility from the
+   * eyeball menu — lights a 2px amber bar across the top of the header, so a
+   * restored filtered view is impossible to miss. Complements — does not
+   * replace — the amber highlight on each filtered control/header. */
   const anyFiltered =
-    filterByColumn.size > 0 || Object.keys(jsonDisplay).length > 0;
+    hasHiddenColumns ||
+    filterByColumn.size > 0 ||
+    Object.keys(jsonDisplay).length > 0;
   return (
     <div
       data-el="grid-header"
