@@ -205,9 +205,14 @@ export function CompareDatabaseDialog({
       }}
     >
       <div
+        data-el="compare-database-dialog"
         role="dialog"
         aria-modal="true"
-        className="relative w-[520px] rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl"
+        style={{
+          resize: "both",
+          height: pickTables ? "min(650px, calc(100vh - 32px))" : undefined,
+        }}
+        className="relative flex w-[520px] min-h-[315px] min-w-[440px] max-h-[calc(100vh-32px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl"
       >
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-zinc-800">
           <GitDiff size={18} className="text-amber-400" />
@@ -228,7 +233,7 @@ export function CompareDatabaseDialog({
           </button>
         </div>
 
-        <div className="flex flex-col gap-3 px-4 py-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-4 py-4">
           <div className="text-[12px] text-zinc-400">Compare it with:</div>
           <label className="flex items-center gap-3">
             <span className="w-24 shrink-0 text-[12px] text-zinc-400">
@@ -285,7 +290,7 @@ export function CompareDatabaseDialog({
           </label>
 
           {pickTables && (
-            <div className="flex flex-col gap-2">
+            <div className="flex min-h-[220px] flex-1 flex-col gap-2">
               <div className="flex items-center gap-2">
                 <input
                   data-el="compare-table-filter"
@@ -311,7 +316,7 @@ export function CompareDatabaseDialog({
                   Clear shown
                 </button>
               </div>
-              <div className="h-[280px] overflow-y-auto rounded border border-zinc-800 bg-zinc-950">
+              <div className="min-h-[160px] flex-1 overflow-y-auto rounded border border-zinc-800 bg-zinc-950">
                 {allTables === null ? (
                   <div className="px-3 py-4 text-[12px] text-zinc-500">
                     Loading tables…
@@ -376,6 +381,10 @@ export function CompareDatabaseDialog({
             Compare
           </button>
         </div>
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-1 right-1 h-2.5 w-2.5 border-b-2 border-r-2 border-zinc-600"
+        />
       </div>
     </div>
   );

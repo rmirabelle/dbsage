@@ -159,9 +159,11 @@ export function CompareSchemaDialog({
       }}
     >
       <div
+        data-el="compare-schema-dialog"
         role="dialog"
         aria-modal="true"
-        className="relative w-[440px] rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl"
+        style={{ resize: "both" }}
+        className="relative flex h-[310px] w-[440px] min-h-[280px] min-w-[380px] max-h-[calc(100vh-32px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl"
       >
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-zinc-800">
           <GitDiff size={18} className="text-amber-400" />
@@ -182,7 +184,7 @@ export function CompareSchemaDialog({
           </button>
         </div>
 
-        <div className="flex flex-col gap-3 px-4 py-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-4 py-4">
           <div className="text-[12px] text-zinc-400">Compare it with:</div>
           <label className="flex items-center gap-3">
             <span className="w-24 shrink-0 text-[12px] text-zinc-400">
@@ -254,6 +256,10 @@ export function CompareSchemaDialog({
             Compare
           </button>
         </div>
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-1 right-1 h-2.5 w-2.5 border-b-2 border-r-2 border-zinc-600"
+        />
       </div>
     </div>
   );

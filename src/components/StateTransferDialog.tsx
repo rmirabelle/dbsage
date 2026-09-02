@@ -424,16 +424,19 @@ function Footer({
   children: React.ReactNode;
 }) {
   return (
-    <div className="px-4 py-3 border-t border-zinc-800 flex items-center justify-between gap-3">
-      <div className="flex items-center gap-1.5 min-w-0 text-[11px]">
-        {error && (
-          <span className="flex items-center gap-1.5 text-rose-400 truncate">
-            <AlertCircle size={14} className="shrink-0" />
-            <span className="truncate">{error}</span>
+    <div className="flex max-h-[45vh] flex-col gap-3 overflow-y-auto border-t border-zinc-800 px-4 py-3">
+      {error && (
+        <div
+          role="alert"
+          className="flex min-w-0 items-start gap-1.5 text-[11px] text-rose-400"
+        >
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 select-text whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {error}
           </span>
-        )}
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
+        </div>
+      )}
+      <div className="flex shrink-0 items-center justify-end gap-2">
         <button onClick={onClose} className="dbs-btn-secondary">
           Cancel
         </button>

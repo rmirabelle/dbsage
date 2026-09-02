@@ -13,3 +13,4 @@ src-tauri/Cargo.lock
 .DS_Store
 Thumbs.db
 *.log
+.codex-tmp/screenshot-mysql/

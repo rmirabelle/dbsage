@@ -348,12 +348,15 @@ export function PeekPanel({
       }
       if (!pickerRef.current?.contains(e.target as Node)) close();
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
     window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", close);
+    window.addEventListener("keydown", onKey);
     window.addEventListener("scroll", close, true);
     return () => {
       window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", close);
+      window.removeEventListener("keydown", onKey);
       window.removeEventListener("scroll", close, true);
     };
   }, [picker]);

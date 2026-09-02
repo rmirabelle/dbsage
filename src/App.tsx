@@ -5,6 +5,7 @@ import { Tabs } from "./components/Tabs";
 import { Splitter } from "./components/Splitter";
 import { TabDndProvider } from "./components/TabDndProvider";
 import { AboutDialog } from "./components/AboutDialog";
+import { HelpDialog } from "./components/HelpDialog";
 import {
   StateTransferDialog,
   type TransferMode,
@@ -37,11 +38,23 @@ export default function App() {
   const closeRestore = useStore((s) => s.closeRestore);
 
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [transferMode, setTransferMode] = useState<TransferMode | null>(null);
   const [appVersion, setAppVersion] = useState("");
   const [startupUpdate, setStartupUpdate] = useState<UpdateInfo | null>(null);
 
   useZoomShortcuts();
+
+  /* F1 opens the full help library from anywhere in the main window. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F1") return;
+      e.preventDefault();
+      setHelpOpen(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   /* Ctrl+W closes the active tab (routes through requestCloseTab so dirty
      designer tabs still hit the unsaved-changes confirmation). */
@@ -154,6 +167,7 @@ export default function App() {
   return (
     <div data-el="app-root" className="h-screen w-screen flex flex-col bg-zinc-950 text-zinc-200">
       <TitleBar
+        onHelp={() => setHelpOpen(true)}
         onAbout={() => setAboutOpen(true)}
         onExport={() => setTransferMode("export")}
         onImport={() => setTransferMode("import")}
@@ -214,6 +228,7 @@ export default function App() {
         initialUpdateInfo={startupUpdate}
         onClose={() => setAboutOpen(false)}
       />
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
       {transferMode && (
         <StateTransferDialog
           mode={transferMode}

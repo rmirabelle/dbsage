@@ -6,6 +6,7 @@ import {
   MagnifyingGlassPlus,
   MagnifyingGlassMinus,
   ArrowCounterClockwise,
+  BookOpenText,
   Info,
 } from "@phosphor-icons/react";
 import { useUi, ZOOM_BOUNDS } from "../state/ui";
@@ -23,13 +24,20 @@ const resetFocusedZoom = () => {
 };
 
 interface Props {
+  onHelp: () => void;
   onAbout: () => void;
   onExport: () => void;
   onImport: () => void;
   updateAvailable?: boolean;
 }
 
-export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props) {
+export function TitleBar({
+  onHelp,
+  onAbout,
+  onExport,
+  onImport,
+  updateAvailable,
+}: Props) {
   return (
     <div
       data-el="titlebar"
@@ -118,19 +126,36 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
           </TitleBarMenu>
           <TitleBarMenu label="Help">
             {(close) => (
-              <button
-                data-el="menu-about"
-                onClick={() => {
-                  close();
-                  onAbout();
-                }}
-                className={MENU_ITEM_CLASS}
-              >
-                <span className={MENU_LABEL_CLASS}>
-                  <Info size={14} className={MENU_ICON_CLASS} />
-                  About DB Sage
-                </span>
-              </button>
+              <>
+                <button
+                  data-el="menu-open-help"
+                  onClick={() => {
+                    close();
+                    onHelp();
+                  }}
+                  className={MENU_ITEM_CLASS}
+                >
+                  <span className={MENU_LABEL_CLASS}>
+                    <BookOpenText size={14} className={MENU_ICON_CLASS} />
+                    DB Sage Help
+                  </span>
+                  <span className="text-[10px] text-zinc-500">F1</span>
+                </button>
+                <div className="my-1 border-t border-zinc-800" />
+                <button
+                  data-el="menu-about"
+                  onClick={() => {
+                    close();
+                    onAbout();
+                  }}
+                  className={MENU_ITEM_CLASS}
+                >
+                  <span className={MENU_LABEL_CLASS}>
+                    <Info size={14} className={MENU_ICON_CLASS} />
+                    About DB Sage
+                  </span>
+                </button>
+              </>
             )}
           </TitleBarMenu>
           {updateAvailable && (
@@ -151,6 +176,7 @@ export function TitleBar({ onAbout, onExport, onImport, updateAvailable }: Props
     </div>
   );
 }
+
 
 const MENU_ITEM_CLASS =
   "flex w-full items-center justify-between gap-6 px-3 py-1.5 text-left text-[12px] text-zinc-200 hover:bg-zinc-800";
@@ -205,4 +231,3 @@ function TitleBarMenu({
     </div>
   );
 }
-

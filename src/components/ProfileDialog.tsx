@@ -100,8 +100,13 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div data-el="profile-dialog" className="w-[440px] rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/60">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+      <div
+        data-el="profile-dialog"
+        role="dialog"
+        aria-modal="true"
+        className="flex max-h-[calc(100vh-32px)] w-[440px] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/60"
+      >
+        <div className="flex shrink-0 items-center justify-between px-4 py-3 border-b border-zinc-800">
           <h2 className="text-sm font-medium text-zinc-100">
             {editing ? "Edit connection" : "New connection"}
           </h2>
@@ -115,7 +120,7 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
           </button>
         </div>
 
-        <div className="px-4 py-4 space-y-3">
+        <div className="min-h-0 overflow-y-auto px-4 py-4 space-y-3">
           <Field label="Name">
             <input
               autoFocus
@@ -200,8 +205,8 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
           </label>
         </div>
 
-        <div className="px-4 py-3 border-t border-zinc-800 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0 text-[11px]">
+        <div className="flex max-h-[45vh] shrink-0 flex-col gap-3 overflow-y-auto border-t border-zinc-800 px-4 py-3">
+          <div className="min-w-0 text-[11px]">
             {test.kind === "testing" && (
               <span className="flex items-center gap-1.5 text-zinc-400">
                 <Loader2 size={14} className="animate-spin" /> Testing…
@@ -213,19 +218,31 @@ export function ProfileDialog({ profile, onClose, onSaved }: Props) {
               </span>
             )}
             {test.kind === "err" && (
-              <span className="flex items-center gap-1.5 text-rose-400 truncate">
-                <AlertCircle size={14} className="shrink-0" />
-                <span className="truncate">{test.message}</span>
-              </span>
+              <div
+                role="alert"
+                data-el="connection-test-error"
+                className="flex items-start gap-1.5 text-rose-400"
+              >
+                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                <span className="min-w-0 select-text whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                  {test.message}
+                </span>
+              </div>
             )}
             {error && (
-              <span className="flex items-center gap-1.5 text-rose-400 truncate">
-                <AlertCircle size={14} className="shrink-0" />
-                <span className="truncate">{error}</span>
-              </span>
+              <div
+                role="alert"
+                data-el="connection-save-error"
+                className="flex items-start gap-1.5 text-rose-400"
+              >
+                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                <span className="min-w-0 select-text whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                  {error}
+                </span>
+              </div>
             )}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex shrink-0 items-center justify-end gap-2">
             <button
               data-el="test-connection-btn"
               onClick={handleTest}

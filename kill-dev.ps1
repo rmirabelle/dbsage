@@ -1,10 +1,10 @@
 <#
   Kills lingering dev processes after `npm run tauri dev`.
-  Tree-kills the app exe and frees the Vite port (1420).
+  Tree-kills the app exe and frees the Vite port (14210).
 #>
 
 $appName = "dbsage"
-$vitePort = 1420
+$vitePort = 14210
 
 Get-Process | Where-Object { $_.ProcessName -eq $appName } | ForEach-Object {
     Write-Host "Killing $($_.ProcessName) (PID $($_.Id))"
