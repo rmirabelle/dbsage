@@ -31,7 +31,7 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { useStore, isDesignerTabDirty } from "../state/store";
 import { useUi } from "../state/ui";
 import { notifyError, notifySuccess } from "../state/notify";
@@ -70,7 +70,10 @@ import {
 import {
   relKey,
   checkRelatedExistence,
+  TABLE_CHANGED_EVENT,
+  type TableChanged,
 } from "../lib/relatedExistence";
+import { previewCascadeTargets } from "../lib/rowDelete";
 
 const EMPTY_RELATIONS: Relation[] = [];
 
@@ -689,6 +692,27 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     };
   }, [picker]);
 
+  /* Rows changed in one of the menu's target tables (deleted from a peek
+     window, say): its enabled/disabled entries are stale — re-check them. */
+  useEffect(() => {
+    if (!picker) return;
+    const { cell, x, y, matches } = picker;
+    const un = listen<TableChanged>(TABLE_CHANGED_EVENT, (e) => {
+      const m = e.payload;
+      if (
+        m.profileId === tab.profileId &&
+        m.database === tab.database &&
+        matches.some((t) => t.table === m.table)
+      ) {
+        void openRelationsMenu({ ...cell, x, y });
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picker]);
+
   useEffect(() => {
     loadRelations(tab.profileId, tab.database).catch(() => {});
   }, [tab.profileId, tab.database, loadRelations]);
@@ -846,57 +870,21 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     });
   };
 
-  /** Related-row cascade preview for a pending delete: relations FROM this
-   * table that fan outward — has_many (one-to-many) always; has_one only when
-   * anchored on a PK column (one-to-one). A has_one hanging off an FK column
-   * is many-to-one (a shared parent) and is never offered for cascade. Only
-   * targets that actually hold matching rows are returned. */
-  const previewCascade = async (
-    indices: number[]
-  ): Promise<CascadeTarget[]> => {
-    const data = tab.data;
-    if (!data) return [];
-    const pkCols = new Set(
-      data.columns.filter((c) => c.key === "PRI").map((c) => c.name)
-    );
-    const eligible = relations.filter(
-      (r) =>
-        r.fromTable === tab.table &&
-        (r.kind === "has_many" || pkCols.has(r.fromColumn))
-    );
-    /* Two relations can share a target table.column — count each once. */
-    const seen = new Set<string>();
-    const targets: CascadeTarget[] = [];
-    await Promise.all(
-      eligible.map(async (r) => {
-        const key = `${r.toTable}::${r.toColumn}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        const values = [
-          ...new Set(
-            indices
-              .map((i) => cellToFilterValue(data.rows[i]?.[r.fromColumn]))
-              .filter((v): v is string => v != null)
-          ),
-        ];
-        if (values.length === 0) return;
-        const counts = await Promise.all(
-          values.map((v) =>
-            ipc.countRows({
-              profileId: tab.profileId,
-              database: tab.database,
-              table: r.toTable,
-              filters: [{ column: r.toColumn, op: "equals", value: v }],
-            })
-          )
-        );
-        const count = counts.reduce((a, b) => a + b, 0);
-        if (count > 0)
-          targets.push({ table: r.toTable, column: r.toColumn, values, count });
-      })
-    );
-    return targets.sort((a, b) => a.table.localeCompare(b.table));
-  };
+  /** Related-row cascade preview for a pending delete (see rowDelete.ts). */
+  const previewCascade = (indices: number[]): Promise<CascadeTarget[]> =>
+    tab.data
+      ? previewCascadeTargets(
+          {
+            profileId: tab.profileId,
+            database: tab.database,
+            table: tab.table,
+            columns: tab.data.columns,
+            rows: tab.data.rows,
+          },
+          relations,
+          indices
+        )
+      : Promise.resolve([]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">

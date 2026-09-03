@@ -11,7 +11,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
@@ -30,11 +30,18 @@ import {
 import {
   relKey,
   checkRelatedExistence,
+  TABLE_CHANGED_EVENT,
+  type TableChanged,
 } from "../lib/relatedExistence";
+import {
+  deleteRowsWithCascade,
+  previewCascadeTargets,
+} from "../lib/rowDelete";
 import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { useNativeMenuLayer } from "../lib/useNativeMenuLayer";
 import type {
+  CascadeTarget,
   ColumnFilter,
   PeekTarget,
   Relation,
@@ -100,6 +107,8 @@ export function PeekPanel({
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** Bumped after a delete so the rows and count re-fetch. */
+  const [reloadKey, setReloadKey] = useState(0);
 
   const baseFilter: ColumnFilter = {
     column: target.column,
@@ -137,7 +146,7 @@ export function PeekPanel({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, database, target.table, filtersKey, sort]);
+  }, [profileId, database, target.table, filtersKey, sort, reloadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,7 +162,7 @@ export function PeekPanel({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, database, target.table, filtersKey]);
+  }, [profileId, database, target.table, filtersKey, reloadKey]);
 
   const onFilterChange = (column: string, filter: ColumnFilter | null) =>
     setExtraFilters((prev) => {
@@ -258,6 +267,40 @@ export function PeekPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [confirmCloseAll]);
 
+  const hasPrimaryKey = data?.columns.some((c) => c.key === "PRI") ?? false;
+  const rowSet = () =>
+    data
+      ? {
+          profileId,
+          database,
+          table: target.table,
+          columns: data.columns,
+          rows: data.rows,
+        }
+      : null;
+
+  /** Same cascade preview as the main table view (see rowDelete.ts). */
+  const previewCascade = (indices: number[]): Promise<CascadeTarget[]> => {
+    const set = rowSet();
+    return set
+      ? previewCascadeTargets(set, relations, indices)
+      : Promise.resolve([]);
+  };
+
+  /** Delete by primary key (cascading first), then re-fetch the peek. */
+  const deleteRows = async (
+    indices: number[],
+    cascade: CascadeTarget[] | null
+  ) => {
+    const set = rowSet();
+    if (!set) return;
+    try {
+      await deleteRowsWithCascade(set, indices, cascade);
+    } finally {
+      setReloadKey((k) => k + 1);
+    }
+  };
+
   const openChild = (t: RowRelationTarget) => {
     if (t.value == null) return;
     onOpenChildPeek(t, t.sourceColumn, t.value);
@@ -359,6 +402,27 @@ export function PeekPanel({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("scroll", close, true);
     };
+  }, [picker]);
+
+  /* Rows changed in one of the menu's target tables (deleted from another
+     window, say): its enabled/disabled entries are stale — re-check them. */
+  useEffect(() => {
+    if (!picker) return;
+    const { cell, x, y, matches } = picker;
+    const un = listen<TableChanged>(TABLE_CHANGED_EVENT, (e) => {
+      const m = e.payload;
+      if (
+        m.profileId === profileId &&
+        m.database === database &&
+        matches.some((t) => t.table === m.table)
+      ) {
+        void openRelationsMenu({ ...cell, x, y });
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picker]);
 
   /* Clear a stale active cell when the rows change (re-fetch / sort / filter). */
@@ -476,6 +540,8 @@ export function PeekPanel({
                 })
               }
               onCellEdit={async () => {}}
+              onDeleteRows={hasPrimaryKey ? deleteRows : undefined}
+              onCascadePreview={hasPrimaryKey ? previewCascade : undefined}
             />
             <div className="pointer-events-none absolute inset-0 bg-violet-500/[0.06]" />
           </div>

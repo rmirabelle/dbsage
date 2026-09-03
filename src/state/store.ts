@@ -15,6 +15,8 @@ import {
 import { notifyError, notifySuccess, notifyInfo } from "./notify";
 import { analyzeQueryBundle } from "../lib/queryAnalysis";
 import { splitSqlStatements, returnsResultSet } from "../lib/splitSql";
+import { deleteRowsWithCascade, toIpcString } from "../lib/rowDelete";
+import { invalidateRelatedExistence } from "../lib/relatedExistence";
 import type {
   CascadeTarget,
   ColumnFilter,
@@ -2670,6 +2672,7 @@ export const useStore = create<Store>((set, get) => ({
       column,
       value: newValue,
     });
+    invalidateRelatedExistence(tab.profileId, tab.database, tab.table);
     await loadTabPage(tabId, tab.page, set, get);
   },
 
@@ -2698,6 +2701,7 @@ export const useStore = create<Store>((set, get) => ({
         });
       }
     } finally {
+      invalidateRelatedExistence(tab.profileId, tab.database, tab.table);
       await loadTabPage(tabId, tab.page, set, get);
     }
   },
@@ -2711,6 +2715,7 @@ export const useStore = create<Store>((set, get) => ({
       table: tab.table,
       values,
     });
+    invalidateRelatedExistence(tab.profileId, tab.database, tab.table);
     /* Row count changed — drop the exact count and reload the current page. */
     set((s) => ({
       tabs: s.tabs.map((t) =>
@@ -2729,6 +2734,7 @@ export const useStore = create<Store>((set, get) => ({
       table: tab.table,
       rows,
     });
+    invalidateRelatedExistence(tab.profileId, tab.database, tab.table);
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: null } : t
@@ -2740,35 +2746,17 @@ export const useStore = create<Store>((set, get) => ({
   deleteRows: async (tabId, rowIndices, cascade) => {
     const tab = get().tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "rows" || !tab.data) return;
-    const pkColumns = tab.data.columns.filter((c) => c.key === "PRI");
-    if (pkColumns.length === 0) {
-      throw new Error("Table has no primary key - row deletion is disabled.");
-    }
-    /* Cascade first (related rows, then the rows themselves), so a failure
-       midway never leaves orphaned related rows behind. */
-    for (const c of cascade ?? []) {
-      await ipc.deleteRowsByValues({
-        profileId: tab.profileId,
-        database: tab.database,
-        table: c.table,
-        column: c.column,
-        values: c.values,
-      });
-    }
-    for (const rowIndex of rowIndices) {
-      const row = tab.data.rows[rowIndex];
-      if (!row) continue;
-      const pk = pkColumns.map((c) => ({
-        column: c.name,
-        value: toIpcString(row[c.name]),
-      }));
-      await ipc.deleteRow({
+    await deleteRowsWithCascade(
+      {
         profileId: tab.profileId,
         database: tab.database,
         table: tab.table,
-        pk,
-      });
-    }
+        columns: tab.data.columns,
+        rows: tab.data.rows,
+      },
+      rowIndices,
+      cascade
+    );
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: null } : t
@@ -2819,6 +2807,7 @@ export const useStore = create<Store>((set, get) => ({
     }
 
     if (okCount > 0) {
+      invalidateRelatedExistence(tab.profileId, tab.database, tab.table);
       set((s) => ({
         tabs: s.tabs.map((t) =>
           t.id === tabId && t.kind === "rows" ? { ...t, exactTotal: null } : t
@@ -2830,13 +2819,6 @@ export const useStore = create<Store>((set, get) => ({
     return { okCount, conflicts, errors };
   },
 }));
-
-function toIpcString(v: unknown): string | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  return JSON.stringify(v);
-}
 
 type SetFn = (
   partial:
