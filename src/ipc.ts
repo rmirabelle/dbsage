@@ -266,6 +266,8 @@ export const ipc = {
       includeData,
     }),
   cancelTableSqlExport: () => invoke<void>("cancel_table_sql_export"),
+  writeTextFile: (path: string, content: string) =>
+    invoke<void>("write_text_file", { path, content }),
   runDdl: (profileId: string, database: string, sql: string) =>
     invoke<void>("run_ddl", { profileId, database, sql }),
 

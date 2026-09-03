@@ -278,6 +278,7 @@ pub fn run() {
             relations::save_relation,
             relations::delete_relation,
             relations::export_relations_file,
+            export::write_text_file,
             relations::preview_relations_import,
             relations::import_relations_file,
             state_io::export_state,

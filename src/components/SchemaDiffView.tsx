@@ -10,6 +10,7 @@ import {
   CircleNotch,
   Columns as ColumnsIcon,
   Database,
+  Export,
   ListNumbers,
   PlugsConnected,
   Table as TableIcon,
@@ -17,10 +18,11 @@ import {
 } from "@phosphor-icons/react";
 import { useStore } from "../state/store";
 import { helpHandlers } from "../state/help";
-import { computeSchemaDiff, fmtIndexColumns } from "../lib/schemaDiff";
+import { computeSchemaDiff, columnSummary, indexSummary } from "../lib/schemaDiff";
+import { exportSchemaDiffText } from "../lib/schemaDiffText";
 import { SyncSchemaDialog, UndoSyncDialog } from "./SyncSchemaDialog";
 import type { NamedChange } from "../lib/schemaDiff";
-import type { ColumnDef, IndexDef, SchemaDiffSide, SchemaDiffTab } from "../types";
+import type { SchemaDiffSide, SchemaDiffTab } from "../types";
 
 /** "connection • database.table" label for one side of the comparison. */
 function sideLabel(side: SchemaDiffSide): string {
@@ -46,19 +48,6 @@ function SideChip({ side }: { side: SchemaDiffSide }) {
       </span>
     </span>
   );
-}
-
-/** One-line summary of a column, shown in the only-in-X sections: its type
- * (COLUMN_TYPE carries the length, e.g. "varchar(255)") plus the comment. */
-function columnSummary(c: ColumnDef): string {
-  return c.comment ? `${c.columnType} — '${c.comment}'` : c.columnType;
-}
-
-/** One-line summary of an index, e.g. "UNIQUE (email)". */
-function indexSummary(i: IndexDef): string {
-  const kind = i.indexType === "NORMAL" ? "INDEX" : i.indexType;
-  const method = i.method === "HASH" ? " HASH" : "";
-  return `${kind} ${fmtIndexColumns(i)}${method}`;
 }
 
 export function SchemaDiffView({ tab }: { tab: SchemaDiffTab }) {
@@ -120,6 +109,15 @@ export function SchemaDiffView({ tab }: { tab: SchemaDiffTab }) {
           >
             Sync
             <ArrowRight size={14} />
+          </button>
+          <button
+            className="sd-export"
+            onClick={() => void exportSchemaDiffText(left, right, diff)}
+            disabled={!diff}
+            {...helpHandlers("Save this comparison as a plain-English text file")}
+          >
+            <Export size={14} />
+            Export
           </button>
           <button
             className="sd-refresh"

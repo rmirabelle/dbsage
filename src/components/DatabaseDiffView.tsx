@@ -6,13 +6,15 @@ import {
   CheckCircle,
   CircleNotch,
   Database,
+  Export,
   PlugsConnected,
   Table as TableIcon,
   WarningCircle,
 } from "@phosphor-icons/react";
 import { useStore } from "../state/store";
 import { helpHandlers } from "../state/help";
-import { computeDatabaseDiff } from "../lib/schemaDiff";
+import { computeDatabaseDiff, tableSummary } from "../lib/schemaDiff";
+import { exportDatabaseDiffText } from "../lib/schemaDiffText";
 import { DiffSection, OnlySection, useSectionFold } from "./SchemaDiffView";
 import type { DatabaseDiffSide, DatabaseDiffTab, TableSchemaEntry } from "../types";
 
@@ -36,14 +38,6 @@ function SideChip({ side }: { side: DatabaseDiffSide }) {
       </span>
     </span>
   );
-}
-
-/** One-line summary of a table in the only-in-X sections. */
-function tableSummary(t: TableSchemaEntry): string {
-  const parts = [`${t.columns.length} column${t.columns.length === 1 ? "" : "s"}`];
-  if (t.meta.engine) parts.push(t.meta.engine);
-  if (t.meta.comment) parts.push(`'${t.meta.comment}'`);
-  return parts.join(" · ");
 }
 
 export function DatabaseDiffView({ tab }: { tab: DatabaseDiffTab }) {
@@ -90,7 +84,18 @@ export function DatabaseDiffView({ tab }: { tab: DatabaseDiffTab }) {
           </span>
         )}
         <button
-          className="sd-refresh ml-auto"
+          className="sd-export ml-auto"
+          onClick={() =>
+            void exportDatabaseDiffText(left, right, tab.leftSchemas, tab.rightSchemas, tab.tables)
+          }
+          disabled={!diff}
+          {...helpHandlers("Save this comparison as a plain-English text file")}
+        >
+          <Export size={14} />
+          Export
+        </button>
+        <button
+          className="sd-refresh"
           onClick={() => void refreshDatabaseDiff(tab.id)}
           disabled={tab.loading}
           {...helpHandlers("Re-read both databases and refresh the comparison")}

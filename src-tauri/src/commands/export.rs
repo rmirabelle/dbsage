@@ -126,3 +126,9 @@ pub async fn export_query(
         other => Err(AppError::Other(format!("unknown export format: {other}"))),
     }
 }
+
+/// Write a plain-text file (e.g. a schema comparison report) atomically.
+#[tauri::command]
+pub async fn write_text_file(path: String, content: String) -> AppResult<()> {
+    write_atomic(&path, content.as_bytes())
+}

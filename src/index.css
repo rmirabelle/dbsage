@@ -197,7 +197,8 @@ input[type="checkbox"].dbs-check:checked {
 
   .sd-refresh,
   .sd-sync,
-  .sd-undo {
+  .sd-undo,
+  .sd-export {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -209,7 +210,8 @@ input[type="checkbox"].dbs-check:checked {
   }
   .sd-refresh:disabled,
   .sd-sync:disabled,
-  .sd-undo:disabled {
+  .sd-undo:disabled,
+  .sd-export:disabled {
     opacity: 0.6;
     cursor: default;
   }
@@ -234,6 +236,13 @@ input[type="checkbox"].dbs-check:checked {
   }
   .sd-undo:hover:not(:disabled) {
     background: var(--color-amber-300);
+  }
+  .sd-export {
+    background: var(--color-zinc-700);
+    color: var(--color-zinc-100);
+  }
+  .sd-export:hover:not(:disabled) {
+    background: var(--color-zinc-600);
   }
 
   /** Centered loading / error / identical states. */
