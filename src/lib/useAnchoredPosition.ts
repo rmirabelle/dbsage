@@ -15,12 +15,15 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
  *
  * Pass `externalRef` when the popup already has a ref (e.g. for outside-click
  * detection) so the measurement reuses it instead of needing a second ref.
+ * Bump `revision` to force a re-measure when the viewport itself changed
+ * (e.g. the host window was resized to make room for the popup).
  */
 export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
   x: number,
   y: number,
   margin = 8,
-  externalRef?: RefObject<T | null>
+  externalRef?: RefObject<T | null>,
+  revision = 0
 ) {
   const internalRef = useRef<T>(null);
   const ref = externalRef ?? internalRef;
@@ -47,7 +50,7 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
     top = Math.max(margin, Math.min(top, vh - margin - height));
 
     setPos({ top, left });
-  }, [x, y, margin]);
+  }, [x, y, margin, revision]);
 
   return { ref, style: pos };
 }

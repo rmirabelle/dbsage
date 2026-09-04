@@ -191,31 +191,26 @@ pub fn list_open_peeks(app: AppHandle, state: State<'_, AppState>) -> Vec<Value>
     out
 }
 
-/// Record a peek window's current hidden-column set into its registry (and seed)
-/// entry, so a saved table view captures the peek's column visibility alongside
-/// its geometry, and a webview reload re-seeds with it. No-op if the peek isn't
-/// registered (already closed).
+/// Merge a peek window's current view state (hidden columns, Inspector
+/// visibility, sort, filters, column widths, JSON display paths) into its
+/// registry (and seed) entry, so a saved table view captures the peek exactly
+/// as it looks, and a webview reload re-seeds with it. `patch` is an object
+/// whose keys overwrite the stored ones. No-op if the peek isn't registered
+/// (already closed).
 #[tauri::command]
-pub fn set_peek_columns(state: State<'_, AppState>, label: String, hidden_columns: Vec<String>) {
+pub fn set_peek_state(state: State<'_, AppState>, label: String, patch: Value) {
+    let Value::Object(fields) = patch else {
+        return;
+    };
     if let Some(Value::Object(m)) = state.peeks.lock().unwrap().get_mut(&label) {
-        m.insert("hiddenColumns".into(), json!(hidden_columns));
+        for (k, v) in &fields {
+            m.insert(k.clone(), v.clone());
+        }
     }
     if let Some(Value::Object(m)) = state.window_seeds.lock().unwrap().get_mut(&label) {
-        m.insert("hiddenColumns".into(), json!(hidden_columns));
-    }
-}
-
-/// Record a peek window's current Inspector-panel visibility into its registry
-/// (and seed) entry, so a saved table view restores whether the peek's Inspector
-/// was showing, and a webview reload re-seeds with it. No-op if the peek isn't
-/// registered (already closed).
-#[tauri::command]
-pub fn set_peek_inspector(state: State<'_, AppState>, label: String, open: bool) {
-    if let Some(Value::Object(m)) = state.peeks.lock().unwrap().get_mut(&label) {
-        m.insert("inspectorOpen".into(), json!(open));
-    }
-    if let Some(Value::Object(m)) = state.window_seeds.lock().unwrap().get_mut(&label) {
-        m.insert("inspectorOpen".into(), json!(open));
+        for (k, v) in fields {
+            m.insert(k, v);
+        }
     }
 }
 

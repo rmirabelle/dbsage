@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ipc } from "../ipc";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import {
@@ -49,6 +50,37 @@ import {
 import { notifyError, notifyInfo, notifySuccess } from "../state/notify";
 import { helpHandlers } from "../state/help";
 
+
+/** Column types whose values are not useful (or are too costly) to suggest in
+ *  the Equals filter: JSON, blobs, binary, long text, spatial, and bit. */
+const NO_SUGGEST_TYPES = new Set([
+  "json",
+  "blob",
+  "tinyblob",
+  "mediumblob",
+  "longblob",
+  "binary",
+  "varbinary",
+  "text",
+  "tinytext",
+  "mediumtext",
+  "longtext",
+  "geometry",
+  "point",
+  "linestring",
+  "polygon",
+  "multipoint",
+  "multilinestring",
+  "multipolygon",
+  "geometrycollection",
+  "bit",
+]);
+
+function canSuggestValues(columnType: string): boolean {
+  const base = columnType.trim().toLowerCase().match(/^[a-z]+/)?.[0] ?? "";
+  return base.length > 0 && !NO_SUGGEST_TYPES.has(base);
+}
+
 interface Props {
   columns: ColumnInfo[];
   rows: RowRecord[];
@@ -92,6 +124,9 @@ interface Props {
   /** When set, right-clicking a row's number gutter opens a "Copy As" menu that
    * copies the selected rows (or just the clicked row) targeting this table. */
   copyTarget?: { database: string; table: string };
+  /** When set, the column menu's Equals input suggests distinct values from
+   * this table as the user types. Absent for query-result grids. */
+  suggestSource?: { profileId: string; database: string; table: string };
   /** When true, right-clicking a row's number gutter opens a "Copy As" menu with
    * table-free result formats (JSON / CSV / tab-delimited) — for grids showing
    * query results, which have no db.table target for SQL-shaped copies. */
@@ -211,6 +246,7 @@ export function DataGrid({
   columnWidths,
   onColumnWidthsChange,
   copyTarget,
+  suggestSource,
   resultCopy = false,
   onDeleteRows,
   onCascadePreview,
@@ -1389,6 +1425,20 @@ export function DataGrid({
           }
           onFilter={(filter) => onFilterChange(menu.column, filter)}
           onJsonShow={(path) => onJsonShow(menu.column, path)}
+          suggest={
+            suggestSource &&
+            canSuggestValues(
+              columns.find((c) => c.name === menu.column)?.dataType ?? ""
+            )
+              ? (prefix) =>
+                  ipc.suggestColumnValues({
+                    ...suggestSource,
+                    column: menu.column,
+                    prefix,
+                    limit: 50,
+                  })
+              : undefined
+          }
         />
       )}
 

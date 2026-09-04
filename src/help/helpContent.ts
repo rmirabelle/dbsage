@@ -85,6 +85,7 @@ export const HELP_SCREENSHOTS = {
   "table-columns_filter": { physicalWidth: 845, physicalHeight: 672, framing: "column visibility menu" },
   "table-copy_rows_and_columns": { physicalWidth: 741, physicalHeight: 572, framing: "cell selection copy menu" },
   "table-column_menu": { physicalWidth: 982, physicalHeight: 623, framing: "column sort and filter menu" },
+  "table-filter-auto_suggest": { physicalWidth: 724, physicalHeight: 566, framing: "Equals filter with value suggestions" },
   "table-views": { physicalWidth: 960, physicalHeight: 629, framing: "saved Views menu" },
   "table-select_row": { physicalWidth: 928, physicalHeight: 367, framing: "annotated row selection" },
   "table-select cell": { physicalWidth: 691, physicalHeight: 319, framing: "annotated cell selection" },
@@ -663,6 +664,21 @@ export const HELP_GROUPS: HelpGroup[] = [
                   "Drag a header edge to resize its column. Clear Filters removes filters and restores hidden columns.",
                 ],
               },
+              shot(
+                "table-filter-auto_suggest",
+                "Equals filter showing a list of matching values from the column",
+                "Click into the Equals or Not Eq field to see the column's actual values. Type to narrow the list to values that start with your text, then click one or use the arrow keys and Enter to apply it.",
+                "wide"
+              ),
+              {
+                type: "bullets",
+                items: [
+                  "Suggestions are distinct values read live from the table, sorted, up to 50 at a time. The list grows to the bottom of the window and scrolls past that.",
+                  "A small spinner in the field shows while values load. Escape closes the list; a second Escape closes the menu.",
+                  "JSON, text, blob, binary, spatial, and bit columns get no suggestions.",
+                  "On tables with more than about 100,000 rows, only indexed columns are suggested, so the lookup stays fast.",
+                ],
+              },
             ],
           },
           {
@@ -676,7 +692,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               ),
               {
                 type: "paragraph",
-                text: "Views remember column visibility and widths, sort direction, filters, and JSON display choices for the table. The active View appears in the toolbar, and the badge shows how many named Views are saved.",
+                text: "Views remember column visibility and widths, sort direction, filters, and JSON display choices for the table. Any peek windows open on the table are saved too, with their positions, sizes, and their own complete grid setup. The active View appears in the toolbar, and the badge shows how many named Views are saved.",
               },
             ],
           },
@@ -1145,7 +1161,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               {
                 type: "note",
                 title: "Peek layouts are saved with Views",
-                text: "When you save a Table View, the open peek windows, their positions, and their sizes are saved with it. Opening the View later restores the whole layout.",
+                text: "When you save a Table View, the open peek windows are saved with it: their positions and sizes, plus each peek's own column visibility, column widths, sort, filters, JSON display choices, and whether its Inspector was open. Opening the View later restores the whole layout exactly as you left it.",
                 tone: "tip",
               },
               {

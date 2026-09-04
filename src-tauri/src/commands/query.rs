@@ -564,6 +564,100 @@ pub async fn count_rows(
     Ok(n.max(0) as u64)
 }
 
+/** Suggestion rule for large tables: above this many (estimated) rows, only
+ *  indexed columns get value suggestions, since a DISTINCT scan over an
+ *  unindexed column can take seconds. */
+const SUGGEST_ROW_THRESHOLD: u64 = 100_000;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestResult {
+    pub values: Vec<String>,
+    /** True when the table is too large for an unindexed scan; the UI should
+     * stop asking for this column. */
+    pub skipped: bool,
+}
+
+#[tauri::command]
+pub async fn suggest_column_values(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    column: String,
+    prefix: String,
+    limit: u32,
+) -> AppResult<SuggestResult> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let columns = fetch_columns(&pool, &database, &table).await?;
+    let col = columns
+        .iter()
+        .find(|c| c.name == column)
+        .ok_or_else(|| AppError::Other(format!("unknown column: {column}")))?;
+
+    if col.key.is_empty() {
+        let est = sqlx::query(
+            "SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES \
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+        )
+        .bind(&database)
+        .bind(&table)
+        .fetch_optional(&pool)
+        .await?;
+        let rows = est
+            .and_then(|r| r.try_get::<Option<i64>, _>(0).ok().flatten())
+            .map(|n| n.max(0) as u64)
+            .unwrap_or(0);
+        if rows > SUGGEST_ROW_THRESHOLD {
+            return Ok(SuggestResult { values: Vec::new(), skipped: true });
+        }
+    }
+
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+    let ident = quote_ident(&column);
+    let safe_limit = limit.clamp(1, 50);
+    let prefix = prefix.trim();
+
+    /* Prefix match keeps the LIKE index-friendly. Escape the wildcard
+       characters so the user's text is matched literally. */
+    let pattern = format!(
+        "{}%",
+        prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
+    let sql = if prefix.is_empty() {
+        format!(
+            "SELECT DISTINCT {ident} FROM {qualified} WHERE {ident} IS NOT NULL \
+             ORDER BY {ident} LIMIT {safe_limit}"
+        )
+    } else {
+        format!(
+            "SELECT DISTINCT {ident} FROM {qualified} WHERE {ident} LIKE ? \
+             ORDER BY {ident} LIMIT {safe_limit}"
+        )
+    };
+    let mut q = sqlx::query(&sql);
+    if !prefix.is_empty() {
+        q = q.bind(pattern);
+    }
+    let rows = q.fetch_all(&pool).await?;
+    let values = rows
+        .iter()
+        .filter_map(|r| match row_to_json(r) {
+            Value::Object(m) => m.into_iter().next().map(|(_, v)| v),
+            _ => None,
+        })
+        .filter_map(|v| match v {
+            Value::Null => None,
+            Value::String(s) => Some(s),
+            other => Some(other.to_string()),
+        })
+        .collect();
+    Ok(SuggestResult { values, skipped: false })
+}
+
 #[tauri::command]
 pub async fn table_exists(
     state: State<'_, AppState>,

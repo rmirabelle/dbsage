@@ -2600,6 +2600,10 @@ export const useStore = create<Store>((set, get) => ({
         sourceColumn: p.sourceColumn,
         hiddenColumns: p.hiddenColumns,
         inspectorOpen: p.inspectorOpen,
+        sort: p.sort,
+        filters: p.filters,
+        columnWidths: p.columnWidths,
+        jsonDisplay: p.jsonDisplay,
       };
       ipc
         .openPeekWindow(seed, p.x ?? 120, p.y ?? 120, p.width ?? 900, p.height ?? 440)

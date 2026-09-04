@@ -135,13 +135,9 @@ export function PeekWindow({ label }: { label: string }) {
           profileId={seed.profileId}
           database={seed.database}
           target={target}
-          initialHiddenColumns={seed.hiddenColumns}
-          onHiddenColumnsChange={(hidden) =>
-            ipc.setPeekColumns(label, hidden).catch(() => {})
-          }
-          initialInspectorOpen={seed.inspectorOpen}
-          onInspectorOpenChange={(open) =>
-            ipc.setPeekInspector(label, open).catch(() => {})
+          initialView={seed}
+          onViewChange={(patch) =>
+            ipc.setPeekState(label, patch).catch(() => {})
           }
           onOpenChildPeek={openChildPeek}
           onOpenAsTab={openAsTab}

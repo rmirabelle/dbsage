@@ -187,7 +187,26 @@ export interface PeekSeed {
   /** Whether this peek's Inspector panel was showing. Carried so a saved view
    * restores it visible; absent/false on a freshly-launched peek. */
   inspectorOpen?: boolean;
+  /** The peek grid's own sort, extra column filters, manual column widths and
+   * JSON display paths. Carried so a saved view restores the peek exactly as
+   * it was; all absent on a freshly-launched peek. */
+  sort?: SortSpec | null;
+  filters?: ColumnFilter[];
+  columnWidths?: Record<string, number>;
+  jsonDisplay?: Record<string, string>;
 }
+
+/** The parts of a {@link PeekSeed} the peek itself changes while open and
+ * reports back to the registry (everything except identity and target). */
+export type PeekViewState = Pick<
+  PeekSeed,
+  | "hiddenColumns"
+  | "inspectorOpen"
+  | "sort"
+  | "filters"
+  | "columnWidths"
+  | "jsonDisplay"
+>;
 
 /** A peek as reported by `list_open_peeks`: its seed plus current on-screen
  * geometry (CSS px), so a saved table view can restore it where it sat. */
@@ -238,6 +257,14 @@ export interface RowsResult {
   total: number | null;
   limit: number;
   offset: number;
+}
+
+/** Distinct values of one column that start with a typed prefix, for the
+ * column-menu Equals auto-suggest. `skipped` means the table is too large for
+ * an unindexed scan and the caller should stop asking for this column. */
+export interface SuggestResult {
+  values: string[];
+  skipped: boolean;
 }
 
 /** One statement's outcome within an ad-hoc query run. For result-set

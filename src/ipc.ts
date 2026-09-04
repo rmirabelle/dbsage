@@ -26,6 +26,8 @@ import type {
   RelationsImportPreview,
   RestoreOptions,
   RowsResult,
+  SuggestResult,
+  PeekViewState,
   SavedQuery,
   ServerResources,
   ServerStatus,
@@ -91,6 +93,15 @@ export const ipc = {
     table: string;
     filters: ColumnFilter[];
   }) => invoke<number>("count_rows", args),
+
+  suggestColumnValues: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    column: string;
+    prefix: string;
+    limit: number;
+  }) => invoke<SuggestResult>("suggest_column_values", args),
 
   executeQuery: (args: {
     profileId: string;
@@ -410,10 +421,8 @@ export const ipc = {
     height: number
   ) => invoke<void>("open_peek_window", { seed, x, y, width, height }),
   listOpenPeeks: <T>() => invoke<T[]>("list_open_peeks"),
-  setPeekColumns: (label: string, hiddenColumns: string[]) =>
-    invoke<void>("set_peek_columns", { label, hiddenColumns }),
-  setPeekInspector: (label: string, open: boolean) =>
-    invoke<void>("set_peek_inspector", { label, open }),
+  setPeekState: (label: string, patch: PeekViewState) =>
+    invoke<void>("set_peek_state", { label, patch }),
   closeAllPeeks: () => invoke<void>("close_all_peeks"),
   setTabstripRect: (rect: unknown | null) =>
     invoke<void>("set_tabstrip_rect", { rect }),

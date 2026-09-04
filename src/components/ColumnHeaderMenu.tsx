@@ -1,15 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowUp,
   ArrowDown,
   X,
   FunnelSimpleX,
+  CircleNotch,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { COMPARE_OPS } from "../types";
-import type { ColumnFilter, FilterOp, SortDirection, SortSpec } from "../types";
+import type {
+  ColumnFilter,
+  FilterOp,
+  SortDirection,
+  SortSpec,
+  SuggestResult,
+} from "../types";
 
 const COMPARE_OP_SET = new Set<FilterOp>(["gt", "gte", "lt", "lte"]);
 
@@ -24,9 +31,15 @@ interface Props {
   onSort: (direction: SortDirection | null) => void;
   onFilter: (filter: ColumnFilter | null) => void;
   onJsonShow: (path: string | null) => void;
+  /** Fetches distinct column values starting with `prefix` for the Equals
+   * auto-suggest. Absent = no suggestions (result grids, unsupported types). */
+  suggest?: (prefix: string) => Promise<SuggestResult>;
 }
 
 const MENU_WIDTH = 380;
+/** Most suggestions fetched; the list shows as many as fit the window. */
+const SUGGEST_LIMIT = 50;
+const SUGGEST_DEBOUNCE_MS = 250;
 
 export function ColumnHeaderMenu({
   column,
@@ -39,6 +52,7 @@ export function ColumnHeaderMenu({
   onSort,
   onFilter,
   onJsonShow,
+  suggest,
 }: Props) {
   const isJson = columnType.trim().toLowerCase() === "json";
   const sortedHere =
@@ -299,6 +313,11 @@ export function ColumnHeaderMenu({
               placeholder="value"
               onChange={setEqValue}
               onSubmit={commitEquality}
+              onPick={(v) => {
+                onFilter({ column, op: eqOp, value: v });
+                onClose();
+              }}
+              suggest={suggest}
               onClear={() => {
                 setEqValue("");
                 if (eqActive) {
@@ -436,6 +455,8 @@ function ToggleField({
   onChange,
   onSubmit,
   onClear,
+  onPick,
+  suggest,
 }: {
   options: { op: FilterOp; label: string }[];
   op: FilterOp;
@@ -446,51 +467,222 @@ function ToggleField({
   onChange: (v: string) => void;
   onSubmit: () => void;
   onClear: () => void;
+  /** Called with a chosen suggestion; the caller commits it as the filter. */
+  onPick?: (v: string) => void;
+  suggest?: (prefix: string) => Promise<SuggestResult>;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const sug = useSuggestions(suggest, value);
+
+  /* Let the list run to the bottom of the window (it scrolls past that). */
+  const [listMaxHeight, setListMaxHeight] = useState<number>();
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const top = el.getBoundingClientRect().top;
+    setListMaxHeight(Math.max(60, window.innerHeight - top - 8));
+  }, [sug.visible, sug.values]);
+
+  /* Keep the keyboard-highlighted row visible while the list scrolls. */
+  useEffect(() => {
+    if (sug.highlighted < 0) return;
+    listRef.current?.children[sug.highlighted]?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [sug.highlighted]);
+
+  const pick = (v: string) => {
+    sug.dismiss();
+    onChange(v);
+    onPick?.(v);
+  };
+
   return (
-    <div className="flex items-stretch">
-      <Segmented
-        options={options}
-        value={op}
-        active={active}
-        filled={value.trim().length > 0}
-        onChange={onOp}
-        attached
-      />
-      <div className="relative flex-1">
-        <input
-          ref={inputRef}
-          data-el="column-filter-input"
-          value={value}
-          placeholder={placeholder}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              onSubmit();
-            }
-          }}
-          className={clsx(
-            "w-full bg-zinc-950 rounded-r pl-2 pr-6 py-1 text-[12.5px] font-mono text-zinc-100 outline-none focus:border-accent-500",
-            active ? "border-2 border-emerald-500" : "border border-zinc-700"
-          )}
+    <div className="relative">
+      <div className="flex items-stretch">
+        <Segmented
+          options={options}
+          value={op}
+          active={active}
+          filled={value.trim().length > 0}
+          onChange={onOp}
+          attached
         />
-        {value && (
-          <button
-            onClick={() => {
-              onClear();
-              inputRef.current?.focus();
+        <div className="relative flex-1">
+          <input
+            ref={inputRef}
+            data-el="column-filter-input"
+            value={value}
+            placeholder={placeholder}
+            onChange={(e) => onChange(e.target.value)}
+            onFocus={() => sug.open()}
+            onKeyDown={(e) => {
+              if (sug.visible) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  sug.move(1);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  sug.move(-1);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  /* Close just the list; a second Escape closes the menu. */
+                  e.preventDefault();
+                  e.stopPropagation();
+                  sug.dismiss();
+                  return;
+                }
+                if (e.key === "Enter" && sug.highlighted >= 0) {
+                  e.preventDefault();
+                  pick(sug.values[sug.highlighted]);
+                  return;
+                }
+              }
+              if (e.key === "Enter") {
+                e.preventDefault();
+                sug.dismiss();
+                onSubmit();
+              }
             }}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200"
-            aria-label="Clear"
-          >
-            <X size={14} />
-          </button>
-        )}
+            className={clsx(
+              "w-full bg-zinc-950 rounded-r pl-2 py-1 text-[12.5px] font-mono text-zinc-100 outline-none focus:border-accent-500",
+              value ? "pr-6" : "pr-2",
+              active ? "border-2 border-emerald-500" : "border border-zinc-700"
+            )}
+          />
+          {sug.loading && (
+            <CircleNotch
+              size={13}
+              className={clsx(
+                "absolute top-1/2 -translate-y-1/2 text-zinc-500 animate-spin pointer-events-none",
+                value ? "right-6" : "right-2"
+              )}
+            />
+          )}
+          {value && (
+            <button
+              onClick={() => {
+                onClear();
+                inputRef.current?.focus();
+              }}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200"
+              aria-label="Clear"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
       </div>
+      {sug.visible && (
+        <ul
+          ref={listRef}
+          data-el="column-filter-suggestions"
+          style={{ maxHeight: listMaxHeight }}
+          className="absolute left-[160px] right-0 top-full mt-0.5 z-10 overflow-y-auto rounded border border-zinc-700 bg-zinc-900 shadow-lg shadow-black/50 py-0.5"
+        >
+          {sug.values.map((v, i) => (
+            <li
+              key={v}
+              onMouseEnter={() => sug.highlight(i)}
+              /* mousedown, not click, so the pick lands before the input
+                 loses focus. */
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(v);
+              }}
+              className={clsx(
+                "px-2 py-[3px] font-mono text-[12px] truncate cursor-pointer",
+                i === sug.highlighted
+                  ? "bg-accent-500/20 text-accent-200"
+                  : "text-zinc-300 hover:bg-zinc-800"
+              )}
+              title={v}
+            >
+              {v}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
+}
+
+/** Debounced value suggestions for a filter input. Fetches while the input is
+ *  focused, drops stale responses, and stops asking once the backend reports
+ *  the column is skipped (table too large for an unindexed scan). */
+function useSuggestions(
+  suggest: ((prefix: string) => Promise<SuggestResult>) | undefined,
+  value: string
+) {
+  const [values, setValues] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [openFlag, setOpenFlag] = useState(false);
+  const [highlighted, setHighlighted] = useState(-1);
+  const skippedRef = useRef(false);
+  const requestRef = useRef(0);
+
+  useEffect(() => {
+    if (!suggest || !openFlag || skippedRef.current) return;
+    const prefix = value.trim();
+    const id = ++requestRef.current;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      suggest(prefix)
+        .then((res) => {
+          if (id !== requestRef.current) return;
+          if (res.skipped) {
+            skippedRef.current = true;
+            setValues([]);
+            return;
+          }
+          /* Hide the list when the only match is exactly what was typed. */
+          const vals =
+            res.values.length === 1 && res.values[0] === prefix ? [] : res.values;
+          setValues(vals.slice(0, SUGGEST_LIMIT));
+          setHighlighted(-1);
+        })
+        .catch(() => {
+          if (id === requestRef.current) setValues([]);
+        })
+        .finally(() => {
+          if (id === requestRef.current) setLoading(false);
+        });
+    }, SUGGEST_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [suggest, value, openFlag]);
+
+  const dismiss = () => {
+    requestRef.current += 1;
+    setOpenFlag(false);
+    setLoading(false);
+    setValues([]);
+    setHighlighted(-1);
+  };
+
+  const move = (delta: number) => {
+    if (values.length === 0) return;
+    setHighlighted((h) => {
+      const n = h + delta;
+      if (n < 0) return values.length - 1;
+      if (n >= values.length) return 0;
+      return n;
+    });
+  };
+
+  return {
+    values,
+    loading,
+    visible: openFlag && values.length > 0,
+    highlighted,
+    open: () => setOpenFlag(true),
+    dismiss,
+    move,
+    highlight: setHighlighted,
+  };
 }
 
 function MenuItem({

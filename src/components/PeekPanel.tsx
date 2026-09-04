@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowSquareOut,
@@ -12,7 +12,12 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { emit, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  currentMonitor,
+  getCurrentWindow,
+  PhysicalPosition,
+  PhysicalSize,
+} from "@tauri-apps/api/window";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
 import { useUi } from "../state/ui";
@@ -44,6 +49,7 @@ import type {
   CascadeTarget,
   ColumnFilter,
   PeekTarget,
+  PeekViewState,
   Relation,
   RowsResult,
   SortSpec,
@@ -59,45 +65,60 @@ const PEEK_LIMIT = 1000;
  * (position, size, resize) is the OS window's job now (see {@link PeekWindow}),
  * not an in-app overlay's.
  */
+/** Viewport margin kept around the relations picker. */
+const PICKER_MARGIN = 8;
+
 export function PeekPanel({
   profileId,
   database,
   target,
-  initialHiddenColumns,
-  onHiddenColumnsChange,
-  initialInspectorOpen,
-  onInspectorOpenChange,
+  initialView,
+  onViewChange,
   onOpenChildPeek,
   onOpenAsTab,
 }: {
   profileId: string;
   database: string;
   target: PeekTarget;
-  /** Columns hidden when the peek was restored from a saved view (empty for a
-   * freshly-launched peek). */
-  initialHiddenColumns?: string[];
-  /** Report the peek's current hidden columns so the host can persist them for
+  /** The grid state (hidden columns, sort, filters, widths, JSON display) and
+   * Inspector visibility to start from — set when restoring a saved view or
+   * re-seeding after a reload; a freshly-launched peek starts from defaults. */
+  initialView?: PeekViewState;
+  /** Report every change to that state so the host can persist it for
    * saved-view capture. */
-  onHiddenColumnsChange?: (hidden: string[]) => void;
-  /** Whether the Inspector panel should start open — true only when restoring a
-   * saved view whose peek had it showing; otherwise it opens closed. */
-  initialInspectorOpen?: boolean;
-  /** Report the Inspector's open/closed state so the host can persist it for
-   * saved-view capture. */
-  onInspectorOpenChange?: (open: boolean) => void;
+  onViewChange?: (patch: PeekViewState) => void;
   /** Peek into a relation found on this peek's own table (opens a new window). */
   onOpenChildPeek: (target: RelationTarget, sourceColumn: string, value: string) => void;
   /** Promote this peek's table to a full, filtered tab in the main window. */
   onOpenAsTab: () => void;
 }) {
   const tabsZoom = useUi((s) => s.tabsZoom);
-  const [sort, setSort] = useState<SortSpec | null>(null);
-  const [extraFilters, setExtraFilters] = useState<ColumnFilter[]>([]);
-  const [hiddenColumns, setHiddenColumns] = useState<string[]>(
-    initialHiddenColumns ?? []
+  const [sort, setSort] = useState<SortSpec | null>(initialView?.sort ?? null);
+  const [extraFilters, setExtraFilters] = useState<ColumnFilter[]>(
+    initialView?.filters ?? []
   );
-  const [jsonDisplay, setJsonDisplay] = useState<Record<string, string>>({});
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [hiddenColumns, setHiddenColumns] = useState<string[]>(
+    initialView?.hiddenColumns ?? []
+  );
+  const [jsonDisplay, setJsonDisplay] = useState<Record<string, string>>(
+    initialView?.jsonDisplay ?? {}
+  );
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(
+    initialView?.columnWidths ?? {}
+  );
+
+  /* Report the grid state whenever any part of it changes, so the registry
+     always holds what a saved view should capture. */
+  useEffect(() => {
+    onViewChange?.({
+      sort,
+      filters: extraFilters,
+      hiddenColumns,
+      jsonDisplay,
+      columnWidths,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sort, extraFilters, hiddenColumns, jsonDisplay, columnWidths]);
   const [activeCell, setActiveCell] = useState<{
     rowIndex: number;
     column: string;
@@ -194,10 +215,12 @@ export function PeekPanel({
    * freshly-launched peek, but a saved view restores it open when it was showing
    * at save time. Every change reports up so the host persists it (via the peek
    * registry) for the next saved-view capture. */
-  const [expanded, setExpandedState] = useState(initialInspectorOpen ?? false);
+  const [expanded, setExpandedState] = useState(
+    initialView?.inspectorOpen ?? false
+  );
   const setExpanded = (open: boolean) => {
     setExpandedState(open);
-    onInspectorOpenChange?.(open);
+    onViewChange?.({ inspectorOpen: open });
   };
   useEffect(() => {
     if (!expanded) return;
@@ -238,13 +261,80 @@ export function PeekPanel({
   } | null>(null);
   const pickerRequestRef = useRef(0);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const [pickerRevision, setPickerRevision] = useState(0);
   const { style: pickerStyle } = useAnchoredPosition(
     picker?.x ?? 0,
     picker?.y ?? 0,
-    8,
-    pickerRef
+    PICKER_MARGIN,
+    pickerRef,
+    pickerRevision
   );
   useNativeMenuLayer(picker !== null);
+
+  /**
+   * A peek is its own OS window, so the picker can't spill past its bottom
+   * edge. When the menu would overflow, temporarily grow the window by the
+   * overflow (sliding it up if that would leave the monitor's work area), then
+   * re-anchor the menu; the original bounds are restored when the menu closes.
+   */
+  const grownRef = useRef<{ size: PhysicalSize; pos: PhysicalPosition } | null>(
+    null
+  );
+  useLayoutEffect(() => {
+    const el = pickerRef.current;
+    if (!picker || !el) return;
+    const menuHeight = el.getBoundingClientRect().height;
+    const overflow = picker.y + menuHeight + PICKER_MARGIN - window.innerHeight;
+    if (overflow <= 0) return;
+    let cancelled = false;
+    (async () => {
+      const win = getCurrentWindow();
+      const [size, pos, scale, monitor] = await Promise.all([
+        win.innerSize(),
+        win.outerPosition(),
+        win.scaleFactor(),
+        currentMonitor(),
+      ]);
+      if (cancelled) return;
+      if (!grownRef.current) grownRef.current = { size, pos };
+      const extra = Math.ceil(overflow * scale);
+      let y = pos.y;
+      if (monitor) {
+        const bottom = monitor.workArea.position.y + monitor.workArea.size.height;
+        const past = pos.y + size.height + extra - bottom;
+        if (past > 0) y = Math.max(monitor.workArea.position.y, pos.y - past);
+      }
+      const resized = new Promise<void>((resolve) => {
+        const done = () => {
+          window.removeEventListener("resize", done);
+          resolve();
+        };
+        window.addEventListener("resize", done);
+        window.setTimeout(done, 200);
+      });
+      if (y !== pos.y) await win.setPosition(new PhysicalPosition(pos.x, y));
+      await win.setSize(new PhysicalSize(size.width, size.height + extra));
+      await resized;
+      if (!cancelled) setPickerRevision((r) => r + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [picker]);
+
+  const pickerOpen = picker !== null;
+  useEffect(() => {
+    if (pickerOpen) return;
+    const restore = () => {
+      const orig = grownRef.current;
+      if (!orig) return;
+      grownRef.current = null;
+      const win = getCurrentWindow();
+      void win.setSize(orig.size).then(() => win.setPosition(orig.pos));
+    };
+    restore();
+    return restore;
+  }, [pickerOpen]);
 
   const [relDialog, setRelDialog] = useState<{
     relation: Relation | null;
@@ -516,6 +606,7 @@ export function PeekPanel({
               hiddenColumns={hiddenColumns}
               jsonDisplay={jsonDisplay}
               columnWidths={columnWidths}
+              suggestSource={{ profileId, database, table: target.table }}
               resultCopy
               peekableColumns={peekableColumns}
               activeCell={activeCell}
@@ -527,10 +618,7 @@ export function PeekPanel({
               onColumnWidthsChange={setColumnWidths}
               onSortChange={setSort}
               onFilterChange={onFilterChange}
-              onHiddenColumnsChange={(hidden) => {
-                setHiddenColumns(hidden);
-                onHiddenColumnsChange?.(hidden);
-              }}
+              onHiddenColumnsChange={setHiddenColumns}
               onJsonShow={(column, path) =>
                 setJsonDisplay((prev) => {
                   const next = { ...prev };
