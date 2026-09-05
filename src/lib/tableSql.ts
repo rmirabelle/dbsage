@@ -40,9 +40,12 @@ export function parseColumnType(columnType: string): ParsedType {
   return { type, length, decimals, unsigned, zerofill };
 }
 
-/** Convert backend column metadata into an editor draft (edit mode seed). */
-export function columnDefToDraft(def: ColumnDef): ColumnDraft {
+/** Convert backend column metadata into an editor draft (edit mode seed).
+ * A collation equal to the table's default is stored as "" (inherit). */
+export function columnDefToDraft(def: ColumnDef, tableCollation = ""): ColumnDraft {
   const p = parseColumnType(def.columnType);
+  const collation =
+    def.collation && def.collation !== tableCollation ? def.collation : "";
   return {
     id: crypto.randomUUID(),
     name: def.name,
@@ -57,6 +60,7 @@ export function columnDefToDraft(def: ColumnDef): ColumnDraft {
     defaultValue: def.defaultValue ?? "",
     unsigned: p.unsigned,
     zerofill: p.zerofill,
+    collation,
   };
 }
 
@@ -76,7 +80,15 @@ export function defaultIdColumn(): ColumnDraft {
     defaultValue: "",
     unsigned: false,
     zerofill: false,
+    collation: "",
   };
+}
+
+/** The character set a collation belongs to: the name's prefix
+ * (`utf8mb4_unicode_ci` → `utf8mb4`; `binary` is its own set). */
+export function collationCharset(collation: string): string {
+  const i = collation.indexOf("_");
+  return i < 0 ? collation : collation.slice(0, i);
 }
 
 /** Convert backend index metadata into an editor draft (edit mode seed). */
@@ -174,6 +186,10 @@ export function columnSpec(col: ColumnDraft): string {
   else if (len) typePart += `(${len})`;
   if (col.unsigned) typePart += " UNSIGNED";
   if (col.zerofill) typePart += " ZEROFILL";
+  if (col.collation.trim()) {
+    const coll = col.collation.trim();
+    typePart += ` CHARACTER SET ${collationCharset(coll)} COLLATE ${coll}`;
+  }
 
   let def = typePart;
   if (col.notNull) def += " NOT NULL";

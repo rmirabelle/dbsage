@@ -154,14 +154,27 @@ input[type="checkbox"].dbs-check:checked {
  * same name but the definition changed.
  */
 .schema-diff {
+  /** Each side is a small card: connection, database and (table diffs) table
+   *  stacked one per line, like a table tab's label. */
   .sd-side {
     display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    padding: 2px 10px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 160px;
+    max-width: 320px;
+    padding: 8px 14px;
+    border: 1px solid var(--color-zinc-800);
+    border-radius: 6px;
+    background: var(--color-zinc-950);
     font-size: 12.5px;
     white-space: nowrap;
     overflow: hidden;
+  }
+  .sd-side > span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /** Icon + name segments in the app's identity colors (match tree/tab icons). */
@@ -187,11 +200,11 @@ input[type="checkbox"].dbs-check:checked {
     align-items: center;
     padding: 4px;
     border-radius: 6px;
-    color: var(--color-zinc-400);
+    color: var(--color-lime-400);
     cursor: pointer;
   }
   .sd-swap:hover {
-    color: var(--color-zinc-100);
+    color: var(--color-lime-300);
     background: rgba(255, 255, 255, 0.08);
   }
 
@@ -342,13 +355,18 @@ input[type="checkbox"].dbs-check:checked {
   .sd-item-btn:hover {
     background: rgba(255, 255, 255, 0.05);
   }
-  .sd-drill {
-    flex-shrink: 0;
-    margin-left: auto;
-    color: var(--color-zinc-500);
+  /** An expanded table row inside the db diff: its inline report sits below
+   *  the row, inset and separated from the next table. */
+  .sd-table-row + .sd-table-row {
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
   }
-  .sd-item-btn:hover .sd-drill {
-    color: var(--color-zinc-200);
+  .sd-expanded > .sd-item-btn {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .sd-report-nested {
+    gap: 10px;
+    padding: 10px 12px 14px 28px;
+    background: rgba(0, 0, 0, 0.12);
   }
 
   .sd-name {

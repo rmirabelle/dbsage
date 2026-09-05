@@ -21,7 +21,7 @@ import { helpHandlers } from "../state/help";
 import { computeSchemaDiff, columnSummary, indexSummary } from "../lib/schemaDiff";
 import { exportSchemaDiffText } from "../lib/schemaDiffText";
 import { SyncSchemaDialog, UndoSyncDialog } from "./SyncSchemaDialog";
-import type { NamedChange } from "../lib/schemaDiff";
+import type { NamedChange, SchemaDiff } from "../lib/schemaDiff";
 import type { SchemaDiffSide, SchemaDiffTab } from "../types";
 
 /** "connection • database.table" label for one side of the comparison. */
@@ -83,7 +83,7 @@ export function SchemaDiffView({ tab }: { tab: SchemaDiffTab }) {
           onClick={() => swapSchemaDiff(tab.id)}
           {...helpHandlers("Swap source and destination")}
         >
-          <ArrowsLeftRight size={14} />
+          <ArrowsLeftRight size={26} weight="bold" />
         </button>
         <SideChip side={right} />
         <div className="ml-auto flex items-center gap-1.5">
@@ -165,90 +165,114 @@ export function SchemaDiffView({ tab }: { tab: SchemaDiffTab }) {
             </div>
           </div>
         ) : (
-          <div className="sd-report">
-            <OnlySection
-              title={`Columns only in ${sideLabel(left)}`}
-              tone="removed"
-              icon={<ColumnsIcon size={15} />}
-              items={diff.columnsOnlyLeft.map((c) => ({
-                name: c.name,
-                summary: columnSummary(c),
-              }))}
-              {...fold("cols-left")}
-            />
-            <OnlySection
-              title={`Columns only in ${sideLabel(right)}`}
-              tone="added"
-              icon={<ColumnsIcon size={15} />}
-              items={diff.columnsOnlyRight.map((c) => ({
-                name: c.name,
-                summary: columnSummary(c),
-              }))}
-              {...fold("cols-right")}
-            />
-            <ChangedSection
-              title="Changed columns"
-              nameHeader="Column"
-              icon={<ColumnsIcon size={15} />}
-              items={diff.changedColumns}
-              {...fold("cols-changed")}
-            />
-            <OnlySection
-              title={`Indexes only in ${sideLabel(left)}`}
-              tone="removed"
-              icon={<ListNumbers size={15} />}
-              items={diff.indexesOnlyLeft.map((i) => ({
-                name: i.name,
-                summary: indexSummary(i),
-              }))}
-              {...fold("ix-left")}
-            />
-            <OnlySection
-              title={`Indexes only in ${sideLabel(right)}`}
-              tone="added"
-              icon={<ListNumbers size={15} />}
-              items={diff.indexesOnlyRight.map((i) => ({
-                name: i.name,
-                summary: indexSummary(i),
-              }))}
-              {...fold("ix-right")}
-            />
-            <ChangedSection
-              title="Changed indexes"
-              nameHeader="Index"
-              icon={<ListNumbers size={15} />}
-              items={diff.changedIndexes}
-              {...fold("ix-changed")}
-            />
-            {diff.tableChanges.length > 0 && (
-              <DiffSection
-                title="Table options"
-                tone="changed"
-                icon={<TableIcon size={15} />}
-                count={diff.tableChanges.length}
-                {...fold("table-options")}
-              >
-                <div className="sd-item">
-                  {diff.tableChanges.map((ch) => (
-                    <div className="sd-change" key={ch.field}>
-                      <span className="sd-field">{ch.field}</span>
-                      <span className="sd-old">{ch.left}</span>
-                      <ArrowRight size={12} className="sd-arrow" />
-                      <span className="sd-new">{ch.right}</span>
-                    </div>
-                  ))}
-                </div>
-              </DiffSection>
-            )}
-            {diff.columnOrderDiffers && (
-              <div className="sd-note">
-                <WarningCircle size={14} />
-                The columns both tables share appear in a different order.
-              </div>
-            )}
-          </div>
+          <SchemaDiffReport diff={diff} left={left} right={right} fold={fold} />
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The comparison report for one table pair: the column, index and
+ * table-option sections. Shared by the standalone table diff tab and the
+ * inline table diffs expanded inside a database diff.
+ */
+export function SchemaDiffReport({
+  diff,
+  left,
+  right,
+  fold,
+  nested,
+}: {
+  diff: SchemaDiff;
+  left: SchemaDiffSide;
+  right: SchemaDiffSide;
+  fold: (key: string) => { open: boolean; onToggle: () => void };
+  /** Rendered inside another report (tighter padding, no outer inset). */
+  nested?: boolean;
+}) {
+  return (
+    <div className={nested ? "sd-report sd-report-nested" : "sd-report"}>
+      <OnlySection
+        title={`Columns only in ${sideLabel(left)}`}
+        tone="removed"
+        icon={<ColumnsIcon size={15} />}
+        items={diff.columnsOnlyLeft.map((c) => ({
+          name: c.name,
+          summary: columnSummary(c),
+        }))}
+        {...fold("cols-left")}
+      />
+      <OnlySection
+        title={`Columns only in ${sideLabel(right)}`}
+        tone="added"
+        icon={<ColumnsIcon size={15} />}
+        items={diff.columnsOnlyRight.map((c) => ({
+          name: c.name,
+          summary: columnSummary(c),
+        }))}
+        {...fold("cols-right")}
+      />
+      <ChangedSection
+        title="Changed columns"
+        nameHeader="Column"
+        icon={<ColumnsIcon size={15} />}
+        items={diff.changedColumns}
+        {...fold("cols-changed")}
+      />
+      <OnlySection
+        title={`Indexes only in ${sideLabel(left)}`}
+        tone="removed"
+        icon={<ListNumbers size={15} />}
+        items={diff.indexesOnlyLeft.map((i) => ({
+          name: i.name,
+          summary: indexSummary(i),
+        }))}
+        {...fold("ix-left")}
+      />
+      <OnlySection
+        title={`Indexes only in ${sideLabel(right)}`}
+        tone="added"
+        icon={<ListNumbers size={15} />}
+        items={diff.indexesOnlyRight.map((i) => ({
+          name: i.name,
+          summary: indexSummary(i),
+        }))}
+        {...fold("ix-right")}
+      />
+      <ChangedSection
+        title="Changed indexes"
+        nameHeader="Index"
+        icon={<ListNumbers size={15} />}
+        items={diff.changedIndexes}
+        {...fold("ix-changed")}
+      />
+      {diff.tableChanges.length > 0 && (
+        <DiffSection
+          title="Table options"
+          tone="changed"
+          icon={<TableIcon size={15} />}
+          count={diff.tableChanges.length}
+          {...fold("table-options")}
+        >
+          <div className="sd-item">
+            {diff.tableChanges.map((ch) => (
+              <div className="sd-change" key={ch.field}>
+                <span className="sd-field">{ch.field}</span>
+                <span className="sd-old">{ch.left}</span>
+                <ArrowRight size={12} className="sd-arrow" />
+                <span className="sd-new">{ch.right}</span>
+              </div>
+            ))}
+          </div>
+        </DiffSection>
+      )}
+      {diff.columnOrderDiffers && (
+        <div className="sd-note">
+          <WarningCircle size={14} />
+          The columns both tables share appear in a different order.
+        </div>
+      )}
     </div>
   );
 }

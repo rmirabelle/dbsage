@@ -6,6 +6,7 @@ import App from "./App";
 import { MonitorWindow } from "./components/MonitorWindow";
 import { AdminWindow } from "./components/AdminWindow";
 import { PeekWindow } from "./components/PeekWindow";
+import { HelpWindow } from "./components/HelpWindow";
 import { TornTabWindow } from "./components/TornTabWindow";
 import { SplashScreen } from "./components/SplashScreen";
 import "./lib/horizontalWheel";
@@ -13,8 +14,8 @@ import "./index.css";
 
 /** Secondary windows share this bundle; the window label tells us the role.
  * A monitor window is labelled `monitor-<profileId>`, an admin window
- * `admin-<profileId>`, a torn-off tab `tab-<n>`, and a peek `peek-<n>`; each
- * renders only its own view, not the full app. */
+ * `admin-<profileId>`, a torn-off tab `tab-<n>`, a peek `peek-<n>`, and the
+ * Help library `help`; each renders only its own view, not the full app. */
 const MONITOR_PREFIX = "monitor-";
 const ADMIN_PREFIX = "admin-";
 const label = getCurrentWindow().label;
@@ -31,6 +32,7 @@ function Root() {
   if (adminProfile) return <AdminWindow profileId={adminProfile} />;
   if (label.startsWith("peek-")) return <PeekWindow label={label} />;
   if (label.startsWith("tab-")) return <TornTabWindow label={label} />;
+  if (label === "help") return <HelpWindow />;
   return <App />;
 }
 

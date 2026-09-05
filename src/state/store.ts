@@ -2023,6 +2023,7 @@ export const useStore = create<Store>((set, get) => ({
       originalName: "",
       tableComment: "",
       originalTableComment: "",
+      tableCollation: "",
       columns: [defaultIdColumn()],
       originalColumns: [],
       indexes: [],
@@ -2048,14 +2049,16 @@ export const useStore = create<Store>((set, get) => ({
       set({ activeTabId: tabId });
       return;
     }
-    const [defs, idxDefs, fkDefs, autoInc, comment] = await Promise.all([
+    const [defs, idxDefs, fkDefs, autoInc, comment, meta] = await Promise.all([
       ipc.columnDefinitions(profileId, database, table),
       ipc.indexDefinitions(profileId, database, table),
       ipc.foreignKeyDefinitions(profileId, database, table),
       ipc.tableAutoIncrement(profileId, database, table),
       ipc.tableComment(profileId, database, table),
+      ipc.tableSchemaMeta(profileId, database, table),
     ]);
-    const columns = defs.map(columnDefToDraft);
+    const tableCollation = meta.collation ?? "";
+    const columns = defs.map((d) => columnDefToDraft(d, tableCollation));
     const indexes = idxDefs.map(indexDefToDraft);
     const foreignKeys = fkDefs.map(foreignKeyDefToDraft);
     const ai = autoInc != null ? String(autoInc) : "";
@@ -2070,6 +2073,7 @@ export const useStore = create<Store>((set, get) => ({
       originalName: table,
       tableComment: comment,
       originalTableComment: comment,
+      tableCollation,
       columns,
       originalColumns: columns.map((c) => ({ ...c })),
       indexes,
@@ -2977,14 +2981,16 @@ async function reloadDesignerTab(
 ) {
   const tab = get().tabs.find((t) => t.id === tabId);
   if (!tab || tab.kind !== "create-table") return;
-  const [defs, idxDefs, fkDefs, autoInc, comment] = await Promise.all([
+  const [defs, idxDefs, fkDefs, autoInc, comment, meta] = await Promise.all([
     ipc.columnDefinitions(tab.profileId, tab.database, tableName),
     ipc.indexDefinitions(tab.profileId, tab.database, tableName),
     ipc.foreignKeyDefinitions(tab.profileId, tab.database, tableName),
     ipc.tableAutoIncrement(tab.profileId, tab.database, tableName),
     ipc.tableComment(tab.profileId, tab.database, tableName),
+    ipc.tableSchemaMeta(tab.profileId, tab.database, tableName),
   ]);
-  const columns = defs.map(columnDefToDraft);
+  const tableCollation = meta.collation ?? "";
+  const columns = defs.map((d) => columnDefToDraft(d, tableCollation));
   const indexes = idxDefs.map(indexDefToDraft);
   const foreignKeys = fkDefs.map(foreignKeyDefToDraft);
   const ai = autoInc != null ? String(autoInc) : "";
@@ -2997,6 +3003,7 @@ async function reloadDesignerTab(
             originalName: tableName,
             tableComment: comment,
             originalTableComment: comment,
+            tableCollation,
             columns,
             originalColumns: columns.map((c) => ({ ...c })),
             indexes,

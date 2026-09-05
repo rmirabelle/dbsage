@@ -12,6 +12,7 @@ import {
   ArrowUp,
   ArrowDown,
   DotsSixVertical,
+  RowsPlusTop,
   Asterisk,
   CircleNotch,
   X,
@@ -22,8 +23,14 @@ import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { ipc } from "../ipc";
 import { useStore, isDesignerTabDirty } from "../state/store";
 import { useUi } from "../state/ui";
-import { buildCreateTableSql, buildAlterTableSql, typeSupportsScale } from "../lib/tableSql";
+import {
+  buildCreateTableSql,
+  buildAlterTableSql,
+  collationCharset,
+  typeSupportsScale,
+} from "../lib/tableSql";
 import type {
+  CollationInfo,
   ColumnDraft,
   CreateTableTab,
   FkAction,
@@ -35,32 +42,32 @@ import type {
 } from "../types";
 
 const COLUMN_TYPES = [
-  "INT",
   "BIGINT",
-  "SMALLINT",
-  "TINYINT",
-  "MEDIUMINT",
-  "DECIMAL",
-  "FLOAT",
-  "DOUBLE",
-  "VARCHAR",
+  "BINARY",
+  "BLOB",
+  "BOOLEAN",
   "CHAR",
-  "TEXT",
-  "TINYTEXT",
-  "MEDIUMTEXT",
-  "LONGTEXT",
   "DATE",
   "DATETIME",
-  "TIMESTAMP",
-  "TIME",
-  "YEAR",
-  "BOOLEAN",
-  "JSON",
-  "BLOB",
+  "DECIMAL",
+  "DOUBLE",
   "ENUM",
+  "FLOAT",
+  "INT",
+  "JSON",
+  "LONGTEXT",
+  "MEDIUMINT",
+  "MEDIUMTEXT",
   "SET",
-  "BINARY",
+  "SMALLINT",
+  "TEXT",
+  "TIME",
+  "TIMESTAMP",
+  "TINYINT",
+  "TINYTEXT",
   "VARBINARY",
+  "VARCHAR",
+  "YEAR",
 ];
 
 const SUB_TABS = [
@@ -106,13 +113,50 @@ const blankColumn = (): ColumnDraft => ({
   defaultValue: "",
   unsigned: false,
   zerofill: false,
+  collation: "",
 });
+
+/** Which advanced options a type offers: numeric modifiers, or a character
+ * set + collation for text types. Dates, JSON and binary get only Default. */
+type TypeCategory = "numeric" | "text" | "other";
+const NUMERIC_TYPES = new Set([
+  "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT",
+  "DECIMAL", "NUMERIC", "FIXED", "FLOAT", "DOUBLE", "REAL", "DOUBLE PRECISION",
+  "BOOLEAN", "BOOL", "BIT",
+]);
+const TEXT_TYPES = new Set([
+  "CHAR", "VARCHAR", "TEXT", "TINYTEXT", "MEDIUMTEXT", "LONGTEXT", "ENUM", "SET",
+]);
+function typeCategory(type: string): TypeCategory {
+  const t = type.trim().toUpperCase();
+  if (NUMERIC_TYPES.has(t)) return "numeric";
+  if (TEXT_TYPES.has(t)) return "text";
+  return "other";
+}
+
+/** Server collations, cached per connection for the designer's pickers. */
+const collationCache = new Map<string, Promise<CollationInfo[]>>();
+function loadCollations(profileId: string): Promise<CollationInfo[]> {
+  let p = collationCache.get(profileId);
+  if (!p) {
+    p = ipc.listCollations(profileId).catch(() => {
+      collationCache.delete(profileId);
+      return [] as CollationInfo[];
+    });
+    collationCache.set(profileId, p);
+  }
+  return p;
+}
 
 export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
   const updateCreateTable = useStore((s) => s.updateCreateTable);
   const saveDesignerTab = useStore((s) => s.saveDesignerTab);
   const [activeSubTab, setActiveSubTab] = useState<string>("columns");
-  const [sqlExpanded, setSqlExpanded] = useState(true);
+  /* In edit mode the SQL pane follows the dirty state: collapsed while there
+     are no changes, open as soon as changes exist, collapsed again when they
+     are saved or undone. The user can still toggle it in between. Create mode
+     always has SQL, so it starts open. */
+  const [sqlExpanded, setSqlExpanded] = useState(tab.mode === "create");
   const [saving, setSaving] = useState(false);
   const [focusColumnId, setFocusColumnId] = useState<string | null>(null);
 
@@ -167,6 +211,18 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
   const addColumn = () => {
     const col = blankColumn();
     setColumns([...tab.columns, col]);
+    setFocusColumnId(col.id);
+  };
+
+  /** Insert a blank column directly above `beforeId`, so it lands in its
+   * final position without a drag. */
+  const insertColumn = (beforeId: string) => {
+    const at = tab.columns.findIndex((c) => c.id === beforeId);
+    if (at < 0) return addColumn();
+    const col = blankColumn();
+    const next = [...tab.columns];
+    next.splice(at, 0, col);
+    setColumns(next);
     setFocusColumnId(col.id);
   };
 
@@ -230,6 +286,11 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
 
   const canSave = tab.columns.some((c) => c.name.trim() !== "");
   const dirty = isDesignerTabDirty(tab);
+  const wasDirtyRef = useRef(dirty);
+  useEffect(() => {
+    if (dirty !== wasDirtyRef.current && tab.mode === "edit") setSqlExpanded(dirty);
+    wasDirtyRef.current = dirty;
+  }, [dirty, tab.mode]);
 
   const handleSave = async () => {
     if (saving) return;
@@ -251,7 +312,7 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             data-el="designer-save-btn"
             onClick={handleSave}
             disabled={!canSave || saving}
-            className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
+            className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
             title="Save all table changes (columns and indexes)"
           >
             {saving ? (
@@ -259,7 +320,7 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             ) : (
               <FloppyDisk size={17} />
             )}
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : "Save Table"}
           </button>
         )}
       </div>
@@ -337,9 +398,12 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
         {activeSubTab === "columns" && (
           <ColumnsEditor
             columns={tab.columns}
+            profileId={tab.profileId}
+            tableCollation={tab.tableCollation}
             focusColumnId={focusColumnId}
             onColumnFocused={() => setFocusColumnId(null)}
             onAddColumn={addColumn}
+            onInsertColumn={insertColumn}
             onPatchColumn={patchColumn}
             onRemoveColumn={removeColumn}
             onReorderColumn={reorderColumn}
@@ -379,33 +443,34 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
 }
 
 const HEADER_GRID =
-  "grid grid-cols-[24px_minmax(120px,1.4fr)_140px_72px_84px_72px_52px_minmax(140px,1.6fr)_84px] gap-2 items-center";
+  "grid grid-cols-[minmax(120px,1.4fr)_140px_72px_64px_72px_52px_minmax(140px,1.6fr)_84px] gap-2 items-center";
 
-/** A column should show its advanced panel by default when it uses
- * auto-increment or sets any of the other advanced-panel fields (unsigned,
- * zerofill, or a default value). */
-function columnHasAdvanced(col: ColumnDraft): boolean {
-  return (
-    col.autoIncrement ||
-    col.unsigned ||
-    col.zerofill ||
-    col.defaultValue.trim() !== ""
-  );
-}
+/** Shared look for the designer's text inputs (32px tall). */
+const INPUT_CLASS =
+  "w-full h-8 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[12px] text-zinc-200 outline-none focus:border-accent-500";
+
 
 function ColumnsEditor({
   columns,
+  profileId,
+  tableCollation,
   focusColumnId,
   onColumnFocused,
   onAddColumn,
+  onInsertColumn,
   onPatchColumn,
   onRemoveColumn,
   onReorderColumn,
 }: {
   columns: ColumnDraft[];
+  profileId: string;
+  /** The table's default collation ("" when unknown / creating). */
+  tableCollation: string;
   focusColumnId: string | null;
   onColumnFocused: () => void;
   onAddColumn: () => void;
+  /** Insert a blank column above the given one. */
+  onInsertColumn: (beforeId: string) => void;
   onPatchColumn: (id: string, patch: Partial<ColumnDraft>) => void;
   onRemoveColumn: (id: string) => void;
   onReorderColumn: (
@@ -414,54 +479,75 @@ function ColumnsEditor({
     edge: "before" | "after"
   ) => void;
 }) {
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(
-    () => new Set(columns.filter(columnHasAdvanced).map((c) => c.id))
-  );
   const scrollRef = useRef<HTMLDivElement>(null);
+  /* The selected column: the row that last had focus. It drives the shared
+     Advanced panel below the list and anchors Insert Column. Selection sticks
+     after blur so the panel keeps showing that column; it starts on the first
+     column and follows a removed column to its neighbour. */
+  const [activeColumnId, setActiveColumnId] = useState<string | null>(
+    () => columns[0]?.id ?? null
+  );
+  const activeColumn = columns.find((c) => c.id === activeColumnId) ?? null;
+  useEffect(() => {
+    if (!activeColumn && columns.length > 0) setActiveColumnId(columns[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumn, columns]);
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{
     id: string;
     edge: "before" | "after";
   } | null>(null);
 
-  const clearDrag = () => {
-    setDraggedColumnId(null);
+  /**
+   * Pointer-driven reorder (not HTML5 drag-and-drop: the Windows webview under
+   * Tauri swallows DOM drag events, so `dragover`/`drop` never fire). The
+   * handle captures the pointer; each move hit-tests the row under the cursor
+   * and picks the edge by its midpoint; release applies the move.
+   */
+  const dragRef = useRef<{
+    id: string;
+    target: { id: string; edge: "before" | "after" } | null;
+  } | null>(null);
+
+  const startColumnDrag = (e: React.PointerEvent<HTMLButtonElement>, id: string) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { id, target: null };
+    setDraggedColumnId(id);
     setDropTarget(null);
   };
 
-  const dragOverColumn = (
-    e: React.DragEvent<HTMLDivElement>,
-    targetId: string
-  ) => {
-    if (!draggedColumnId || draggedColumnId === targetId) {
+  const moveColumnDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const row = document
+      .elementFromPoint(e.clientX, e.clientY)
+      ?.closest<HTMLElement>("[data-column-id]");
+    const targetId = row?.dataset.columnId;
+    if (!row || !targetId || targetId === drag.id) {
+      drag.target = null;
       setDropTarget(null);
       return;
     }
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const from = columns.findIndex((c) => c.id === draggedColumnId);
-    const to = columns.findIndex((c) => c.id === targetId);
-    if (from < 0 || to < 0) return;
-    setDropTarget({ id: targetId, edge: from < to ? "after" : "before" });
+    const rect = row.getBoundingClientRect();
+    const edge = e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+    if (drag.target?.id !== targetId || drag.target.edge !== edge) {
+      drag.target = { id: targetId, edge };
+      setDropTarget(drag.target);
+    }
   };
 
-  const dropColumn = (
-    e: React.DragEvent<HTMLDivElement>,
-    targetId: string
-  ) => {
-    e.preventDefault();
-    if (draggedColumnId && draggedColumnId !== targetId) {
-      const from = columns.findIndex((c) => c.id === draggedColumnId);
-      const to = columns.findIndex((c) => c.id === targetId);
-      const edge =
-        dropTarget?.id === targetId
-          ? dropTarget.edge
-          : from < to
-          ? "after"
-          : "before";
-      onReorderColumn(draggedColumnId, targetId, edge);
+  const endColumnDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
     }
-    clearDrag();
+    if (drag.target) onReorderColumn(drag.id, drag.target.id, drag.target.edge);
+    setDraggedColumnId(null);
+    setDropTarget(null);
   };
 
   /** Focus + select the freshly-added column's name input. */
@@ -477,16 +563,7 @@ function ColumnsEditor({
     onColumnFocused();
   }, [focusColumnId, onColumnFocused]);
 
-  const toggleRow = (id: string) =>
-    setExpandedRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const inputClass =
-    "w-full h-8 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[12px] text-zinc-200 outline-none focus:border-accent-500";
+  const inputClass = INPUT_CLASS;
   /* Same look as inputClass but no fixed height and centered vertical padding:
      py-[7px] puts a single line dead-center in the 32px (min-h-8) box, matching
      how the single-line inputs render. AutoGrowTextarea adds the grow + floor. */
@@ -503,18 +580,35 @@ function ColumnsEditor({
         >
           <span className="relative -top-px text-[19px] leading-none">+</span> Add Column
         </button>
+        <button
+          data-el="columns-insert-btn"
+          onClick={() => {
+            if (activeColumn) onInsertColumn(activeColumn.id);
+          }}
+          disabled={!activeColumn}
+          title={
+            activeColumn
+              ? `Insert a column above ${activeColumn.name || "the selected column"}`
+              : "Select a column first, then insert above it"
+          }
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors disabled:opacity-40 disabled:hover:bg-orange-400"
+        >
+          <RowsPlusTop size={15} weight="bold" /> Insert Column
+        </button>
         <span className="ml-auto text-[11px] text-zinc-500">
           {columns.length} column{columns.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto px-3 pb-3 bg-[#2c303c]">
+      {/* The column labels stay pinned above the scrolling list. Both boxes
+          reserve a stable scrollbar gutter so the labels line up with the
+          fields whether or not the list actually scrolls. */}
+      <div className="shrink-0 overflow-y-hidden [scrollbar-gutter:stable] px-3 bg-[#2c303c]">
         <div
           className={clsx(
             HEADER_GRID,
             "px-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500"
           )}
         >
-          <span />
           <span>Name</span>
           <span>Type</span>
           <span>Length</span>
@@ -524,23 +618,26 @@ function ColumnsEditor({
           <span>Comment</span>
           <span />
         </div>
-
+      </div>
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable] px-3 pb-3 bg-[#2c303c]"
+      >
         {columns.length === 0 ? (
           <div className="px-1 py-6 text-[12px] text-zinc-500">
             No columns yet — click <span className="text-emerald-300">Add column</span> to start.
           </div>
         ) : (
-          <div className="space-y-0.5">
+          <div>
             {columns.map((col, index) => {
-              const open = expandedRows.has(col.id);
+              const selected = activeColumnId === col.id;
               const targetEdge =
                 dropTarget?.id === col.id ? dropTarget.edge : null;
               return (
                 <div
                   key={col.id}
+                  data-column-id={col.id}
                   data-dragging={draggedColumnId === col.id ? "true" : undefined}
-                  onDragOver={(e) => dragOverColumn(e, col.id)}
-                  onDrop={(e) => dropColumn(e, col.id)}
                   className={clsx(
                     "relative",
                     draggedColumnId === col.id && "opacity-50"
@@ -555,15 +652,17 @@ function ColumnsEditor({
                       )}
                     />
                   )}
-                  <div data-el="column-row" className={clsx(HEADER_GRID, "px-1")}>
-                    <button
-                      data-el="col-expand"
-                      onClick={() => toggleRow(col.id)}
-                      className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
-                      title={open ? "Hide advanced options" : "Show advanced options"}
-                    >
-                      {open ? <CaretDown size={13} /> : <CaretRight size={13} />}
-                    </button>
+                  <div
+                    data-el="column-row"
+                    data-selected={selected ? "true" : undefined}
+                    onFocusCapture={() => setActiveColumnId(col.id)}
+                    onMouseDown={() => setActiveColumnId(col.id)}
+                    className={clsx(
+                      HEADER_GRID,
+                      "px-1 py-px rounded",
+                      selected && "bg-accent-500/[0.08] ring-1 ring-inset ring-accent-500/40"
+                    )}
+                  >
                     <input
                       data-el="col-name"
                       data-col-id={col.id}
@@ -603,21 +702,26 @@ function ColumnsEditor({
                       }
                       className={clsx(inputClass, "text-right font-mono")}
                     />
-                    {typeSupportsScale(col.type) ? (
-                      <input
-                        data-el="col-decimals"
-                        inputMode="numeric"
-                        value={col.decimals}
-                        onChange={(e) =>
-                          onPatchColumn(col.id, {
-                            decimals: e.target.value.replace(/[^0-9]/g, ""),
-                          })
-                        }
-                        className={clsx(inputClass, "text-right font-mono")}
-                      />
-                    ) : (
-                      <div />
-                    )}
+                    <input
+                      data-el="col-decimals"
+                      inputMode="numeric"
+                      value={typeSupportsScale(col.type) ? col.decimals : ""}
+                      disabled={!typeSupportsScale(col.type)}
+                      title={
+                        typeSupportsScale(col.type)
+                          ? undefined
+                          : "Decimals apply only to DECIMAL, FLOAT and DOUBLE"
+                      }
+                      onChange={(e) =>
+                        onPatchColumn(col.id, {
+                          decimals: e.target.value.replace(/[^0-9]/g, ""),
+                        })
+                      }
+                      className={clsx(
+                        inputClass,
+                        "text-right font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+                      )}
+                    />
                     <div className="flex items-center justify-center">
                       <input
                         data-el="col-notnull"
@@ -646,14 +750,10 @@ function ColumnsEditor({
                     <div className="flex items-center justify-end gap-0.5">
                       <button
                         data-el="col-drag-handle"
-                        draggable
-                        onDragStart={(e) => {
-                          e.dataTransfer.effectAllowed = "move";
-                          e.dataTransfer.setData("text/plain", col.id);
-                          setDraggedColumnId(col.id);
-                          setDropTarget(null);
-                        }}
-                        onDragEnd={clearDrag}
+                        onPointerDown={(e) => startColumnDrag(e, col.id)}
+                        onPointerMove={moveColumnDrag}
+                        onPointerUp={endColumnDrag}
+                        onPointerCancel={endColumnDrag}
                         onKeyDown={(e) => {
                           if (!e.altKey) return;
                           if (e.key === "ArrowUp" && index > 0) {
@@ -675,7 +775,7 @@ function ColumnsEditor({
                             );
                           }
                         }}
-                        className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-blue-300 hover:bg-zinc-800 cursor-grab active:cursor-grabbing"
+                        className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-blue-300 hover:bg-zinc-800 cursor-grab active:cursor-grabbing touch-none select-none"
                         aria-label={`Drag ${col.name || "column"} to reorder`}
                         title="Drag to reorder · Alt+Up/Down"
                       >
@@ -692,16 +792,20 @@ function ColumnsEditor({
                       </button>
                     </div>
                   </div>
-
-                  {open && (
-                    <AdvancedPanel column={col} onPatch={(p) => onPatchColumn(col.id, p)} />
-                  )}
                 </div>
               );
             })}
           </div>
         )}
       </div>
+      <AdvancedPanel
+        column={activeColumn}
+        profileId={profileId}
+        tableCollation={tableCollation}
+        onPatch={(p) => {
+          if (activeColumn) onPatchColumn(activeColumn.id, p);
+        }}
+      />
     </div>
   );
 }
@@ -1328,60 +1432,199 @@ function NamePicker({
   );
 }
 
+/**
+ * Shared Advanced panel under the columns list: the extra options of the
+ * selected column. Numeric types get auto-increment / unsigned / zerofill;
+ * text types get a character set and collation; every type gets Default.
+ * Edits apply to the selected column; selecting another row swaps the panel.
+ */
 function AdvancedPanel({
   column,
+  profileId,
+  tableCollation,
   onPatch,
 }: {
-  column: ColumnDraft;
+  column: ColumnDraft | null;
+  profileId: string;
+  tableCollation: string;
   onPatch: (patch: Partial<ColumnDraft>) => void;
 }) {
-  const checkboxLabel =
-    "flex items-center gap-1.5 text-zinc-300 cursor-pointer select-none";
+  const category = column ? typeCategory(column.type) : "other";
+  const [collations, setCollations] = useState<CollationInfo[]>([]);
+  useEffect(() => {
+    if (category !== "text") return;
+    let cancelled = false;
+    loadCollations(profileId).then((list) => {
+      if (!cancelled) setCollations(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId, category]);
+
+  const checkboxLabel = (on: boolean) =>
+    clsx(
+      "flex items-center gap-2 text-[13px] cursor-pointer select-none",
+      on ? "font-bold text-zinc-100" : "text-zinc-300"
+    );
+  const selectLabel = "flex items-center gap-2 text-[13px] text-zinc-300";
+  const fieldStyle = { width: 350 };
+  const fieldClass = INPUT_CLASS.replace("w-full", "");
+
+  /* Any advanced value set on the selected column: outline the panel so the
+     hidden-away options are not overlooked. */
+  const populated =
+    !!column &&
+    (column.autoIncrement ||
+      column.unsigned ||
+      column.zerofill ||
+      column.collation.trim() !== "" ||
+      column.defaultValue.trim() !== "");
+
+  /* Charset is derived from the chosen collation; picking a charset jumps to
+     that set's default collation. "" on either = inherit the table default. */
+  const charsets = Array.from(new Set(collations.map((c) => c.charset)));
+  const charset = column?.collation ? collationCharset(column.collation) : "";
+  const collationsFor = charset
+    ? collations.filter((c) => c.charset === charset)
+    : [];
+  const inheritLabel = tableCollation
+    ? `Table default (${tableCollation})`
+    : "Table default";
+  const pickCharset = (cs: string) => {
+    if (!cs) return onPatch({ collation: "" });
+    const def =
+      collations.find((c) => c.charset === cs && c.isDefault) ??
+      collations.find((c) => c.charset === cs);
+    onPatch({ collation: def?.collation ?? "" });
+  };
+
   return (
     <div
       data-el="column-advanced"
-      className="ml-9 mr-[96px] mt-1 mb-0.5 rounded-md border border-zinc-800 bg-zinc-950/50 px-3 py-[5px] flex flex-wrap items-center gap-x-6 gap-y-2.5 text-[11px]"
+      data-populated={populated ? "true" : undefined}
+      className={clsx(
+        "shrink-0 bg-[#2c303c] border-2 transition-colors",
+        populated ? "border-accent-400" : "border-zinc-700"
+      )}
     >
-      <label className={checkboxLabel}>
-        <input
-          data-el="col-auto-increment"
-          type="checkbox"
-          checked={column.autoIncrement}
-          onChange={(e) => onPatch({ autoIncrement: e.target.checked })}
-          className="dbs-check focus:ring-2 focus:ring-accent-400 focus:ring-offset-1 focus:ring-offset-zinc-950"
-        />
-        Auto-increment
-      </label>
-      <label className={checkboxLabel}>
-        <input
-          data-el="col-unsigned"
-          type="checkbox"
-          checked={column.unsigned}
-          onChange={(e) => onPatch({ unsigned: e.target.checked })}
-          className="dbs-check focus:ring-2 focus:ring-accent-400 focus:ring-offset-1 focus:ring-offset-zinc-950"
-        />
-        Unsigned
-      </label>
-      <label className={checkboxLabel}>
-        <input
-          data-el="col-zerofill"
-          type="checkbox"
-          checked={column.zerofill}
-          onChange={(e) => onPatch({ zerofill: e.target.checked })}
-          className="dbs-check focus:ring-2 focus:ring-accent-400 focus:ring-offset-1 focus:ring-offset-zinc-950"
-        />
-        Zerofill
-      </label>
-      <label className="flex items-center gap-2 text-zinc-400">
-        Default
-        <input
-          data-el="col-default"
-          value={column.defaultValue}
-          onChange={(e) => onPatch({ defaultValue: e.target.value })}
-          placeholder="NULL, 0, 'text', CURRENT_TIMESTAMP…"
-          className="w-72 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-zinc-200 outline-none focus:border-accent-500"
-        />
-      </label>
+      <div className="h-8 px-3 flex items-center gap-2 bg-[#252833] text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-400">
+        Column Options:
+        <span className="font-mono normal-case tracking-normal text-[12px] font-semibold text-zinc-100 min-w-0 truncate max-w-[320px]">
+          {column ? (
+            column.name || <span className="text-zinc-500">(unnamed column)</span>
+          ) : (
+            <span className="font-sans text-zinc-500">no column selected</span>
+          )}
+        </span>
+      </div>
+      {column ? (
+        /* Same grid as the column rows, so the Default input is exactly as
+           wide as the Name field above it (list px-3 + row px-1 = px-4 here);
+           the type-specific options span the remaining columns. */
+        <div className={clsx(HEADER_GRID, "items-start border-t border-zinc-800/60 bg-[#2c303c] px-4 py-3")}>
+          <label className="flex flex-col items-stretch gap-1.5 text-[13px] text-zinc-300">
+            <span>Default</span>
+            <input
+              data-el="col-default"
+              value={column.defaultValue}
+              onChange={(e) => onPatch({ defaultValue: e.target.value })}
+              placeholder="NULL, 0, 'text', CURRENT_TIMESTAMP…"
+              className={clsx(
+                INPUT_CLASS,
+                column.defaultValue.trim() &&
+                  "!border-accent-400 ring-1 ring-inset ring-accent-400"
+              )}
+            />
+          </label>
+          <div className="col-span-7 flex min-w-0 flex-col items-start gap-2.5 self-stretch border-l border-zinc-700/60 pl-4">
+          {category === "other" && (
+            <span className="text-[12px] text-zinc-500">No options for this type.</span>
+          )}
+          {category === "numeric" && (
+            <>
+              <label className={checkboxLabel(column.autoIncrement)}>
+                <input
+                  data-el="col-auto-increment"
+                  type="checkbox"
+                  checked={column.autoIncrement}
+                  onChange={(e) => onPatch({ autoIncrement: e.target.checked })}
+                  className="dbs-check focus:ring-2 focus:ring-accent-400 focus:ring-offset-1 focus:ring-offset-zinc-950"
+                />
+                Auto-increment
+              </label>
+              <label className={checkboxLabel(column.unsigned)}>
+                <input
+                  data-el="col-unsigned"
+                  type="checkbox"
+                  checked={column.unsigned}
+                  onChange={(e) => onPatch({ unsigned: e.target.checked })}
+                  className="dbs-check focus:ring-2 focus:ring-accent-400 focus:ring-offset-1 focus:ring-offset-zinc-950"
+                />
+                Unsigned
+              </label>
+              <label className={checkboxLabel(column.zerofill)}>
+                <input
+                  data-el="col-zerofill"
+                  type="checkbox"
+                  checked={column.zerofill}
+                  onChange={(e) => onPatch({ zerofill: e.target.checked })}
+                  className="dbs-check focus:ring-2 focus:ring-accent-400 focus:ring-offset-1 focus:ring-offset-zinc-950"
+                />
+                Zerofill
+              </label>
+            </>
+          )}
+          {category === "text" && (
+            <>
+              <label className={selectLabel}>
+                <span className="w-[92px]">Character set</span>
+                <select
+                  data-el="col-charset"
+                  value={charset}
+                  onChange={(e) => pickCharset(e.target.value)}
+                  style={fieldStyle}
+                  className={clsx(fieldClass, !charset && "text-zinc-400")}
+                >
+                  <option value="">{inheritLabel}</option>
+                  {charsets.map((cs) => (
+                    <option key={cs} value={cs}>
+                      {cs}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={selectLabel}>
+                <span className="w-[92px]">Collation</span>
+                <select
+                  data-el="col-collation"
+                  value={column.collation}
+                  onChange={(e) => onPatch({ collation: e.target.value })}
+                  disabled={!charset}
+                  style={fieldStyle}
+                  className={clsx(
+                    fieldClass,
+                    !charset && "text-zinc-400 disabled:opacity-60"
+                  )}
+                >
+                  {!charset && <option value="">{inheritLabel}</option>}
+                  {collationsFor.map((c) => (
+                    <option key={c.collation} value={c.collation}>
+                      {c.collation}
+                      {c.isDefault ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+          </div>
+        </div>
+      ) : (
+        <div className="border-t border-zinc-800/60 bg-[#2c303c] px-4 py-3 text-[12px] text-zinc-500">
+          Select a column to edit its options.
+        </div>
+      )}
     </div>
   );
 }

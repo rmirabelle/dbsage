@@ -495,6 +495,9 @@ export interface ColumnDraft {
   defaultValue: string;
   unsigned: boolean;
   zerofill: boolean;
+  /** Text columns: explicit collation (its character set is the name's
+   * prefix). Empty = inherit the table default. */
+  collation: string;
   /** The column's name as loaded (edit mode only); absent for newly-added columns.
    * Used to diff against the live edits when generating ALTER TABLE. */
   originalName?: string;
@@ -511,6 +514,13 @@ export interface ColumnDef {
   comment: string;
   /** Collation for text columns, null for numeric/binary types. */
   collation: string | null;
+}
+
+/** One server collation and the character set it belongs to. */
+export interface CollationInfo {
+  collation: string;
+  charset: string;
+  isDefault: boolean;
 }
 
 /** Table-level schema metadata (engine, default collation, comment). */
@@ -657,6 +667,9 @@ export interface CreateTableTab extends BaseTab {
   tableComment: string;
   /** Edit mode: the table's comment when opened, for change detection. */
   originalTableComment: string;
+  /** Edit mode: the table's default collation, so a column matching it shows
+   * as "table default". Empty in create mode (the database default applies). */
+  tableCollation: string;
   columns: ColumnDraft[];
   /** Edit mode: snapshot of the loaded columns, for diffing into ALTER clauses. */
   originalColumns: ColumnDraft[];

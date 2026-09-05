@@ -2,14 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GitDiff, X } from "@phosphor-icons/react";
 import { useStore } from "../state/store";
 import { ipc } from "../ipc";
-import { StyledSelect } from "./StyledSelect";
+import {
+  CompareSides,
+  SidePicker,
+  sameSide,
+  useCompareSide,
+} from "./CompareSides";
 import type { DatabaseDiffSide } from "../types";
 
 /**
- * Picker for the other side of a whole-database comparison. Seeded with the
- * right-clicked database as the fixed left side; defaults the right side to
- * the first other connected profile that has a same-named database, falling
- * back to the source connection.
+ * Picker for a whole-database comparison. Seeded with the right-clicked
+ * database as the source, but both sides are editable, so any two databases
+ * on any two connections can be compared. The target starts on the source
+ * connection with no database chosen.
  */
 export function CompareDatabaseDialog({
   left,
@@ -20,90 +25,27 @@ export function CompareDatabaseDialog({
 }) {
   const profiles = useStore((s) => s.profiles);
   const openDatabaseDiff = useStore((s) => s.openDatabaseDiff);
-  const connectProfile = useStore((s) => s.connectProfile);
 
-  const [profileId, setProfileId] = useState<string | null>(null);
-  const [databases, setDatabases] = useState<string[]>([]);
-  const [database, setDatabase] = useState("");
-  const [connecting, setConnecting] = useState(false);
-  const [connectError, setConnectError] = useState<string | null>(null);
+  const source = useCompareSide(left, false);
+  const target = useCompareSide({ profileId: left.profileId, database: "" }, false);
   const [pickTables, setPickTables] = useState(false);
   /** Union of both sides' table names; null until loaded. */
   const [allTables, setAllTables] = useState<string[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
 
-  /** Find the default target: first other *connected* profile holding a
-   * same-named database; otherwise the first other profile of any state
-   * (it gets connected on demand below). */
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const others = profiles.filter((p) => p.id !== left.profileId);
-      const conns = useStore.getState().connections;
-      for (const p of others.filter((p) => conns[p.id]?.connected)) {
-        try {
-          const dbs = await ipc.listDatabases(p.id);
-          if (!dbs.includes(left.database)) continue;
-          if (!cancelled) setProfileId(p.id);
-          return;
-        } catch {
-          /* Unreachable connection — try the next candidate. */
-        }
-      }
-      if (!cancelled) setProfileId(others[0]?.id ?? left.profileId);
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /** Load databases whenever the target connection changes, connecting the
-   * profile first when needed; prefer the left side's database name when it
-   * exists there. */
-  useEffect(() => {
-    if (!profileId) return;
-    let cancelled = false;
-    (async () => {
-      setConnectError(null);
-      try {
-        if (!useStore.getState().connections[profileId]?.connected) {
-          setConnecting(true);
-          await connectProfile(profileId);
-        }
-        const dbs = await ipc.listDatabases(profileId);
-        if (cancelled) return;
-        setDatabases(dbs);
-        setDatabase(dbs.includes(left.database) ? left.database : dbs[0] ?? "");
-      } catch (e) {
-        if (!cancelled) {
-          setDatabases([]);
-          setDatabase("");
-          setConnectError(String(e));
-        }
-      } finally {
-        if (!cancelled) setConnecting(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId]);
-
   /** When picking tables, load the union of both sides' table names (a table
    * that exists on only one side is still a meaningful diff row). Everything
    * starts selected; the user prunes with the filter + bulk buttons. */
   useEffect(() => {
-    if (!pickTables || !profileId || !database) return;
+    if (!pickTables || !source.database || !target.database) return;
     let cancelled = false;
     setAllTables(null);
     (async () => {
       try {
         const [l, r] = await Promise.all([
-          ipc.listTables(left.profileId, left.database),
-          ipc.listTables(profileId, database),
+          ipc.listTables(source.profileId, source.database),
+          ipc.listTables(target.profileId, target.database),
         ]);
         if (cancelled) return;
         const names = Array.from(
@@ -119,7 +61,7 @@ export function CompareDatabaseDialog({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickTables, profileId, database]);
+  }, [pickTables, source.profileId, source.database, target.profileId, target.database]);
 
   const shown = useMemo(() => {
     if (!allTables) return [];
@@ -166,24 +108,28 @@ export function CompareDatabaseDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const sameAsLeft =
-    profileId === left.profileId && database === left.database;
+  const same = sameSide(source, target, false);
+  const filled = (s: typeof source) =>
+    !!s.profileId && !!s.database && !s.connecting;
   const ready =
-    !!profileId &&
-    !!database &&
-    !sameAsLeft &&
-    !connecting &&
+    filled(source) &&
+    filled(target) &&
+    !same &&
     (!pickTables || (allTables !== null && selected.size > 0));
 
   const compare = () => {
-    if (!ready || !profileId) return;
-    const profile = profiles.find((p) => p.id === profileId);
+    if (!ready) return;
+    const name = (id: string) => profiles.find((p) => p.id === id)?.name ?? id;
     openDatabaseDiff(
-      left,
       {
-        profileId,
-        profileName: profile?.name ?? profileId,
-        database,
+        profileId: source.profileId,
+        profileName: name(source.profileId),
+        database: source.database,
+      },
+      {
+        profileId: target.profileId,
+        profileName: name(target.profileId),
+        database: target.database,
       },
       /* A full selection is the same as "all tables" — don't pin the tab to a
          list that would silently exclude tables created later. */
@@ -194,15 +140,10 @@ export function CompareDatabaseDialog({
     onClose();
   };
 
-  const selectClass =
-    "w-full justify-between bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-zinc-200";
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
     >
       <div
         data-el="compare-database-dialog"
@@ -212,16 +153,13 @@ export function CompareDatabaseDialog({
           resize: "both",
           height: pickTables ? "min(650px, calc(100vh - 32px))" : undefined,
         }}
-        className="relative flex w-[520px] min-h-[315px] min-w-[440px] max-h-[calc(100vh-32px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl"
+        className="relative flex w-[720px] min-h-[300px] min-w-[560px] max-h-[calc(100vh-32px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl"
       >
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-zinc-800">
           <GitDiff size={18} className="text-amber-400" />
           <div className="min-w-0">
             <div className="text-[14px] font-semibold text-zinc-100">
               Compare Database Schema
-            </div>
-            <div className="truncate text-[12px] text-zinc-400">
-              {left.profileName} • {left.database}
             </div>
           </div>
           <button
@@ -234,45 +172,13 @@ export function CompareDatabaseDialog({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-4 py-4">
-          <div className="text-[12px] text-zinc-400">Compare it with:</div>
-          <label className="flex items-center gap-3">
-            <span className="w-24 shrink-0 text-[12px] text-zinc-400">
-              Connection
-            </span>
-            <StyledSelect
-              dataEl="compare-db-connection"
-              value={profileId ?? ""}
-              options={profiles.map((p) => ({ value: p.id, label: p.name }))}
-              onChange={setProfileId}
-              disabled={!profileId}
-              className={selectClass}
-            />
-          </label>
-          {connecting && (
-            <div className="text-[12px] text-zinc-400">Connecting…</div>
-          )}
-          {connectError && (
-            <div className="text-[12px] text-rose-400">
-              Could not connect: {connectError}
-            </div>
-          )}
-          <label className="flex items-center gap-3">
-            <span className="w-24 shrink-0 text-[12px] text-zinc-400">
-              Database
-            </span>
-            <StyledSelect
-              dataEl="compare-db-database"
-              value={database}
-              options={databases.map((d) => ({ value: d, label: d }))}
-              onChange={setDatabase}
-              disabled={!databases.length}
-              className={selectClass}
-            />
-          </label>
-          {sameAsLeft && (
+          <CompareSides
+            source={<SidePicker side={source} dataEl="compare-db-source" />}
+            target={<SidePicker side={target} dataEl="compare-db-target" />}
+          />
+          {same && filled(source) && (
             <div className="text-[12px] text-amber-400">
-              Pick a different database — this is the same database as the left
-              side.
+              Pick a different database — both sides point at the same database.
             </div>
           )}
 
@@ -282,7 +188,7 @@ export function CompareDatabaseDialog({
               className="dbs-check"
               checked={pickTables}
               onChange={(e) => setPickTables(e.target.checked)}
-              disabled={!database}
+              disabled={!source.database || !target.database}
             />
             <span className="text-[12px] text-zinc-300">
               Select specific tables

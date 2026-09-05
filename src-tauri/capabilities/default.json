@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window, the per-connection monitor and admin windows, and torn-off tab / peek windows",
-  "windows": ["main", "monitor-*", "admin-*", "tab-*", "peek-*"],
+  "description": "Capability for the main window, the per-connection monitor and admin windows, torn-off tab / peek windows, and the Help window",
+  "windows": ["main", "monitor-*", "admin-*", "tab-*", "peek-*", "help"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

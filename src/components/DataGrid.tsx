@@ -28,6 +28,7 @@ import type {
   ColumnFilter,
   ColumnInfo,
   RowRecord,
+  SuggestResult,
   SortDirection,
   SortSpec,
 } from "../types";
@@ -75,6 +76,28 @@ const NO_SUGGEST_TYPES = new Set([
   "geometrycollection",
   "bit",
 ]);
+
+/** Distinct values of `column` across `rows` that start with `prefix`
+ *  (case-insensitive), sorted, for query-result grids where there is no table
+ *  to ask. Mirrors the backend's shape so the menu treats both alike. */
+function suggestFromRows(
+  rows: RowRecord[],
+  column: string,
+  prefix: string,
+  limit: number
+): SuggestResult {
+  const needle = prefix.trim().toLowerCase();
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const v = row[column];
+    if (v == null) continue;
+    const s = String(v);
+    if (needle && !s.toLowerCase().startsWith(needle)) continue;
+    seen.add(s);
+  }
+  const values = [...seen].sort((a, b) => a.localeCompare(b)).slice(0, limit);
+  return { values, skipped: false };
+}
 
 function canSuggestValues(columnType: string): boolean {
   const base = columnType.trim().toLowerCase().match(/^[a-z]+/)?.[0] ?? "";
@@ -127,6 +150,10 @@ interface Props {
   /** When set, the column menu's Equals input suggests distinct values from
    * this table as the user types. Absent for query-result grids. */
   suggestSource?: { profileId: string; database: string; table: string };
+  /** When set (query-result grids), the Equals input suggests the distinct
+   * values this column holds across these rows — the full, unfiltered result
+   * set — instead of querying a table. */
+  suggestRows?: RowRecord[];
   /** When true, right-clicking a row's number gutter opens a "Copy As" menu with
    * table-free result formats (JSON / CSV / tab-delimited) — for grids showing
    * query results, which have no db.table target for SQL-shaped copies. */
@@ -247,6 +274,7 @@ export function DataGrid({
   onColumnWidthsChange,
   copyTarget,
   suggestSource,
+  suggestRows,
   resultCopy = false,
   onDeleteRows,
   onCascadePreview,
@@ -1426,18 +1454,24 @@ export function DataGrid({
           onFilter={(filter) => onFilterChange(menu.column, filter)}
           onJsonShow={(path) => onJsonShow(menu.column, path)}
           suggest={
-            suggestSource &&
-            canSuggestValues(
+            !canSuggestValues(
               columns.find((c) => c.name === menu.column)?.dataType ?? ""
             )
-              ? (prefix) =>
-                  ipc.suggestColumnValues({
-                    ...suggestSource,
-                    column: menu.column,
-                    prefix,
-                    limit: 50,
-                  })
-              : undefined
+              ? undefined
+              : suggestSource
+                ? (prefix) =>
+                    ipc.suggestColumnValues({
+                      ...suggestSource,
+                      column: menu.column,
+                      prefix,
+                      limit: 50,
+                    })
+                : suggestRows
+                  ? (prefix) =>
+                      Promise.resolve(
+                        suggestFromRows(suggestRows, menu.column, prefix, 50)
+                      )
+                  : undefined
           }
         />
       )}

@@ -10,6 +10,8 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WindowControls } from "./WindowControls";
 import {
   articleSearchText,
   DEFAULT_HELP_ARTICLE,
@@ -21,46 +23,34 @@ import {
   type HelpScreenshotId,
 } from "../help/helpContent";
 
-interface Props {
-  open: boolean;
-  onClose: () => void;
-}
-
-export function HelpDialog({ open, onClose }: Props) {
+/**
+ * The Help library, hosted in its own OS window (label `help`, opened by the
+ * `open_help_window` command) so it stays open beside the app while the user
+ * works. Renders its own draggable titlebar — the window is
+ * `decorations: false` like the main window. Escape closes the window.
+ */
+export function HelpWindow() {
   const [articleId, setArticleId] = useState(DEFAULT_HELP_ARTICLE);
   const [query, setQuery] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set([findHelpArticle(DEFAULT_HELP_ARTICLE).group.id])
+  );
   const [collapsedSearchGroups, setCollapsedSearchGroups] = useState<Set<string>>(
     () => new Set()
   );
   const contentRef = useRef<HTMLElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setQuery("");
-    setExpandedGroups(new Set([findHelpArticle(articleId).group.id]));
-    setCollapsedSearchGroups(new Set());
-  }, [open]);
 
   useEffect(() => {
     setCollapsedSearchGroups(new Set());
   }, [query]);
 
   useEffect(() => {
-    if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") getCurrentWindow().close();
     };
     window.addEventListener("keydown", onKey);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    requestAnimationFrame(() => closeRef.current?.focus());
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open, onClose]);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const filteredGroups = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -72,8 +62,6 @@ export function HelpDialog({ open, onClose }: Props) {
       ),
     })).filter((group) => group.articles.length > 0);
   }, [query]);
-
-  if (!open) return null;
 
   const { group, article } = findHelpArticle(articleId);
   const resultCount = filteredGroups.reduce(
@@ -108,42 +96,37 @@ export function HelpDialog({ open, onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/70 p-3 backdrop-blur-sm sm:p-4">
-      <div
-        data-el="help-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="help-dialog-title"
-        className="mx-auto flex h-full w-full max-w-[1680px] flex-col overflow-hidden rounded-xl border border-zinc-700/80 bg-[#1d2029] shadow-2xl shadow-black/70"
+    <div
+      data-el="help-window"
+      className="flex h-screen w-screen flex-col overflow-hidden bg-[#1d2029] text-zinc-200"
+    >
+      <header
+        data-el="help-titlebar"
+        data-tauri-drag-region
+        className="flex h-12 shrink-0 select-none items-center border-b border-zinc-800 bg-zinc-950 pl-4"
       >
-        <header className="flex h-14 shrink-0 items-center border-b border-zinc-800 bg-zinc-950 px-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-lime-400/20 bg-lime-400/10 text-lime-400">
-              <Info size={18} weight="bold" />
-            </div>
-            <div className="min-w-0">
-              <h1 id="help-dialog-title" className="text-[15px] font-semibold text-zinc-100">
-                DB Sage Help
-              </h1>
-              <p className="truncate text-[11px] text-zinc-500">
-                Guides for connections, data, queries, and relations
-              </p>
-            </div>
+        <div
+          data-tauri-drag-region
+          className="pointer-events-none flex min-w-0 items-center gap-3"
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-lime-400/20 bg-lime-400/10 text-lime-400">
+            <Info size={18} weight="bold" />
           </div>
-          <span className="ml-auto mr-3 hidden rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 sm:inline">
-            Esc
-          </span>
-          <button
-            ref={closeRef}
-            type="button"
-            data-el="help-dialog-close-btn"
-            onClick={onClose}
-            className="rounded-md p-2 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-500"
-            aria-label="Close Help"
-          >
-            <X size={20} />
-          </button>
-        </header>
+          <div className="min-w-0">
+            <h1 className="text-[15px] font-semibold text-zinc-100">DB Sage Help</h1>
+            <p className="truncate text-[11px] text-zinc-500">
+              Guides for connections, data, queries, and relations
+            </p>
+          </div>
+        </div>
+        <span
+          data-tauri-drag-region
+          className="ml-auto mr-3 hidden rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 sm:inline"
+        >
+          Esc
+        </span>
+        <WindowControls />
+      </header>
 
         <div className="flex min-h-0 flex-1">
           <nav
@@ -284,7 +267,6 @@ export function HelpDialog({ open, onClose }: Props) {
             </article>
           </main>
         </div>
-      </div>
     </div>
   );
 }
@@ -443,7 +425,7 @@ function HelpScreenshot({
         />
       </div>
       {caption ? (
-        <figcaption className="border-t border-zinc-800 px-4 py-3 text-[11px] leading-5 text-zinc-500">
+        <figcaption className="border-t border-zinc-800 px-4 py-3 text-[11px] leading-5 text-zinc-400">
           {caption}
         </figcaption>
       ) : null}

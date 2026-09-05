@@ -26,6 +26,8 @@ interface Props {
   /** Extra classes for the popup menu container (e.g. font-size — the option
    * buttons inherit it, since the global rule pins their own font-size). */
   menuClassName?: string;
+  /** Muted text shown in the trigger when no option matches `value`. */
+  placeholder?: string;
 }
 
 /**
@@ -43,6 +45,7 @@ export function StyledSelect({
   icon,
   className,
   menuClassName,
+  placeholder,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -132,7 +135,9 @@ export function StyledSelect({
       >
         <span className="inline-flex min-w-0 items-center gap-1.5">
           {icon}
-          <span className="truncate">{current?.label ?? ""}</span>
+          <span className={clsx("truncate", !current && placeholder && "text-zinc-500")}>
+            {current?.label ?? placeholder ?? ""}
+          </span>
         </span>
         <CaretDown size={12} className="shrink-0 opacity-80" />
       </button>

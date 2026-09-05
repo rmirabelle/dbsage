@@ -1091,6 +1091,38 @@ pub struct ColumnDef {
     pub collation: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollationInfo {
+    pub collation: String,
+    pub charset: String,
+    /// True for the character set's default collation.
+    pub is_default: bool,
+}
+
+/// Every collation the server supports, with its character set — for the
+/// table designer's per-column charset / collation pickers.
+#[tauri::command]
+pub async fn list_collations(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<Vec<CollationInfo>> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let rows = sqlx::query(
+        "SELECT COLLATION_NAME, CHARACTER_SET_NAME, IS_DEFAULT          FROM INFORMATION_SCHEMA.COLLATIONS          ORDER BY CHARACTER_SET_NAME, COLLATION_NAME",
+    )
+    .fetch_all(&pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| CollationInfo {
+            collation: get_string(r, 0),
+            charset: get_string(r, 1),
+            is_default: get_string(r, 2).eq_ignore_ascii_case("yes"),
+        })
+        .collect())
+}
+
 /// Full column metadata for editing an existing table (richer than `list_columns`).
 #[tauri::command]
 pub async fn column_definitions(

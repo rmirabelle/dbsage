@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowsClockwise,
   ArrowsLeftRight,
+  CaretDown,
   CaretRight,
   CheckCircle,
   CircleNotch,
@@ -13,10 +14,24 @@ import {
 } from "@phosphor-icons/react";
 import { useStore } from "../state/store";
 import { helpHandlers } from "../state/help";
-import { computeDatabaseDiff, tableSummary } from "../lib/schemaDiff";
+import {
+  computeDatabaseDiff,
+  computeSchemaDiff,
+  tableSummary,
+} from "../lib/schemaDiff";
 import { exportDatabaseDiffText } from "../lib/schemaDiffText";
-import { DiffSection, OnlySection, useSectionFold } from "./SchemaDiffView";
-import type { DatabaseDiffSide, DatabaseDiffTab, TableSchemaEntry } from "../types";
+import {
+  DiffSection,
+  OnlySection,
+  SchemaDiffReport,
+  useSectionFold,
+} from "./SchemaDiffView";
+import type {
+  DatabaseDiffSide,
+  DatabaseDiffTab,
+  SchemaDiffSide,
+  TableSchemaEntry,
+} from "../types";
 
 /** "connection • database" label for one side of the comparison. */
 function sideLabel(side: DatabaseDiffSide): string {
@@ -43,7 +58,6 @@ function SideChip({ side }: { side: DatabaseDiffSide }) {
 export function DatabaseDiffView({ tab }: { tab: DatabaseDiffTab }) {
   const refreshDatabaseDiff = useStore((s) => s.refreshDatabaseDiff);
   const swapDatabaseDiff = useStore((s) => s.swapDatabaseDiff);
-  const openSchemaDiff = useStore((s) => s.openSchemaDiff);
 
   const left: DatabaseDiffSide = {
     profileId: tab.profileId,
@@ -60,11 +74,26 @@ export function DatabaseDiffView({ tab }: { tab: DatabaseDiffTab }) {
     return computeDatabaseDiff(scoped(tab.leftSchemas), scoped(tab.rightSchemas));
   }, [tab.leftSchemas, tab.rightSchemas, tab.tables]);
 
-  /** Drill into one table pair, reusing the per-table Schema Diff tab. */
-  const openTableDiff = (table: string) =>
-    openSchemaDiff({ ...left, table }, { ...right, table });
+  /* Changed tables expand in place to show their own column/index diff,
+     computed from the schemas already fetched for the database compare. */
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggleTable = (name: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  const tableDiff = (name: string) => {
+    const l = tab.leftSchemas?.find((t) => t.name === name);
+    const r = tab.rightSchemas?.find((t) => t.name === name);
+    return l && r ? computeSchemaDiff(l, r) : null;
+  };
 
   const fold = useSectionFold(tab.id, tab.folded);
+  /** Section folds inside one table's inline diff, keyed by table name so
+   * each table folds independently. */
+  const tableFold = (name: string) => (key: string) => fold(`${name}:${key}`);
 
   return (
     <div className="schema-diff flex h-full min-h-0 flex-col">
@@ -75,7 +104,7 @@ export function DatabaseDiffView({ tab }: { tab: DatabaseDiffTab }) {
           onClick={() => swapDatabaseDiff(tab.id)}
           {...helpHandlers("Swap source and destination")}
         >
-          <ArrowsLeftRight size={14} />
+          <ArrowsLeftRight size={26} weight="bold" />
         </button>
         <SideChip side={right} />
         {tab.tables && (
@@ -161,20 +190,45 @@ export function DatabaseDiffView({ tab }: { tab: DatabaseDiffTab }) {
                 count={diff.changedTables.length}
                 {...fold("tables-changed")}
               >
-                {diff.changedTables.map((t) => (
-                  <button
-                    key={t.name}
-                    className="sd-item sd-item-btn"
-                    onClick={() => openTableDiff(t.name)}
-                    {...helpHandlers(
-                      "Open the table comparison for this table"
-                    )}
-                  >
-                    <span className="sd-name">{t.name}</span>
-                    <span className="sd-summary">{t.summary}</span>
-                    <CaretRight size={13} className="sd-drill" />
-                  </button>
-                ))}
+                {diff.changedTables.map((t) => {
+                  const open = expanded.has(t.name);
+                  const inline = open ? tableDiff(t.name) : null;
+                  const leftT: SchemaDiffSide = { ...left, table: t.name };
+                  const rightT: SchemaDiffSide = { ...right, table: t.name };
+                  return (
+                    <div
+                      key={t.name}
+                      className={open ? "sd-table-row sd-expanded" : "sd-table-row"}
+                    >
+                      <button
+                        className="sd-item sd-item-btn"
+                        onClick={() => toggleTable(t.name)}
+                        {...helpHandlers(
+                          open
+                            ? "Collapse this table's comparison"
+                            : "Expand this table's comparison here"
+                        )}
+                      >
+                        {open ? (
+                          <CaretDown size={13} className="sd-fold" />
+                        ) : (
+                          <CaretRight size={13} className="sd-fold" />
+                        )}
+                        <span className="sd-name">{t.name}</span>
+                        <span className="sd-summary">{t.summary}</span>
+                      </button>
+                      {inline && (
+                        <SchemaDiffReport
+                          nested
+                          diff={inline}
+                          left={leftT}
+                          right={rightT}
+                          fold={tableFold(t.name)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </DiffSection>
             )}
             {diff.identicalTables.length > 0 && (

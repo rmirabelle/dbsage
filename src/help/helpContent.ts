@@ -73,7 +73,10 @@ export const HELP_SCREENSHOTS = {
   "db-drag_to_folder": { physicalWidth: 842, physicalHeight: 374, framing: "annotated folder drop target" },
   "db-drag_to_db": { physicalWidth: 796, physicalHeight: 408, framing: "annotated database drop target" },
   "db-menu": { physicalWidth: 649, physicalHeight: 530, framing: "database context menu" },
-  "db-compare_schema": { physicalWidth: 1332, physicalHeight: 790, framing: "database comparison" },
+  "db-compare_schema_config": { physicalWidth: 727, physicalHeight: 638, framing: "database compare dialog" },
+  "table-compare_schema_config": { physicalWidth: 924, physicalHeight: 420, framing: "table compare dialog" },
+  "db-diff": { physicalWidth: 910, physicalHeight: 728, framing: "annotated database diff" },
+  "table-sync": { physicalWidth: 821, physicalHeight: 650, framing: "synchronize schema dialog" },
   "connection-monitor": { physicalWidth: 1118, physicalHeight: 669, framing: "monitor window" },
   "connection-admin-config": { physicalWidth: 1250, physicalHeight: 819, framing: "configuration tab" },
   "connection-admin-service": { physicalWidth: 882, physicalHeight: 423, framing: "service tab" },
@@ -128,6 +131,19 @@ export const HELP_GROUPS: HelpGroup[] = [
         title: "Welcome to DB Sage",
         summary: "A quick tour of the workspace and the fastest path to your data.",
         sections: [
+          {
+            title: "What DB Sage is",
+            blocks: [
+              {
+                type: "paragraph",
+                text: "DB Sage is a desktop workbench for MySQL built around one idea: your data is connected, and the tool should follow those connections as fast as you can think. Open a table and filter it with value suggestions drawn from the data itself. Right-click a row and peek at its related rows in a window of their own, then peek again from there, as deep as the relations go. Save that whole arrangement as a View and get it back with one click.",
+              },
+              {
+                type: "paragraph",
+                text: "Around that core sits everything a daily database job needs: a query editor that explains and grades your SQL, a visual table designer, schema comparison and one-step synchronization between databases, JSON import and multi-format export, backup and restore, and live server monitoring. Every window is a real window, so tables, peeks, and Help can sit beside each other on your screen while you work.",
+              },
+            ],
+          },
           {
             title: "Choose how to begin",
             blocks: [
@@ -278,7 +294,7 @@ export const HELP_GROUPS: HelpGroup[] = [
                   "New Database is available from a connection's context menu.",
                   "Backup Database writes a DB Sage backup file and shows progress.",
                   "Restore Database restores into a safe copy first; review it before choosing Make Live.",
-                  "Compare Schema compares whole databases and lets you drill into individual table differences.",
+                  "Compare Schema compares whole databases and expands any changed table to show its column and index differences in place.",
                   "Drop Database is destructive and always requires confirmation.",
                 ],
               },
@@ -540,23 +556,73 @@ export const HELP_GROUPS: HelpGroup[] = [
         summary: "Compare two databases or two individual tables and synchronize differences.",
         sections: [
           {
-            title: "Database and table comparison",
+            title: "Choose what to compare",
             blocks: [
               {
                 type: "steps",
                 items: [
                   "Right-click a database and choose Compare Schema, or use Compare Schema on a table for a focused comparison.",
-                  "Choose the other connection, database, and table when applicable.",
-                  "Review missing, added, and changed objects. Swap the two sides when you want to reverse the comparison direction.",
-                  "Use synchronization only after reviewing the generated changes and their target side.",
+                  "Set both sides. Each card has its own connection, database, and (for a table compare) table, so any two tables or databases can be compared, even across connections.",
+                  "Choose Compare. The result opens in a Diff tab.",
                 ],
               },
               shot(
-                "db-compare_schema",
-                "Database schema comparison showing missing, added, and changed tables",
-                "Red and green sections identify tables found on only one side. The orange section summarizes changed columns and indexes; choose a table row to inspect its detailed differences.",
+                "table-compare_schema_config",
+                "Compare Schema dialog with Source and Target cards, each holding connection, database, and table selects",
+                "The Source card starts on the table you right-clicked. The Target card starts on the same connection with no database chosen; pick one and the matching table name is selected for you when it exists there.",
                 "wide"
               ),
+              shot(
+                "db-compare_schema_config",
+                "Compare Database Schema dialog with Select specific tables checked and a list of table checkboxes",
+                "A database compare covers every table by default. Check Select specific tables to limit it: filter the list, use Select shown and Clear shown, or drag across the checkboxes to paint a selection.",
+                "wide"
+              ),
+            ],
+          },
+          {
+            title: "Read the comparison",
+            blocks: [
+              {
+                type: "paragraph",
+                text: "The comparison opens in its own Diff tab and reads like a report. It is grouped by kind of difference, and each group is colored by what it means: red for objects found only on the source side, green for objects found only on the target side, and orange for objects that exist on both sides but differ. Table-level detail is one click away, so you can move from a database overview to a single column change without leaving the tab.",
+              },
+              shot(
+                "db-diff",
+                "Annotated database diff showing the source and target cards, the database differences sections, an expanded table, and the Export button",
+                "The header shows the two sides as cards with a swap arrow between them. Red and green sections list tables found on only one side; the orange section lists tables whose structure differs. Export saves the whole comparison as a plain-English text file.",
+                "wide"
+              ),
+              {
+                type: "bullets",
+                items: [
+                  "Click a table in the orange section to expand its full comparison in place: columns and indexes found on one side only, and changed columns with the source and destination definitions side by side. Click it again to collapse.",
+                  "Every section folds. Collapsed sections stay collapsed when you switch tabs.",
+                  "Swap reverses the direction, so the source becomes the destination.",
+                  "Refresh re-reads both sides after you change either structure.",
+                ],
+              },
+            ],
+          },
+          {
+            title: "Synchronize a table",
+            blocks: [
+              {
+                type: "paragraph",
+                text: "In a table comparison, Sync applies the source structure to the destination. Uncheck any change you do not want, review the generated SQL, then choose Execute.",
+              },
+              shot(
+                "table-sync",
+                "Synchronize Schema dialog listing column and index changes with checkboxes, the generated ALTER TABLE, and a destructive-changes warning",
+                "Each change is one checkbox. Destructive changes, such as dropping a column, are marked in red and counted at the bottom. Everything runs as a single atomic ALTER TABLE, so a failure leaves the destination unchanged.",
+                "wide"
+              ),
+              {
+                type: "note",
+                tone: "warning",
+                title: "Undo restores structure only",
+                text: "After a sync, Undo Sync runs the reverse ALTER against the destination. It restores the structure, but data lost by a dropped column cannot be recovered.",
+              },
             ],
           },
         ],
@@ -674,6 +740,7 @@ export const HELP_GROUPS: HelpGroup[] = [
                 type: "bullets",
                 items: [
                   "Suggestions are distinct values read live from the table, sorted, up to 50 at a time. The list grows to the bottom of the window and scrolls past that.",
+                  "In a query tab the same list appears, but the values come from the query's own result rows rather than from a table.",
                   "A small spinner in the field shows while values load. Escape closes the list; a second Escape closes the menu.",
                   "JSON, text, blob, binary, spatial, and bit columns get no suggestions.",
                   "On tables with more than about 100,000 rows, only indexed columns are suggested, so the lookup stays fast.",
@@ -850,7 +917,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               shot(
                 "table-new",
                 "Add New Table designer annotated with the Add Column button, the drag handle for reordering, the table comment, and the SQL preview",
-                "Define names, types, lengths, nullability, keys, defaults, auto-increment, unsigned/zerofill, and comments. Expand a column row for its default and numeric options. Drag the handle at the right of a row to reorder columns. The table comment appears as a tooltip when you hover the table's tab, and Copy in the SQL preview copies the generated statement.",
+                "Define names, types, lengths, nullability, keys, defaults, auto-increment, unsigned/zerofill, and comments. Select a column to edit its extra options in the Column Options panel below the list: auto-increment, unsigned, and zerofill for numeric types, character set and collation for text types, and a default value for any type. Drag the handle at the right of a row to reorder columns, or select a column and choose Insert Column to add a new column directly above it. The table comment appears as a tooltip when you hover the table's tab, and Copy in the SQL preview copies the generated statement.",
                 "wide"
               ),
             ],

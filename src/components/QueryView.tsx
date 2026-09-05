@@ -767,6 +767,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         <DataGrid
           columns={activeSet.columns}
           rows={viewRows}
+          suggestRows={activeSet.rows}
           offset={0}
           sort={sort}
           filters={filters}

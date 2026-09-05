@@ -214,6 +214,25 @@ pub fn set_peek_state(state: State<'_, AppState>, label: String, patch: Value) {
     }
 }
 
+/// Open the Help library in its own window (or focus it if already open), so
+/// it can stay beside the app while the user works. Labelled `help`; the SPA
+/// renders the Help view for that label.
+#[tauri::command]
+pub async fn open_help_window(app: AppHandle) -> AppResult<()> {
+    let label = "help";
+    if let Some(win) = app.get_webview_window(label) {
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(&app, label, app_url(&app))
+        .title("DB Sage — Help")
+        .inner_size(1400.0, 860.0)
+        .min_inner_size(760.0, 480.0)
+        .decorations(false)
+        .build()?;
+    Ok(())
+}
+
 /// Publish the main window's tab-strip rectangle (screen CSS px) so a dragging
 /// tab-window can hit-test it for re-docking. `rect` is `{ left, top, right,
 /// bottom }` or `null` to clear.

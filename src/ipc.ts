@@ -27,6 +27,7 @@ import type {
   RestoreOptions,
   RowsResult,
   SuggestResult,
+  CollationInfo,
   PeekViewState,
   SavedQuery,
   ServerResources,
@@ -250,6 +251,8 @@ export const ipc = {
   ) => invoke<void>("rename_table", { profileId, database, oldName, newName }),
   columnDefinitions: (profileId: string, database: string, table: string) =>
     invoke<ColumnDef[]>("column_definitions", { profileId, database, table }),
+  listCollations: (profileId: string) =>
+    invoke<CollationInfo[]>("list_collations", { profileId }),
   indexDefinitions: (profileId: string, database: string, table: string) =>
     invoke<IndexDef[]>("index_definitions", { profileId, database, table }),
   foreignKeyDefinitions: (profileId: string, database: string, table: string) =>
@@ -402,6 +405,7 @@ export const ipc = {
     invoke<void>("kill_process", { profileId, id, queryOnly }),
   openMonitorWindow: (profileId: string) =>
     invoke<void>("open_monitor_window", { profileId }),
+  openHelpWindow: () => invoke<void>("open_help_window"),
   readWindowSeed: <T>(label: string) =>
     invoke<T | null>("read_window_seed", { label }),
   openTabWindow: (
