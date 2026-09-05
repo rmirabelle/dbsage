@@ -176,6 +176,10 @@ interface Props {
   /** Column names that participate in a relation — marked with the relation icon
    * in their header to signal a peek can be launched from them. */
   peekableColumns?: Set<string>;
+  /** Columns whose filter is fixed by the host (a peek's row match): the
+   * header still highlights as filtered, but its menu shows the fixed value
+   * instead of filter controls. */
+  lockedFilterColumns?: string[];
   /** Suppress the native hover tooltip showing a cell's full value (used in peek
    * windows, where the value tooltip is noise). */
   hideValueTooltip?: boolean;
@@ -280,6 +284,7 @@ export function DataGrid({
   onCascadePreview,
   canDuplicateRows = false,
   peekableColumns,
+  lockedFilterColumns,
   hideValueTooltip = false,
   onCellContextMenu,
   onCellCopyMenuOpen,
@@ -1396,25 +1401,25 @@ export function DataGrid({
                             };
                             onActiveCellChange(point);
                             /* Right-click inside the current selection keeps
-                               it; outside, collapse to the clicked cell. */
+                               it; outside, collapse to the clicked cell. The
+                               selection menu (copy, set NULL, stage as rows)
+                               opens for any selection, a single cell included. */
                             const inSelection =
                               resolvedCellSel?.columns.includes(col.name) === true &&
                               resolvedCellSel.rows.includes(sourceIndex);
-                            const multiSelection =
-                              inSelection &&
-                              (resolvedCellSel.rows.length > 1 ||
-                                resolvedCellSel.columns.length > 1);
-                            if (multiSelection && copyTarget) {
+                            if (!inSelection) {
+                              setCellSel({ anchor: point, focus: point });
+                            }
+                            if (copyTarget) {
                               onCellCopyMenuOpen?.();
                               setCellCopyMenu({
                                 x,
                                 y,
-                                selection: resolvedCellSel,
+                                selection: inSelection
+                                  ? resolvedCellSel
+                                  : { rows: [sourceIndex], columns: [col.name] },
                               });
                               return;
-                            }
-                            if (!inSelection) {
-                              setCellSel({ anchor: point, focus: point });
                             }
                             onCellContextMenu?.({
                               rowIndex: sourceIndex,
@@ -1453,6 +1458,7 @@ export function DataGrid({
           }
           onFilter={(filter) => onFilterChange(menu.column, filter)}
           onJsonShow={(path) => onJsonShow(menu.column, path)}
+          locked={lockedFilterColumns?.includes(menu.column) ?? false}
           suggest={
             !canSuggestValues(
               columns.find((c) => c.name === menu.column)?.dataType ?? ""

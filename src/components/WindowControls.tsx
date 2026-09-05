@@ -159,7 +159,7 @@ export function WindowControls({ onCloseAll }: { onCloseAll?: () => void }) {
           onMouseLeave={() => setHovered(null)}
           className={clsx(
             base,
-            hovered === "closeAll" ? "bg-red-600 text-white" : "text-zinc-400"
+            hovered === "closeAll" ? "bg-red-600 text-white" : "text-red-300"
           )}
         >
           <CloseAllIcon />

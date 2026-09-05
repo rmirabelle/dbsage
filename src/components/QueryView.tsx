@@ -952,6 +952,8 @@ function matchFilter(value: unknown, f: ColumnFilter): boolean {
      cell as a non-match (mirrors SQL, where comparisons with NULL are unknown). */
   if (f.op === "isnull") return value == null;
   if (f.op === "notnull") return value != null;
+  /* Relation filters need the database; result grids can't apply them. */
+  if (f.op === "hasrelated" || f.op === "norelated") return true;
   if (value == null) return false;
   const s = typeof value === "string" ? value : String(value);
   const likeNeedle = () => f.value.replace(/[%_]/g, "").toLowerCase();

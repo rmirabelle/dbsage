@@ -109,6 +109,18 @@ pub enum FilterOp {
     Lt,
     /// `col <= ?`
     Lte,
+    /// `EXISTS (related rows)` — takes no value; needs `relation`.
+    HasRelated,
+    /// `NOT EXISTS (related rows)` — takes no value; needs `relation`.
+    NoRelated,
+}
+
+/// The target side of a relation filter: rows in `table` whose `column`
+/// equals the filtered column's value.
+#[derive(Debug, Deserialize)]
+pub struct RelationRef {
+    pub table: String,
+    pub column: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +133,9 @@ pub struct ColumnFilter {
     /// the filter targets that JSON property instead of the whole column.
     #[serde(default)]
     pub json_path: Option<String>,
+    /// Relation filters only: the related table/column to test for rows.
+    #[serde(default)]
+    pub relation: Option<RelationRef>,
 }
 
 /// Auto-wrap `value` with `%` for "contains" semantics, unless the user has
@@ -283,6 +298,8 @@ fn json_search_path(path: &str) -> String {
 fn build_where(
     filters: Option<&Vec<ColumnFilter>>,
     column_set: &HashSet<&str>,
+    database: &str,
+    table: &str,
 ) -> AppResult<(String, Vec<String>)> {
     let mut where_clauses: Vec<String> = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
@@ -308,6 +325,31 @@ fn build_where(
                 }
                 FilterOp::NotNull => {
                     where_clauses.push(format!("{ident} IS NOT NULL"));
+                }
+                /* Relation filters: keep rows that have (or lack) at least one
+                   row in the related table matching this column's value. The
+                   related table is aliased so a self-relation still resolves
+                   the outer column by its qualified name. */
+                FilterOp::HasRelated | FilterOp::NoRelated => {
+                    let Some(rel) = f.relation.as_ref() else {
+                        return Err(AppError::Other(format!(
+                            "relation filter on {} has no relation",
+                            f.column
+                        )));
+                    };
+                    let outer = format!(
+                        "{}.{}.{ident}",
+                        quote_ident(database),
+                        quote_ident(table)
+                    );
+                    let sub = format!(
+                        "SELECT 1 FROM {}.{} AS _rel WHERE _rel.{} = {outer}",
+                        quote_ident(database),
+                        quote_ident(&rel.table),
+                        quote_ident(&rel.column)
+                    );
+                    let not = if matches!(f.op, FilterOp::NoRelated) { "NOT " } else { "" };
+                    where_clauses.push(format!("{not}EXISTS ({sub})"));
                 }
                 FilterOp::Ne => {
                     where_clauses.push(format!("{ident} <> ?"));
@@ -474,7 +516,8 @@ pub async fn fetch_rows(
     let safe_limit = limit.clamp(1, 5000);
     let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
 
-    let (where_clause, bindings) = build_where(filters.as_ref(), &column_set)?;
+    let (where_clause, bindings) =
+        build_where(filters.as_ref(), &column_set, &database, &table)?;
 
     let order_clause = if let Some(s) = sort.as_ref() {
         if !column_set.contains(s.column.as_str()) {
@@ -552,7 +595,8 @@ pub async fn count_rows(
     let columns = fetch_columns(&pool, &database, &table).await?;
     let column_set: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
     let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
-    let (where_clause, bindings) = build_where(filters.as_ref(), &column_set)?;
+    let (where_clause, bindings) =
+        build_where(filters.as_ref(), &column_set, &database, &table)?;
 
     let sql = format!("SELECT COUNT(*) FROM {qualified}{where_clause}");
     let mut q = sqlx::query(&sql);

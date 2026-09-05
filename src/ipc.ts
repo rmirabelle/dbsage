@@ -428,6 +428,8 @@ export const ipc = {
   setPeekState: (label: string, patch: PeekViewState) =>
     invoke<void>("set_peek_state", { label, patch }),
   closeAllPeeks: () => invoke<void>("close_all_peeks"),
+  closePeeks: (labels: string[]) => invoke<void>("close_peeks", { labels }),
+  arrangePeeks: () => invoke<void>("arrange_peeks"),
   setTabstripRect: (rect: unknown | null) =>
     invoke<void>("set_tabstrip_rect", { rect }),
   getTabstripRect: <T>() => invoke<T | null>("get_tabstrip_rect"),

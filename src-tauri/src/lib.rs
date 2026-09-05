@@ -306,6 +306,8 @@ pub fn run() {
             windows::set_peek_state,
             windows::open_help_window,
             windows::close_all_peeks,
+            windows::close_peeks,
+            windows::arrange_peeks,
             windows::set_tabstrip_rect,
             windows::get_tabstrip_rect,
             windows::mouse_left_button_down,

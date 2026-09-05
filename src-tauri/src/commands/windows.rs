@@ -3,8 +3,8 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, WebviewWindowBuilder,
-    WindowEvent,
+    AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State,
+    WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 
 /**
@@ -140,16 +140,23 @@ pub async fn open_peek_window(
         .unwrap()
         .insert(label.clone(), seed.clone());
     state.peeks.lock().unwrap().insert(label.clone(), seed);
-    let win = WebviewWindowBuilder::new(&app, &label, app_url(&app))
+    let builder = WebviewWindowBuilder::new(&app, &label, app_url(&app))
         .title("DB Sage")
-        .min_inner_size(360.0, 200.0)
+        .min_inner_size(360.0, 120.0)
         .decorations(false)
-        /* A peek floats above the main window so it stays visible while you work
-           in the table it was launched from. */
-        .always_on_top(true)
         /* Hidden until painted, to avoid a white flash (revealed by PeekWindow). */
-        .visible(false)
-        .build()?;
+        .visible(false);
+    /* A peek is OWNED by the main window: Windows keeps an owned window above
+       its owner in the z-order, so the peek stays visible while you work in the
+       table it was launched from — without being topmost over other apps (the
+       old always_on_top approach). Owned windows also hide when the owner is
+       minimized and close with it. */
+    #[cfg(windows)]
+    let builder = match app.get_webview_window("main") {
+        Some(main) => builder.owner(&main)?,
+        None => builder,
+    };
+    let win = builder.build()?;
     let _ = win.set_size(LogicalSize::new(width, height));
     let _ = win.set_position(LogicalPosition::new(x, y));
     let on_close = app.clone();
@@ -176,6 +183,9 @@ pub fn list_open_peeks(app: AppHandle, state: State<'_, AppState>) -> Vec<Value>
             continue;
         };
         let mut obj = desc;
+        if let Value::Object(ref mut m) = obj {
+            m.insert("label".into(), json!(label));
+        }
         if let (Ok(pos), Ok(size), Ok(scale)) =
             (win.outer_position(), win.inner_size(), win.scale_factor())
         {
@@ -246,6 +256,101 @@ pub fn set_tabstrip_rect(state: State<'_, AppState>, rect: Option<Value>) {
 #[tauri::command]
 pub fn close_all_peeks(app: AppHandle, state: State<'_, AppState>) {
     let labels: Vec<String> = state.peeks.lock().unwrap().keys().cloned().collect();
+    for label in labels {
+        if let Some(win) = app.get_webview_window(&label) {
+            let _ = win.close();
+        }
+    }
+}
+
+/// Arrange every open peek window in neat columns beside the main window.
+/// The first column starts 10px right of the main window's visible edge. Each
+/// column spans exactly the main window's height: the first peek's top matches
+/// the main window's top, the last peek's bottom matches its bottom, and the
+/// heights in between are shared evenly with 10px gaps. Widths are never
+/// changed. Peeks stack in opening order; when one column would squeeze peeks
+/// below `MIN_H`, they are split evenly across more columns, each new column
+/// starting 10px right of the widest peek in the previous one. Math is in
+/// physical pixels of the main window's monitor; positions are corrected for
+/// each window's invisible resize frame so visible edges line up.
+#[tauri::command]
+pub fn arrange_peeks(app: AppHandle, state: State<'_, AppState>) {
+    const GAP: i32 = 10;
+    const MIN_H: i32 = 120;
+
+    let Some(main) = app.get_webview_window("main") else {
+        return;
+    };
+    let (Ok(main_pos), Ok(main_size)) = (main.inner_position(), main.inner_size()) else {
+        return;
+    };
+    let top = main_pos.y;
+    let main_h = main_size.height as i32;
+    let start_x = main_pos.x + main_size.width as i32 + GAP;
+
+    /* Peeks in opening order (labels are `peek-<n>`). */
+    let mut labels: Vec<String> = state.peeks.lock().unwrap().keys().cloned().collect();
+    labels.retain(|l| app.get_webview_window(l).is_some());
+    labels.sort_by_key(|l| {
+        l.rsplit('-')
+            .next()
+            .and_then(|n| n.parse::<u64>().ok())
+            .unwrap_or(u64::MAX)
+    });
+    let n = labels.len() as i32;
+    if n == 0 {
+        return;
+    }
+
+    /* How many peeks fit one column at MIN_H, then split evenly across
+       columns (earlier columns take the remainder). */
+    let per_col = ((main_h + GAP) / (MIN_H + GAP)).clamp(1, n);
+    let cols = (n + per_col - 1) / per_col;
+    let base_rows = n / cols;
+    let extra = n % cols;
+
+    let mut next = 0usize;
+    let mut col_x = start_x;
+    for c in 0..cols {
+        let rows = base_rows + if c < extra { 1 } else { 0 };
+        /* Share the main window's height evenly; the first rows absorb the
+           rounding remainder so the last bottom lands exactly on main's. */
+        let avail = main_h - GAP * (rows - 1);
+        let base_h = avail / rows;
+        let rem = avail % rows;
+        let mut y = top;
+        let mut col_width = 0;
+        for r in 0..rows {
+            let label = &labels[next];
+            next += 1;
+            let Some(win) = app.get_webview_window(label) else {
+                continue;
+            };
+            let _ = win.unminimize();
+            if win.is_maximized().unwrap_or(false) {
+                let _ = win.unmaximize();
+            }
+            let h = base_h + if r < rem { 1 } else { 0 };
+            let w = win.inner_size().map(|s| s.width as i32).unwrap_or(0);
+            /* set_position moves the outer (frame) rect; we want the visible
+               client rect at (col_x, y), so subtract the frame inset. */
+            let (fx, fy) = match (win.outer_position(), win.inner_position()) {
+                (Ok(o), Ok(i)) => (i.x - o.x, i.y - o.y),
+                _ => (0, 0),
+            };
+            let _ = win.set_position(PhysicalPosition::new(col_x - fx, y - fy));
+            let _ = win.set_size(PhysicalSize::new(w as u32, h as u32));
+            col_width = col_width.max(w);
+            y += h + GAP;
+        }
+        col_x += col_width + GAP;
+    }
+}
+
+/// Close the named peek windows (e.g. those launched from a table whose tab
+/// is closing). Unknown labels are ignored.
+#[tauri::command]
+pub fn close_peeks(app: AppHandle, labels: Vec<String>) {
     for label in labels {
         if let Some(win) = app.get_webview_window(&label) {
             let _ = win.close();

@@ -21,7 +21,6 @@ import {
   ShareNetwork,
   Binoculars,
   PencilSimple,
-  Plus,
   Code,
   ArrowSquareOut,
   WarningCircle as AlertCircle,
@@ -31,9 +30,8 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { emit, listen } from "@tauri-apps/api/event";
+import { emit } from "@tauri-apps/api/event";
 import { useStore, isDesignerTabDirty } from "../state/store";
-import { useUi } from "../state/ui";
 import { notifyError, notifySuccess } from "../state/notify";
 import { helpHandlers } from "../state/help";
 import { CloseTabConfirmDialog } from "./CloseTabConfirmDialog";
@@ -46,6 +44,7 @@ import { TableDesignerView } from "./TableDesignerView";
 import { SchemaDiffView } from "./SchemaDiffView";
 import { DatabaseDiffView } from "./DatabaseDiffView";
 import { ExpandedPanel } from "./ExpandedPanel";
+import { RelationsPanel } from "./RelationsPanel";
 import { TableViewPresetMenu } from "./TableViewPresetMenu";
 import { InsertRowDialog } from "./InsertRowDialog";
 import { ImportJsonDialog } from "./ImportJsonDialog";
@@ -53,7 +52,6 @@ import { Tooltip } from "./Tooltip";
 import appIconLarge from "../assets/app-icon-large.png";
 import { ipc } from "../ipc";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
-import { useNativeMenuLayer } from "../lib/useNativeMenuLayer";
 import type {
   CascadeTarget,
   PeekSeed,
@@ -62,17 +60,10 @@ import type {
   Tab,
 } from "../types";
 import {
-  rowRelationTargets,
   peekableColumnsFor,
   cellToFilterValue,
   type RowRelationTarget,
 } from "../lib/relations";
-import {
-  relKey,
-  checkRelatedExistence,
-  TABLE_CHANGED_EVENT,
-  type TableChanged,
-} from "../lib/relatedExistence";
 import { previewCascadeTargets } from "../lib/rowDelete";
 
 const EMPTY_RELATIONS: Relation[] = [];
@@ -595,7 +586,6 @@ export function TabBody({ tab }: { tab: Tab }) {
 }
 
 function RowsTabBody({ tab }: { tab: RowsTab }) {
-  const tabsZoom = useUi((s) => s.tabsZoom);
   const setTabPage = useStore((s) => s.setTabPage);
   const setPageSize = useStore((s) => s.setPageSize);
   const refreshTab = useStore((s) => s.refreshTab);
@@ -631,87 +621,22 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
    * the tab into its own window — or docking it back — keeps whatever state it
    * had. Tabs predating the field fall back to open-in-main, closed elsewhere. */
   const setTabInspectorOpen = useStore((s) => s.setTabInspectorOpen);
-  const expanded = tab.inspectorOpen ?? getCurrentWindow().label === "main";
+  /* Defaults until the user toggles them: Inspector closed; Relations panel
+     open when the table has relations defined from it. */
+  const expanded = tab.inspectorOpen ?? false;
   const setExpanded = (open: boolean) => setTabInspectorOpen(tab.id, open);
+  const setTabRelationsOpen = useStore((s) => s.setTabRelationsOpen);
+  const relationsOpen =
+    tab.relationsOpen ?? relations.some((r) => r.fromTable === tab.table);
+  const setRelationsOpen = (open: boolean) => setTabRelationsOpen(tab.id, open);
   const [insertOpen, setInsertOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [picker, setPicker] = useState<{
-    x: number;
-    y: number;
-    matches: (RowRelationTarget & { exists: boolean })[];
-    /** The cell whose row supplies the relation values. */
-    cell: { rowIndex: number; column: string };
-    /** True while a newly-clicked cell's existence checks are in flight; the
-     * menu stays open with every entry disabled until they resolve. */
-    pending?: boolean;
-  } | null>(null);
-  const pickerRequestRef = useRef(0);
   /** The open relation dialog: an existing relation, or null for a new one
    * seeded from `column`. */
   const [relDialog, setRelDialog] = useState<{
     relation: Relation | null;
     column: string;
   } | null>(null);
-  const pickerRef = useRef<HTMLDivElement>(null);
-  const { style: pickerStyle } = useAnchoredPosition(
-    picker?.x ?? 0,
-    picker?.y ?? 0,
-    8,
-    pickerRef
-  );
-  useNativeMenuLayer(picker !== null);
-
-  /** The relation menu never blocks interaction with a backdrop. Dismiss it on
-   * left-click outside, any key, or scrolling; right-clicks on grid cells are
-   * handled by the cell context-menu callback below. */
-  useEffect(() => {
-    if (!picker) return;
-    const close = () => {
-      pickerRequestRef.current += 1;
-      setPicker(null);
-    };
-    const onDown = (e: MouseEvent) => {
-      if (
-        e.button === 2 &&
-        (e.target as HTMLElement).closest('[data-el="grid-cell"]')
-      ) {
-        return;
-      }
-      if (!pickerRef.current?.contains(e.target as Node)) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", close, true);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", close, true);
-    };
-  }, [picker]);
-
-  /* Rows changed in one of the menu's target tables (deleted from a peek
-     window, say): its enabled/disabled entries are stale — re-check them. */
-  useEffect(() => {
-    if (!picker) return;
-    const { cell, x, y, matches } = picker;
-    const un = listen<TableChanged>(TABLE_CHANGED_EVENT, (e) => {
-      const m = e.payload;
-      if (
-        m.profileId === tab.profileId &&
-        m.database === tab.database &&
-        matches.some((t) => t.table === m.table)
-      ) {
-        void openRelationsMenu({ ...cell, x, y });
-      }
-    });
-    return () => {
-      un.then((f) => f());
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picker]);
 
   useEffect(() => {
     loadRelations(tab.profileId, tab.database).catch(() => {});
@@ -776,6 +701,13 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
 
   const activeRow =
     activeCell && tab.data ? tab.data.rows[activeCell.rowIndex] ?? null : null;
+  /** The row the Relations panel describes: the active cell's, else the first
+   * selected row (a row-header click clears the active cell). */
+  const relationsRow =
+    activeRow ??
+    (tab.data && tab.selectedRows?.length
+      ? tab.data.rows[tab.selectedRows[0]] ?? null
+      : null);
   const peekableColumns = useMemo(
     () => peekableColumnsFor(relations, tab.table),
     [relations, tab.table]
@@ -821,55 +753,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       .catch((e) => notifyError(`Could not open peek window: ${String(e)}`));
   };
 
-  /** Right-clicking any cell opens every relation available from its row, with
-   * that column's own relations first. Each choice reads its own source-column
-   * value. Left-click remains dedicated to grid selection and editing. */
-  const openRelationsMenu = async (cell: {
-    rowIndex: number;
-    column: string;
-    x: number;
-    y: number;
-  }) => {
-    const request = ++pickerRequestRef.current;
-    if (!tab.data) {
-      setPicker(null);
-      return;
-    }
-    /* Moving to a different cell: keep the menu open but disable every entry
-       NOW, so the previous cell's enabled/disabled states never linger while
-       the new cell's existence checks are in flight. */
-    setPicker((p) =>
-      p ? { ...p, x: cell.x, y: cell.y, pending: true } : p
-    );
-    const row = tab.data.rows[cell.rowIndex];
-    const matches = row
-      ? rowRelationTargets(relations, tab.table, cell.column, row)
-      : [];
-    /* Prime the existence cache before showing the menu so targets with no
-       related rows render disabled from the first frame. The menu shows even
-       when every target is empty — greyed-out items tell the user relations
-       exist but hold no matching rows here. */
-    const checked = await Promise.all(
-      matches.map(async (m) => {
-        if (m.value == null) return { ...m, exists: false };
-        const exists = await checkRelatedExistence(
-          tab.profileId,
-          tab.database,
-          [m],
-          m.value
-        );
-        return { ...m, exists: exists[relKey(m)] !== false };
-      })
-    );
-    if (request !== pickerRequestRef.current) return;
-    setPicker({
-      x: cell.x,
-      y: cell.y,
-      matches: checked,
-      cell: { rowIndex: cell.rowIndex, column: cell.column },
-    });
-  };
-
   /** Related-row cascade preview for a pending delete (see rowDelete.ts). */
   const previewCascade = (indices: number[]): Promise<CascadeTarget[]> =>
     tab.data
@@ -893,6 +776,23 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         data-toolbar="rows"
         className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
+        <button
+          data-el="relations-toggle-btn"
+          onClick={() => setRelationsOpen(!relationsOpen)}
+          className={clsx(
+            "inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors",
+            relationsOpen
+              ? "bg-violet-600 text-white hover:bg-violet-500"
+              : "bg-zinc-800 text-violet-300 hover:bg-zinc-700 hover:text-violet-200"
+          )}
+          {...helpHandlers(
+            "Toggle the Relations panel: peek into the rows related to the selected row"
+          )}
+        >
+          <ShareNetwork size={17} />
+          Relations
+        </button>
+
         <button
           data-el="edit-table-btn"
           onClick={() =>
@@ -998,6 +898,8 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           <Loader2 size={16} className="animate-spin" /> Loading rows…
         </div>
       ) : tab.data ? (
+        <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         <DataGrid
           /* Keyed by tab so switching to (or docking back) another rows tab
              remounts the grid — that's what re-runs the selection seed from
@@ -1026,13 +928,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           initialSelectedRows={tab.selectedRows}
           onSelectionChange={(indices) => setRowsSelection(tab.id, indices)}
           onActiveCellChange={setActiveCell}
-          onCellContextMenu={(cell) => {
-            void openRelationsMenu(cell);
-          }}
-          onCellCopyMenuOpen={() => {
-            pickerRequestRef.current += 1;
-            setPicker(null);
-          }}
           onColumnWidthsChange={(w) => setColumnWidths(tab.id, w)}
           onSortChange={(sort) => setRowsSort(tab.id, sort)}
           onFilterChange={(column, filter) =>
@@ -1063,6 +958,42 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onCascadePreview={hasPrimaryKey ? previewCascade : undefined}
           canDuplicateRows={hasPrimaryKey}
         />
+        </div>
+        {relationsOpen && (
+          <RelationsPanel
+            profileId={tab.profileId}
+            database={tab.database}
+            table={tab.table}
+            relations={relations}
+            row={relationsRow}
+            column={activeCell?.column ?? null}
+            onOpen={openPeek}
+            onNew={(column) =>
+              setRelDialog({
+                relation: null,
+                column: column ?? tab.data?.columns[0]?.name ?? "",
+              })
+            }
+            onEdit={(relation, column) => setRelDialog({ relation, column })}
+            filters={tab.filters}
+            onRelationFilter={(t, op) =>
+              setRowsFilter(
+                tab.id,
+                t.sourceColumn,
+                op
+                  ? {
+                      column: t.sourceColumn,
+                      op,
+                      value: "",
+                      relation: { table: t.table, column: t.column },
+                    }
+                  : null
+              )
+            }
+            onClose={() => setRelationsOpen(false)}
+          />
+        )}
+        </div>
       ) : (
         <div className="flex-1" />
       )}
@@ -1189,98 +1120,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         />
       )}
 
-      {picker &&
-        createPortal(
-          <div
-            ref={pickerRef}
-            data-el="related-picker"
-            style={pickerStyle}
-            className="dbs-context-menu fixed z-50 w-max overflow-hidden rounded border border-violet-500 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-zinc-200"
-          >
-            <div
-              style={{ fontSize: 13 * tabsZoom }}
-              className="flex w-full items-center gap-3 bg-violet-600 px-3 py-1.5 font-semibold text-violet-50"
-            >
-              <span className="flex-1">Relations</span>
-              <button
-                data-el="relation-picker-new"
-                style={{ fontSize: 11 * tabsZoom }}
-                onClick={() => {
-                  const column = picker.cell.column;
-                  setPicker(null);
-                  setRelDialog({ relation: null, column });
-                }}
-                className="inline-flex items-center gap-1.5 rounded bg-violet-500 px-2 py-1 font-semibold text-white transition-colors hover:bg-violet-400"
-                aria-label="New Relation"
-                title={`New relation from ${picker.cell.column}`}
-              >
-                <Plus size={13} weight="bold" />
-                New Relation
-              </button>
-            </div>
-            {picker.matches.map((m) => {
-              const noValue = m.value == null;
-              const empty = !picker.pending && !noValue && !m.exists;
-              const disabled = picker.pending || noValue || empty;
-              const label = m.relation.name?.trim() || m.table;
-              return (
-                <div
-                  key={m.relation.id}
-                  className="flex items-stretch whitespace-nowrap"
-                >
-                  <button
-                    disabled={disabled}
-                    onClick={() => {
-                      setPicker(null);
-                      openPeek(m);
-                    }}
-                    {...(noValue
-                      ? helpHandlers(`${m.sourceColumn} is NULL in this row`)
-                      : empty
-                      ? helpHandlers(`No related rows in ${m.table}`)
-                      : {})}
-                    className={clsx(
-                      "flex min-w-0 flex-1 items-center gap-3 px-3 py-1.5 text-left text-[12px]",
-                      disabled
-                        ? "cursor-not-allowed opacity-40"
-                        : "hover:bg-zinc-800"
-                    )}
-                  >
-                    <span
-                      className={clsx(
-                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                        m.relation.kind === "has_many"
-                          ? "bg-accent-500/15 text-accent-300"
-                          : "bg-amber-500/15 text-amber-300"
-                      )}
-                    >
-                      {m.relation.kind === "has_many" ? "has many" : "has one"}
-                    </span>
-                    <span className="flex-1 font-medium text-zinc-100">
-                      {label}
-                    </span>
-                  </button>
-                  <button
-                    data-el="relation-picker-edit"
-                    onClick={() => {
-                      setPicker(null);
-                      setRelDialog({
-                        relation: m.relation,
-                        column: m.sourceColumn,
-                      });
-                    }}
-                    className="flex w-9 shrink-0 items-center justify-center border-l border-zinc-800 text-violet-400 hover:bg-zinc-800 hover:text-violet-300"
-                    aria-label={`Edit relation ${label}`}
-                    title="Edit relation"
-                  >
-                    <PencilSimple size={16} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>,
-          document.body
-        )}
     </div>
   );
 }

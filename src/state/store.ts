@@ -132,6 +132,9 @@ interface Store {
   dockTab: (tab: Tab) => void;
   /** Tab awaiting an unsaved-changes confirmation before it closes; null when none. */
   pendingCloseTabId: string | null;
+  /** Peek windows launched from the pending-close rows tab (labels), so the
+   * close confirmation can offer to close them too. Empty when none. */
+  pendingClosePeekLabels: string[];
   /** In-progress SQL-script export with row data; null when none is running. */
   sqlExport: {
     table: string;
@@ -454,6 +457,7 @@ interface Store {
   /** Show/hide the Inspector panel on a rows or query tab. On the tab (not
    * component state) so a torn-off window inherits the docked state. */
   setTabInspectorOpen: (tabId: string, open: boolean) => void;
+  setTabRelationsOpen: (tabId: string, open: boolean) => void;
   /** Persist manual column-width overrides (px, keyed by column name). */
   setColumnWidths: (tabId: string, widths: Record<string, number>) => void;
   /** Save the rows tab's current view (columns, widths, sort, filters, show) as
@@ -533,6 +537,32 @@ const emptyTreeDbState = (): TreeDbState => ({
   expandedFolders: new Set(),
 });
 
+/** The peek windows launched from `tab`'s table — the whole tree, not just
+ * direct peeks: a child peek's sourceTable is its parent peek's table, so the
+ * reachable tables are walked transitively (the target table of any collected
+ * peek becomes a valid source for the next). */
+function peeksReachableFrom(
+  open: PeekDescriptor[],
+  tab: { profileId: string; database: string; table: string }
+): PeekDescriptor[] {
+  const sameDb = open.filter(
+    (p) => p.profileId === tab.profileId && p.database === tab.database
+  );
+  const reachable = new Set<string>([tab.table]);
+  const collected = new Set<PeekDescriptor>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const p of sameDb) {
+      if (collected.has(p) || !reachable.has(p.sourceTable)) continue;
+      collected.add(p);
+      reachable.add(p.target.table);
+      changed = true;
+    }
+  }
+  return [...collected];
+}
+
 export const useStore = create<Store>((set, get) => ({
   profiles: [],
   loadingProfiles: false,
@@ -543,6 +573,7 @@ export const useStore = create<Store>((set, get) => ({
   activeTabId: null,
   tabDropActive: false,
   pendingCloseTabId: null,
+  pendingClosePeekLabels: [],
   sqlExport: null,
   copyProgress: null,
   backupProgress: null,
@@ -1075,7 +1106,6 @@ export const useStore = create<Store>((set, get) => ({
       presets,
       activePreset: null,
       activeCell: null,
-      inspectorOpen: true,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     await loadTabPage(tabId, 1, set, get);
@@ -1202,13 +1232,34 @@ export const useStore = create<Store>((set, get) => ({
       ((tab.kind === "create-table" && isDesignerTabDirty(tab)) ||
         (tab.kind === "query" && isQueryTabDirty(tab)));
     if (dirty) {
-      set({ pendingCloseTabId: tabId });
+      set({ pendingCloseTabId: tabId, pendingClosePeekLabels: [] });
+      return;
+    }
+    /* A rows tab with peek windows launched from it: offer to close them too. */
+    if (tab?.kind === "rows") {
+      void (async () => {
+        let labels: string[] = [];
+        try {
+          const open = await ipc.listOpenPeeks<PeekDescriptor>();
+          labels = peeksReachableFrom(open, tab)
+            .map((p) => p.label)
+            .filter((l): l is string => !!l);
+        } catch {
+          /* ignore — close the tab as usual */
+        }
+        if (labels.length > 0) {
+          set({ pendingCloseTabId: tabId, pendingClosePeekLabels: labels });
+          return;
+        }
+        get().closeTab(tabId);
+      })();
       return;
     }
     get().closeTab(tabId);
   },
 
-  setPendingCloseTabId: (tabId) => set({ pendingCloseTabId: tabId }),
+  setPendingCloseTabId: (tabId) =>
+    set({ pendingCloseTabId: tabId, pendingClosePeekLabels: [] }),
 
   saveDesignerTab: async (tabId) => {
     const tab = get().tabs.find((t) => t.id === tabId);
@@ -2476,6 +2527,14 @@ export const useStore = create<Store>((set, get) => ({
     }));
   },
 
+  setTabRelationsOpen: (tabId, open) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "rows" ? { ...t, relationsOpen: open } : t
+      ),
+    }));
+  },
+
   setJsonDisplay: (tabId, column, path) => {
     set((s) => ({
       tabs: s.tabs.map((t) => {
@@ -2511,26 +2570,7 @@ export const useStore = create<Store>((set, get) => ({
     let peeks: PeekDescriptor[] = [];
     try {
       const open = await ipc.listOpenPeeks<PeekDescriptor>();
-      const sameDb = open.filter(
-        (p) => p.profileId === tab.profileId && p.database === tab.database
-      );
-      /* Capture the whole peek tree rooted at this table, not just its direct
-         peeks: a child peek's sourceTable is its parent peek's table, so walk
-         the reachable tables transitively (target table of any captured peek
-         becomes a valid source for the next). */
-      const reachable = new Set<string>([tab.table]);
-      const collected = new Set<PeekDescriptor>();
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const p of sameDb) {
-          if (collected.has(p) || !reachable.has(p.sourceTable)) continue;
-          collected.add(p);
-          reachable.add(p.target.table);
-          changed = true;
-        }
-      }
-      peeks = [...collected];
+      peeks = peeksReachableFrom(open, tab);
     } catch {
       /* ignore — save the rest of the view */
     }
@@ -2542,6 +2582,7 @@ export const useStore = create<Store>((set, get) => ({
         sort: tab.sort,
         filters: tab.filters,
         jsonDisplay: tab.jsonDisplay,
+        relationsOpen: tab.relationsOpen ?? false,
         ...(peeks.length > 0 && { peeks }),
       },
     };
@@ -2580,6 +2621,8 @@ export const useStore = create<Store>((set, get) => ({
               sort,
               filters,
               jsonDisplay,
+              /* Views saved before the Relations panel existed leave it as is. */
+              relationsOpen: preset.setup.relationsOpen ?? t.relationsOpen,
               activePreset: name,
             }
           : t
@@ -2608,6 +2651,9 @@ export const useStore = create<Store>((set, get) => ({
         filters: p.filters,
         columnWidths: p.columnWidths,
         jsonDisplay: p.jsonDisplay,
+        relationsOpen: p.relationsOpen,
+        inspectorHeight: p.inspectorHeight,
+        activeColumn: p.activeColumn,
       };
       ipc
         .openPeekWindow(seed, p.x ?? 120, p.y ?? 120, p.width ?? 900, p.height ?? 440)

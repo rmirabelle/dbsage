@@ -6,9 +6,13 @@ import {
   X,
   FunnelSimpleX,
   CircleNotch,
+  LockSimple,
+  ShareNetwork,
+  CalendarBlank,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
+import { DateTimePicker, dateModeFor, type DateMode } from "./DateTimePicker";
 import { COMPARE_OPS } from "../types";
 import type {
   ColumnFilter,
@@ -34,6 +38,10 @@ interface Props {
   /** Fetches distinct column values starting with `prefix` for the Equals
    * auto-suggest. Absent = no suggestions (result grids, unsupported types). */
   suggest?: (prefix: string) => Promise<SuggestResult>;
+  /** The filter on this column is fixed by the host (a peek window's row
+   * match) and can't be changed or cleared here; the menu says so instead of
+   * showing the filter controls. Sort and JSON display still work. */
+  locked?: boolean;
 }
 
 const MENU_WIDTH = 380;
@@ -53,8 +61,12 @@ export function ColumnHeaderMenu({
   onFilter,
   onJsonShow,
   suggest,
+  locked = false,
 }: Props) {
   const isJson = columnType.trim().toLowerCase() === "json";
+  /* DATE / DATETIME / TIMESTAMP columns get a calendar picker on the Equals
+     and comparison inputs. */
+  const dateMode = dateModeFor(columnType);
   const sortedHere =
     currentSort && currentSort.column === column ? currentSort.direction : null;
 
@@ -239,7 +251,29 @@ export function ColumnHeaderMenu({
         </div>
       )}
 
+      {locked ? (
+        <div className="border-t border-zinc-800 px-3 py-2.5 flex items-center gap-2 text-[11.5px] text-zinc-400">
+          <LockSimple size={14} className="shrink-0 text-amber-400" />
+          <span>
+            Fixed by this peek:{" "}
+            <span className="font-mono text-zinc-200">
+              {column} = {String(currentFilter?.value ?? "")}
+            </span>
+          </span>
+        </div>
+      ) : (
       <div className="border-t border-zinc-800 px-3 py-2 space-y-1">
+        {currentFilter?.relation && (
+          <div className="mb-1 flex items-center gap-2 rounded bg-violet-500/15 px-2 py-1.5 text-[11.5px] text-violet-200">
+            <ShareNetwork size={14} className="shrink-0 text-violet-300" />
+            <span>
+              {currentFilter.op === "norelated" ? "No related rows in " : "Has related rows in "}
+              <span className="font-mono text-zinc-100">
+                {currentFilter.relation.table}
+              </span>
+            </span>
+          </div>
+        )}
         {isJson && (
           <div className="flex items-stretch">
             <span className="flex items-center justify-center w-[88px] shrink-0 px-3 text-[11px] uppercase tracking-[0.12em] bg-zinc-900 border border-r-0 rounded-l whitespace-nowrap text-zinc-400 border-zinc-700">
@@ -318,6 +352,7 @@ export function ColumnHeaderMenu({
                 onClose();
               }}
               suggest={suggest}
+              dateMode={dateMode}
               onClear={() => {
                 setEqValue("");
                 if (eqActive) {
@@ -355,6 +390,7 @@ export function ColumnHeaderMenu({
               placeholder="value"
               onChange={setCompareValue}
               onSubmit={commitCompare}
+              dateMode={dateMode}
               onClear={() => {
                 setCompareValue("");
                 if (compareActive) {
@@ -384,6 +420,7 @@ export function ColumnHeaderMenu({
           </button>
         )}
       </div>
+      )}
     </div>,
     document.body
   );
@@ -457,6 +494,7 @@ function ToggleField({
   onClear,
   onPick,
   suggest,
+  dateMode = null,
 }: {
   options: { op: FilterOp; label: string }[];
   op: FilterOp;
@@ -470,10 +508,17 @@ function ToggleField({
   /** Called with a chosen suggestion; the caller commits it as the filter. */
   onPick?: (v: string) => void;
   suggest?: (prefix: string) => Promise<SuggestResult>;
+  /** Temporal columns: show a calendar button that opens a date/time picker. */
+  dateMode?: DateMode | null;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const sug = useSuggestions(suggest, value);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const togglePicker = () => {
+    sug.dismiss();
+    setPickerOpen((o) => !o);
+  };
 
   /* Let the list run to the bottom of the window (it scrolls past that). */
   const [listMaxHeight, setListMaxHeight] = useState<number>();
@@ -550,11 +595,29 @@ function ToggleField({
             }}
             className={clsx(
               "w-full bg-zinc-950 rounded-r pl-2 py-1 text-[12.5px] font-mono text-zinc-100 outline-none focus:border-accent-500",
-              value ? "pr-6" : "pr-2",
+              dateMode ? (value ? "pr-12" : "pr-7") : value ? "pr-6" : "pr-2",
               active ? "border-2 border-emerald-500" : "border border-zinc-700"
             )}
           />
-          {sug.loading && (
+          {dateMode && (
+            <button
+              data-el="column-filter-calendar"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={togglePicker}
+              className={clsx(
+                "absolute top-1/2 -translate-y-1/2 rounded p-0.5 transition-colors",
+                value ? "right-6" : "right-1.5",
+                pickerOpen
+                  ? "bg-accent-500/20 text-accent-300"
+                  : "text-zinc-500 hover:text-accent-300"
+              )}
+              aria-label="Pick a date"
+              title={dateMode === "date" ? "Pick a date" : "Pick a date and time"}
+            >
+              <CalendarBlank size={15} />
+            </button>
+          )}
+          {sug.loading && !dateMode && (
             <CircleNotch
               size={13}
               className={clsx(
@@ -577,7 +640,19 @@ function ToggleField({
           )}
         </div>
       </div>
-      {sug.visible && (
+      {pickerOpen && dateMode && (
+        <DateTimePicker
+          value={value}
+          mode={dateMode}
+          onChange={onChange}
+          onApply={() => {
+            setPickerOpen(false);
+            onSubmit();
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
+      {sug.visible && !pickerOpen && (
         <ul
           ref={listRef}
           data-el="column-filter-suggestions"

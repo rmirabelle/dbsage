@@ -24,6 +24,11 @@ interface Props {
   /** Read-only mode (query results): no Save button, and JSON shows the tree
    * viewer only (no raw text pane). Copy + Search are still available. */
   readOnly?: boolean;
+  /** A host-owned height (a peek restoring a saved view) that overrides the
+   * shared stored height on open; `onHeightChange` reports every resize so
+   * the host can persist it. */
+  initialHeight?: number;
+  onHeightChange?: (px: number) => void;
 }
 
 export function ExpandedPanel({
@@ -34,6 +39,8 @@ export function ExpandedPanel({
   onSave,
   onClose,
   readOnly = false,
+  initialHeight,
+  onHeightChange,
 }: Props) {
   const storedHeight = useUi((s) => s.expandedPanelHeight);
   const setStoredHeight = useUi((s) => s.setExpandedPanelHeight);
@@ -45,15 +52,31 @@ export function ExpandedPanel({
    * window's preference survives. Dragging past 50% afterwards is still
    * allowed (deliberate, in THIS window) and persists as before.
    */
+  /** The tallest the panel may be right now: the window minus room for the
+   * chrome and a slice of grid (matches the CSS max-height below). */
+  const maxHeightNow = () =>
+    Math.max(PANEL_BOUNDS.MIN, Math.min(PANEL_BOUNDS.MAX, window.innerHeight - 120));
   const [height, setDisplayHeight] = useState(() =>
-    Math.min(storedHeight, Math.round(window.innerHeight / 2))
+    Math.min(
+      maxHeightNow(),
+      initialHeight != null
+        ? Math.max(PANEL_BOUNDS.MIN, initialHeight)
+        : Math.min(storedHeight, Math.round(window.innerHeight / 2))
+    )
   );
   const setHeight = (px: number) => {
-    setDisplayHeight(
-      Math.max(PANEL_BOUNDS.MIN, Math.min(PANEL_BOUNDS.MAX, Math.round(px)))
-    );
+    const clamped = Math.max(PANEL_BOUNDS.MIN, Math.min(maxHeightNow(), Math.round(px)));
+    setDisplayHeight(clamped);
     setStoredHeight(px);
+    onHeightChange?.(clamped);
   };
+  /* Keep the state within the cap when the window shrinks, so a drag always
+     starts from the height actually on screen. */
+  useEffect(() => {
+    const onResize = () => setDisplayHeight((h) => Math.min(h, maxHeightNow()));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const dragStateRef = useRef<{ startY: number; startHeight: number } | null>(
     null
   );
@@ -231,7 +254,9 @@ export function ExpandedPanel({
   return (
     <div
       data-el="expanded-panel"
-      style={{ height }}
+      /* Never taller than the window: a restored or shared height that no
+         longer fits would push the grid (and the chrome above it) out of view. */
+      style={{ height, maxHeight: "calc(100vh - 120px)" }}
       className="shrink-0 border-t border-zinc-800 bg-zinc-950 flex flex-col relative"
     >
       <div

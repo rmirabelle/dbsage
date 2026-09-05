@@ -136,7 +136,7 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               {
                 type: "paragraph",
-                text: "DB Sage is a desktop workbench for MySQL built around one idea: your data is connected, and the tool should follow those connections as fast as you can think. Open a table and filter it with value suggestions drawn from the data itself. Right-click a row and peek at its related rows in a window of their own, then peek again from there, as deep as the relations go. Save that whole arrangement as a View and get it back with one click.",
+                text: "DB Sage is a desktop workbench for MySQL built around one idea: your data is connected, and the tool should follow those connections as fast as you can think. Open a table and filter it with value suggestions drawn from the data itself. Select a row, open the Relations panel, and peek at its related rows in a window of their own, then peek again from there, as deep as the relations go. Save that whole arrangement as a View and get it back with one click.",
               },
               {
                 type: "paragraph",
@@ -650,7 +650,7 @@ export const HELP_GROUPS: HelpGroup[] = [
                 type: "bullets",
                 items: [
                   "Use the footer to move between pages, enter a page number, change rows per page, or request an exact COUNT(*).",
-                  "Right-click rows and cells for copy, delete, value, and relation actions.",
+                  "Right-click rows and cells for copy, delete, and value actions. The Relations button in the toolbar opens the Relations panel for the selected row.",
                 ],
               },
             ],
@@ -1190,16 +1190,16 @@ export const HELP_GROUPS: HelpGroup[] = [
               {
                 type: "steps",
                 items: [
-                  "In Table View, right-click any cell.",
-                  "Choose the named relation under Relations. If none exists, use New Relation from that same menu.",
+                  "In Table View, click the purple Relations button in the toolbar, then select any cell or row.",
+                  "Choose the named relation in the Relations panel. If none exists, use New Relation from the panel header.",
                   "DB Sage opens a focused window filtered to matching rows in the target table.",
                   "Use Inspector inside the peek for large values, or Open Table to promote the result to a full filtered tab.",
                 ],
               },
               shot(
                 "relations-menu",
-                "Table View annotated with the purple relation icon on a column header and the Relations menu open on a right-clicked cell",
-                "A purple icon and purple header text mark a column that has a relation. Right-click any cell to open the Relations menu, then choose a relation to open a peek window. The pencil beside each relation edits it, and New Relation starts a new one.",
+                "Table View annotated with the purple relation icon on a column header and the Relations panel open beside the grid for the selected row",
+                "A purple icon and purple header text mark a column that has a relation. The Relations button in the toolbar opens the Relations panel, which follows the selected row; choose a relation there to open a peek window. The pencil beside each relation edits it, and New Relation starts a new one.",
                 "wide"
               ),
               shot(
@@ -1222,7 +1222,7 @@ export const HELP_GROUPS: HelpGroup[] = [
                 items: [
                   "Sort and filter columns in a peek the same way as in Table View, and use Inspector for large values.",
                   "The green open-in-tab button in the peek title bar expands the peek into a full, filtered table tab, where you can edit the related rows.",
-                  "Relations nest. If the peeked table has its own relations, right-click a cell in the peek to open a child peek from it.",
+                  "Relations nest. If the peeked table has its own relations, open the Relations panel in the peek and choose one to open a child peek from it.",
                 ],
               },
               {

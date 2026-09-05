@@ -24,6 +24,7 @@ interface UiState {
   expandedPanelHeight: number;
   sqlPaneHeight: number;
   analysisPanelWidth: number;
+  relationsPanelWidth: number;
   tableCopyPrompt: TableCopyPrompt | null;
 
   setSidebarWidth: (px: number) => void;
@@ -34,6 +35,7 @@ interface UiState {
   setExpandedPanelHeight: (px: number) => void;
   setSqlPaneHeight: (px: number) => void;
   setAnalysisPanelWidth: (px: number) => void;
+  setRelationsPanelWidth: (px: number) => void;
   openTableCopyPrompt: (prompt: TableCopyPrompt) => void;
   closeTableCopyPrompt: () => void;
 }
@@ -51,6 +53,9 @@ const SQL_PANE_MIN = 80;
 const SQL_PANE_MAX = 800;
 const ANALYSIS_PANEL_MIN = 360;
 const ANALYSIS_PANEL_MAX = 1400;
+const RELATIONS_PANEL_MIN = 200;
+const RELATIONS_PANEL_MAX = 800;
+export const RELATIONS_PANEL_DEFAULT = 300;
 
 interface Persisted {
   sidebarWidth?: number;
@@ -59,6 +64,7 @@ interface Persisted {
   expandedPanelHeight?: number;
   sqlPaneHeight?: number;
   analysisPanelWidth?: number;
+  relationsPanelWidth?: number;
 }
 
 const clamp = (v: number, lo: number, hi: number) =>
@@ -85,6 +91,7 @@ const savePersisted = (state: UiState) => {
       expandedPanelHeight: state.expandedPanelHeight,
       sqlPaneHeight: state.sqlPaneHeight,
       analysisPanelWidth: state.analysisPanelWidth,
+      relationsPanelWidth: state.relationsPanelWidth,
     };
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch {
@@ -109,6 +116,11 @@ export const useUi = create<UiState>((set, get) => ({
     persisted.analysisPanelWidth ?? 880,
     ANALYSIS_PANEL_MIN,
     ANALYSIS_PANEL_MAX
+  ),
+  relationsPanelWidth: clamp(
+    persisted.relationsPanelWidth ?? RELATIONS_PANEL_DEFAULT,
+    RELATIONS_PANEL_MIN,
+    RELATIONS_PANEL_MAX
   ),
   tableCopyPrompt: null,
 
@@ -158,6 +170,17 @@ export const useUi = create<UiState>((set, get) => ({
     });
     savePersisted(get());
   },
+
+  setRelationsPanelWidth: (px) => {
+    set({
+      relationsPanelWidth: clamp(
+        Math.round(px),
+        RELATIONS_PANEL_MIN,
+        RELATIONS_PANEL_MAX
+      ),
+    });
+    savePersisted(get());
+  },
 }));
 
 /**
@@ -192,6 +215,13 @@ window.addEventListener("storage", (e) => {
           p.analysisPanelWidth,
           ANALYSIS_PANEL_MIN,
           ANALYSIS_PANEL_MAX
+        ),
+      }),
+      ...(p.relationsPanelWidth != null && {
+        relationsPanelWidth: clamp(
+          p.relationsPanelWidth,
+          RELATIONS_PANEL_MIN,
+          RELATIONS_PANEL_MAX
         ),
       }),
     });

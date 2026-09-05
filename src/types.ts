@@ -194,6 +194,12 @@ export interface PeekSeed {
   filters?: ColumnFilter[];
   columnWidths?: Record<string, number>;
   jsonDisplay?: Record<string, string>;
+  /** Whether the Relations side panel was showing, the Inspector's height in
+   * this peek (CSS px), and the column of the active cell (re-selected on row
+   * 1 when the peek loads, so the Inspector shows that column at once). */
+  relationsOpen?: boolean;
+  inspectorHeight?: number;
+  activeColumn?: string | null;
 }
 
 /** The parts of a {@link PeekSeed} the peek itself changes while open and
@@ -206,11 +212,16 @@ export type PeekViewState = Pick<
   | "filters"
   | "columnWidths"
   | "jsonDisplay"
+  | "relationsOpen"
+  | "inspectorHeight"
+  | "activeColumn"
 >;
 
 /** A peek as reported by `list_open_peeks`: its seed plus current on-screen
  * geometry (CSS px), so a saved table view can restore it where it sat. */
 export interface PeekDescriptor extends PeekSeed {
+  /** The peek's window label (`peek-<n>`), for closing it by name. */
+  label?: string;
   x?: number;
   y?: number;
   width?: number;
@@ -227,6 +238,8 @@ export interface TableViewSetup {
   jsonDisplay: Record<string, string>;
   /** Peek windows that were open against this table when the view was saved. */
   peeks?: PeekDescriptor[];
+  /** Whether the Relations side panel was showing when the view was saved. */
+  relationsOpen?: boolean;
 }
 
 /** A named, saved table-view preset (scoped to one table). */
@@ -311,7 +324,11 @@ export type FilterOp =
   | "gt"
   | "gte"
   | "lt"
-  | "lte";
+  | "lte"
+  /** Relation filters (no value): keep rows that have / lack at least one
+   * related row — see {@link ColumnFilter.relation}. */
+  | "hasrelated"
+  | "norelated";
 
 /** The four ordered-comparison operators (the combined `>` `>=` `<` `<=`
  * toggle). `isnull`/`notnull` take no value; the rest compare against `value`. */
@@ -331,6 +348,9 @@ export interface ColumnFilter {
    * `equals` becomes a JSON_CONTAINS match, `like` a JSON_SEARCH match, both
    * shape-agnostic (object or array of objects). */
   jsonPath?: string;
+  /** `hasrelated` / `norelated` only: the related table and column whose rows
+   * must (or must not) exist for this column's value. */
+  relation?: { table: string; column: string };
 }
 
 export interface RowsTab extends BaseTab {
@@ -374,6 +394,8 @@ export interface RowsTab extends BaseTab {
   /** Whether the Inspector panel is showing. Lives on the tab so tearing the
    * tab into its own window (and docking it back) keeps the state. */
   inspectorOpen?: boolean;
+  /** Whether the Relations side panel is showing (same reasoning). */
+  relationsOpen?: boolean;
 }
 
 export interface Folder {

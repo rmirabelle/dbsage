@@ -4,10 +4,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 const topmostLeases = new Map<string, number>();
 
 /**
- * Peek panels are independent always-on-top OS windows, so a DOM z-index in
- * the table window cannot rise above them. While a context menu is open,
- * temporarily put its owning main/torn-off window in the same native topmost
- * layer. Peek windows already live there and only need to be brought forward.
+ * Peek panels are independent OS windows owned by the main window, so they
+ * always sit above it and a DOM z-index in the table window cannot rise above
+ * them. While a context menu is open, temporarily lift its owning main/torn-off
+ * window into the native topmost layer (released the moment the menu closes).
+ * Peek windows only need to be brought forward.
  */
 export function useNativeMenuLayer(open: boolean) {
   useEffect(() => {
