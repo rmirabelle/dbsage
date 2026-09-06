@@ -541,7 +541,7 @@ const emptyTreeDbState = (): TreeDbState => ({
  * direct peeks: a child peek's sourceTable is its parent peek's table, so the
  * reachable tables are walked transitively (the target table of any collected
  * peek becomes a valid source for the next). */
-function peeksReachableFrom(
+export function peeksReachableFrom(
   open: PeekDescriptor[],
   tab: { profileId: string; database: string; table: string }
 ): PeekDescriptor[] {
@@ -2582,7 +2582,13 @@ export const useStore = create<Store>((set, get) => ({
         sort: tab.sort,
         filters: tab.filters,
         jsonDisplay: tab.jsonDisplay,
-        relationsOpen: tab.relationsOpen ?? false,
+        /* The effective state: untouched, the panel is open when the table
+           has relations defined from it (see RowsTabBody). */
+        relationsOpen:
+          tab.relationsOpen ??
+          (get().relations[`${tab.profileId}::${tab.database}`] ?? []).some(
+            (r) => r.fromTable === tab.table
+          ),
         ...(peeks.length > 0 && { peeks }),
       },
     };
@@ -2654,6 +2660,9 @@ export const useStore = create<Store>((set, get) => ({
         relationsOpen: p.relationsOpen,
         inspectorHeight: p.inspectorHeight,
         activeColumn: p.activeColumn,
+        kind: p.kind,
+        compactHeight: p.compactHeight,
+        fromView: true,
       };
       ipc
         .openPeekWindow(seed, p.x ?? 120, p.y ?? 120, p.width ?? 900, p.height ?? 440)

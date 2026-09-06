@@ -11,6 +11,7 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useUi, PANEL_BOUNDS } from "../state/ui";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { JsonTreeView } from "./JsonTreeView";
 import type { ColumnInfo } from "../types";
 
@@ -91,6 +92,8 @@ export function ExpandedPanel({
   const [activeMatch, setActiveMatch] = useState(0);
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** Save is waiting on the user's OK to edit a primary-key column. */
+  const [pkSaveConfirm, setPkSaveConfirm] = useState(false);
   const [saved, setSaved] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -218,13 +221,11 @@ export function ExpandedPanel({
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (pkConfirmed = false) => {
     if (!onSave || !dirty || saving) return;
-    if (column?.key === "PRI") {
-      const ok = confirm(
-        `"${column.name}" is a primary-key column. Editing it can break foreign-key references and shifts the row's identity.\n\nContinue?`
-      );
-      if (!ok) return;
+    if (column?.key === "PRI" && !pkConfirmed) {
+      setPkSaveConfirm(true);
+      return;
     }
     let toSave: string | null =
       text.trim() === "" && column?.nullable ? null : text;
@@ -292,6 +293,25 @@ export function ExpandedPanel({
         className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 z-10 cursor-ns-resize bg-transparent hover:bg-accent-500/40 transition-colors"
         title="Drag to resize · double-click to reset"
       />
+      {pkSaveConfirm && column && (
+        <ConfirmDialog
+          title="Edit a primary key?"
+          confirmLabel="Save"
+          danger={false}
+          message={
+            <p>
+              <span className="font-mono text-zinc-100">{column.name}</span>{" "}
+              is a primary-key column. Editing it can break foreign-key
+              references and changes the row's identity. Continue?
+            </p>
+          }
+          onConfirm={() => {
+            setPkSaveConfirm(false);
+            void handleSave(true);
+          }}
+          onCancel={() => setPkSaveConfirm(false)}
+        />
+      )}
       <div className="dbs-toolbar h-7 shrink-0 px-3 flex items-center gap-3 border-b border-zinc-800/60 text-[11px] text-zinc-400">
         <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-300">
           <Binoculars size={13} weight="fill" className="shrink-0" />
@@ -515,7 +535,7 @@ export function ExpandedPanel({
             )}
             <button
               data-el="expanded-save-btn"
-              onClick={handleSave}
+              onClick={() => void handleSave()}
               disabled={!dirty || saving}
               title={
                 !editable

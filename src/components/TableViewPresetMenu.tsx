@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowCounterClockwise, CaretDown, Check, Plus, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, CaretDown, Check, FloppyDisk, Plus, X } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { helpHandlers } from "../state/help";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { TableViewPreset } from "../types";
 
 /** Custom "table views" glyph: an eye framed by scan-corner brackets. Inherits
@@ -33,28 +34,19 @@ export function ViewsIcon({ size = 16, className }: { size?: number; className?:
 interface Props {
   presets: TableViewPreset[];
   activeName: string | null;
-  /** Identity of the owning table-view tab. When it's a tab not seen before, the
-   * menu auto-opens once (if it has saved views) so a freshly-opened table tab
-   * surfaces its saved views for loading. */
-  autoOpenKey?: string;
+  /** The current setup differs from the active view: show a one-click save
+   * that overwrites it, instead of retyping its name. */
+  dirty?: boolean;
   onApply: (name: string) => void;
   onSave: (name: string) => void;
   onDelete: (name: string) => void;
   onClear: () => void;
 }
 
-/**
- * Tab ids whose Saved Views menu has already auto-opened. Module scope (not
- * component state) so it survives this menu remounting when you switch away to a
- * different-kind tab and back — the menu should drop only once, when the table
- * tab is first created, not on every re-select/redraw.
- */
-const autoOpenedTabs = new Set<string>();
-
 export function TableViewPresetMenu({
   presets,
   activeName,
-  autoOpenKey,
+  dirty = false,
   onApply,
   onSave,
   onDelete,
@@ -62,15 +54,9 @@ export function TableViewPresetMenu({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  /** View awaiting delete confirmation; the dialog outlives the dropdown. */
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-
-  /* Auto-open exactly once per table tab — see autoOpenedTabs above. */
-  useEffect(() => {
-    if (!autoOpenKey || presets.length === 0) return;
-    if (autoOpenedTabs.has(autoOpenKey)) return;
-    autoOpenedTabs.add(autoOpenKey);
-    setOpen(true);
-  }, [autoOpenKey, presets.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -171,9 +157,23 @@ export function TableViewPresetMenu({
                       {p.name}
                     </span>
                   </button>
+                  {active && dirty && (
+                    <button
+                      onClick={() => {
+                        onSave(p.name);
+                        setOpen(false);
+                      }}
+                      className="shrink-0 p-1 rounded text-amber-300 hover:text-black hover:bg-amber-400 transition"
+                      {...helpHandlers(`Save the current setup over "${p.name}"`)}
+                      aria-label={`Save changes to ${p.name}`}
+                    >
+                      <FloppyDisk size={14} weight="fill" />
+                    </button>
+                  )}
                   <button
                     onClick={() => {
-                      if (confirm(`Delete the view "${p.name}"?`)) onDelete(p.name);
+                      setOpen(false);
+                      setPendingDelete(p.name);
                     }}
                     className="shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition"
                     {...helpHandlers(`Delete "${p.name}"`)}
@@ -216,6 +216,24 @@ export function TableViewPresetMenu({
             </div>
           </div>
         </div>
+      )}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete view"
+          message={
+            <p>
+              Delete the saved view{" "}
+              <span className="font-semibold text-zinc-100">{pendingDelete}</span>?
+              This cannot be undone.
+            </p>
+          }
+          onConfirm={() => {
+            onDelete(pendingDelete);
+            setPendingDelete(null);
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
       )}
     </div>
   );

@@ -167,7 +167,9 @@ export interface ColumnSetup {
 export interface PeekTarget {
   table: string;
   column: string;
-  value: string;
+  /** The value to match; null when the parent has no selected row (or its
+   * source cell is NULL), so the peek shows nothing rather than a stale row. */
+  value: string | null;
 }
 
 /** Everything needed to (re)open a peek in its own window. Stashed as the
@@ -200,6 +202,14 @@ export interface PeekSeed {
   relationsOpen?: boolean;
   inspectorHeight?: number;
   activeColumn?: string | null;
+  /** The relation's kind. A `has_one` peek sizes itself to a single row on
+   * first load and reports that height as `compactHeight` (CSS px), which
+   * the arrange command then keeps fixed. */
+  kind?: "has_one" | "has_many";
+  compactHeight?: number;
+  /** Set when a saved View reopens the peek: its captured size wins, so the
+   * single-row sizing is skipped. */
+  fromView?: boolean;
 }
 
 /** The parts of a {@link PeekSeed} the peek itself changes while open and
@@ -215,6 +225,9 @@ export type PeekViewState = Pick<
   | "relationsOpen"
   | "inspectorHeight"
   | "activeColumn"
+  | "kind"
+  | "compactHeight"
+  | "fromView"
 >;
 
 /** A peek as reported by `list_open_peeks`: its seed plus current on-screen

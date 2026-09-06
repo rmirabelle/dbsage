@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RELATIONS_PANEL_DEFAULT, useUi } from "../state/ui";
 import { helpHandlers } from "../state/help";
-import { Funnel, PencilSimple, Plus, Prohibit, X } from "@phosphor-icons/react";
+import {
+  Funnel,
+  PencilSimple,
+  Plus,
+  Prohibit,
+  AppWindow,
+  X,
+} from "@phosphor-icons/react";
 import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
 import { rowRelationTargets, type RowRelationTarget } from "../lib/relations";
@@ -9,9 +16,17 @@ import {
   relKey,
   checkRelatedExistence,
   TABLE_CHANGED_EVENT,
+  PEEKS_CHANGED_EVENT,
   type TableChanged,
 } from "../lib/relatedExistence";
-import type { ColumnFilter, FilterOp, Relation, RowRecord } from "../types";
+import { ipc } from "../ipc";
+import type {
+  ColumnFilter,
+  FilterOp,
+  PeekDescriptor,
+  Relation,
+  RowRecord,
+} from "../types";
 
 /**
  * The Relations side panel: every relation reachable from the grid's current
@@ -159,11 +174,53 @@ export function RelationsPanel({
      the previous row's entries or an empty panel. */
   const items = pending ? targets.map((m) => ({ ...m, exists: false })) : checked;
 
+  /* Which relations already have a peek window open (keyed by the peek's
+     identity, value aside), so the peek button can toggle it and show state.
+     Refreshed whenever Rust reports a peek opened or closed. */
+  const peekKey = (t: {
+    table: string;
+    column: string;
+    sourceTable: string;
+    sourceColumn: string;
+  }) => `${t.table}::${t.column}::${t.sourceTable}::${t.sourceColumn}`;
+  const [openPeeks, setOpenPeeks] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const open = await ipc.listOpenPeeks<PeekDescriptor>();
+        if (cancelled) return;
+        const next = new Map<string, string>();
+        for (const p of open) {
+          if (p.profileId !== profileId || p.database !== database || !p.label) continue;
+          next.set(
+            peekKey({
+              table: p.target.table,
+              column: p.target.column,
+              sourceTable: p.sourceTable,
+              sourceColumn: p.sourceColumn,
+            }),
+            p.label
+          );
+        }
+        setOpenPeeks(next);
+      } catch {
+        /* keep the last known state */
+      }
+    };
+    void refresh();
+    const un = listen(PEEKS_CHANGED_EVENT, () => void refresh());
+    return () => {
+      cancelled = true;
+      un.then((f) => f());
+    };
+  }, [profileId, database]);
+
   return (
     <div
       data-el="relations-panel"
       style={{ width }}
-      className="relations-panel order-first relative shrink-0 flex flex-col border-r border-violet-500/60 bg-zinc-900 text-zinc-200"
+      className="relations-panel order-first relative shrink-0 flex flex-col border-r border-violet-500/60 bg-[#2d2a3b] text-zinc-200"
     >
       <div
         role="separator"
@@ -174,23 +231,11 @@ export function RelationsPanel({
         title="Drag to resize · double-click to reset"
         {...helpHandlers("Drag to resize the Relations panel. Double-click to reset its width.")}
       />
-      <div className="flex shrink-0 items-center gap-2 bg-violet-600 px-3 py-1.5 text-[13px] font-semibold text-violet-50">
+      <div
+        data-el="relations-panel-header"
+        className="flex shrink-0 items-center gap-2 bg-violet-600 px-3 py-1.5 text-[13px] font-semibold text-violet-50"
+      >
         <span className="flex-1">Relations</span>
-        <button
-          data-el="relation-panel-new"
-          onClick={() => onNew(column)}
-          className="inline-flex items-center gap-1.5 rounded bg-violet-500 px-2 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-violet-400"
-          aria-label="New Relation"
-          title={column ? `New relation from ${column}` : "New relation"}
-          {...helpHandlers(
-            column
-              ? `Define a new relation from ${column} to a column in another table`
-              : "Define a new relation from this table to another table"
-          )}
-        >
-          <Plus size={13} weight="bold" />
-          New Relation
-        </button>
         <button
           onClick={onClose}
           className="inline-flex items-center justify-center rounded p-0.5 text-violet-200 transition-colors hover:bg-violet-500 hover:text-white"
@@ -201,118 +246,160 @@ export function RelationsPanel({
           <X size={15} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {!row && items.length > 0 && (
-          <p className="px-3 py-2 text-[11px] leading-relaxed text-zinc-500 border-b border-zinc-800/60">
-            Select a cell or row to peek into its related rows.
-          </p>
-        )}
-        {items.length === 0 ? (
-          <p className="px-3 py-3 text-[12px] leading-relaxed text-zinc-500">
-            No relations lead out of <span className="font-mono text-zinc-300">{table}</span>.
-            Use New Relation to add one.
-          </p>
-        ) : (
+      <div data-el="relations-panel-body" className="min-h-0 flex-1 overflow-y-auto pt-[10px]">
+        {items.length === 0 ? null : (
           items.map((m) => {
-            const noValue = m.value == null;
-            const empty = !pending && !noValue && !m.exists;
-            const disabled = pending || noValue || empty;
             const label = m.relation.name?.trim() || m.table;
-            const filterOp = activeFilterOp(m);
-            const filterBtn = (op: FilterOp, title: string, icon: React.ReactNode) => {
-              const active = filterOp === op;
-              const help = active
-                ? `Clear this filter and show every row of ${table} again`
-                : op === "hasrelated"
-                ? `Filter ${table} to rows that have at least one related row in ${m.table}`
-                : `Filter ${table} to rows that have no related row in ${m.table}`;
-              return (
-                <button
-                  data-el={`relation-filter-${op}`}
-                  onClick={() => onRelationFilter(m, active ? null : op)}
-                  {...helpHandlers(help)}
-                  className={clsx(
-                    "flex w-8 shrink-0 items-center justify-center border-l border-zinc-800 transition-colors",
-                    active
-                      ? "bg-amber-400 text-black hover:bg-amber-300"
-                      : "text-zinc-500 hover:bg-zinc-800 hover:text-amber-300"
-                  )}
-                  aria-label={title}
-                  title={active ? `Clear: ${title}` : title}
-                >
-                  {icon}
-                </button>
-              );
-            };
+            /* The badge and name dim when the selected row has no related
+               rows (or no value) through this relation right now; the
+               buttons stay at full strength. */
+            const hasRows = !pending && m.value != null && m.exists;
+            const current = activeFilterOp(m);
+            const openLabel = openPeeks.get(
+              peekKey({
+                table: m.table,
+                column: m.column,
+                sourceTable: table,
+                sourceColumn: m.sourceColumn,
+              })
+            );
             return (
               <div
                 key={m.relation.id}
-                className="flex items-stretch border-b border-zinc-800/60"
+                className="border-b border-zinc-800/60 text-[12px]"
               >
+                <div className="flex items-center gap-2 py-1 pl-2 pr-1.5">
                 <button
-                  disabled={disabled}
-                  onClick={() => onOpen(m)}
-                  title={
-                    !row
-                      ? "Select a row to peek"
-                      : noValue
-                      ? `${m.sourceColumn} is NULL in this row`
-                      : empty
-                      ? `No related rows in ${m.table}`
-                      : `Peek ${m.table} where ${m.column} = ${m.value}`
-                  }
+                  data-el="relation-edit-btn"
+                  onClick={() => onEdit(m.relation, m.sourceColumn)}
+                  className="shrink-0 inline-flex items-center justify-center rounded p-0.5 text-violet-400 transition-colors hover:bg-zinc-700 hover:text-violet-300"
+                  aria-label={`Edit relation ${label}`}
+                  {...helpHandlers("Edit this relation: its name, kind, and the columns it joins")}
+                >
+                  <PencilSimple size={14} />
+                </button>
+                <span
+                  className={clsx(
+                    "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                    m.relation.kind === "has_many"
+                      ? "bg-accent-500/15 text-accent-300"
+                      : "bg-amber-500/15 text-amber-300",
+                    !hasRows && "opacity-40"
+                  )}
+                >
+                  {m.relation.kind === "has_many" ? "has many" : "has one"}
+                </span>
+                <span
+                  className={clsx(
+                    "min-w-0 flex-1 truncate font-medium text-zinc-100",
+                    !hasRows && "opacity-40"
+                  )}
                   {...helpHandlers(
                     !row
-                      ? "Select a cell or row first, then choose a relation to peek into its related rows"
-                      : noValue
-                      ? `${m.sourceColumn} is NULL in the selected row, so there is nothing to peek`
-                      : empty
-                      ? `The selected row has no related rows in ${m.table}`
-                      : `Open a peek window showing the ${m.table} rows where ${m.column} = ${m.value}`
-                  )}
-                  className={clsx(
-                    "flex min-w-0 flex-1 items-center gap-2 px-3 py-1 text-left text-[12px]",
-                    disabled ? "cursor-not-allowed opacity-40" : "hover:bg-zinc-800"
+                      ? `${label}: select a row to see whether it has related rows`
+                      : hasRows
+                      ? `${label}: the selected row has related rows in ${m.table}`
+                      : m.value == null
+                      ? `${label}: ${m.sourceColumn} is NULL in the selected row`
+                      : `${label}: the selected row has no related rows in ${m.table}`
                   )}
                 >
-                  <span
-                    className={clsx(
-                      "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                      m.relation.kind === "has_many"
-                        ? "bg-accent-500/15 text-accent-300"
-                        : "bg-amber-500/15 text-amber-300"
-                    )}
-                  >
-                    {m.relation.kind === "has_many" ? "has many" : "has one"}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-medium text-zinc-100">
-                    {label}
-                  </span>
-                </button>
+                  {label}
+                </span>
+                {/* One two-sided control: WITH on the left, WITHOUT on the
+                    right; the active side is amber, click again to clear. */}
+                <div
+                  data-el="relation-filter-toggle"
+                  className="inline-flex shrink-0 overflow-hidden rounded"
+                >
+                  {(
+                    [
+                      {
+                        op: "hasrelated" as FilterOp,
+                        icon: <Funnel size={14} weight="fill" />,
+                        title: `${table} WITH ${label}`,
+                        help: `Show only ${table} rows that have at least one related row in ${m.table}`,
+                      },
+                      {
+                        op: "norelated" as FilterOp,
+                        icon: <Prohibit size={14} weight="bold" />,
+                        title: `${table} WITHOUT ${label}`,
+                        help: `Show only ${table} rows that have no related row in ${m.table}`,
+                      },
+                    ] as const
+                  ).map((f) => {
+                    const active = current === f.op;
+                    return (
+                      <button
+                        key={f.op}
+                        data-el={`relation-filter-${f.op}`}
+                        onClick={() => onRelationFilter(m, active ? null : f.op)}
+                        aria-pressed={active}
+                        aria-label={f.title}
+                        className={clsx(
+                          "inline-flex items-center justify-center p-1 transition-colors",
+                          f.op === "norelated" && "border-l border-zinc-700",
+                          active
+                            ? "bg-amber-400 text-black hover:bg-amber-300"
+                            : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-amber-300"
+                        )}
+                        {...helpHandlers(
+                          active
+                            ? `Clear this filter and show every row of ${table} again`
+                            : f.help
+                        )}
+                      >
+                        {f.icon}
+                      </button>
+                    );
+                  })}
+                </div>
                 <button
-                  data-el="relation-panel-edit"
-                  onClick={() => onEdit(m.relation, m.sourceColumn)}
-                  className="flex w-9 shrink-0 items-center justify-center border-l border-zinc-800 text-violet-400 hover:bg-zinc-800 hover:text-violet-300"
-                  aria-label={`Edit relation ${label}`}
-                  title="Edit relation"
-                  {...helpHandlers(`Edit this relation: its name, kind, and the columns it joins`)}
+                  data-el="relation-peek-btn"
+                  onClick={() => {
+                    if (openLabel) ipc.closePeeks([openLabel]).catch(() => {});
+                    else onOpen(m);
+                  }}
+                  className={clsx(
+                    "shrink-0 inline-flex items-center justify-center rounded p-1 transition-colors",
+                    openLabel
+                      ? "bg-violet-600 text-white hover:bg-violet-500"
+                      : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+                  )}
+                  aria-label={openLabel ? `Close the ${m.table} peek` : `Peek ${m.table}`}
+                  aria-pressed={!!openLabel}
+                  {...helpHandlers(
+                    openLabel
+                      ? `Close the open ${m.table} peek window`
+                      : hasRows
+                      ? `Open a peek window showing the ${m.table} rows where ${m.column} = ${m.value}`
+                      : `Open a peek window on ${m.table}; it fills in once a selected row has related rows`
+                  )}
                 >
-                  <PencilSimple size={16} />
+                  <AppWindow size={14} weight="bold" />
                 </button>
-                {filterBtn(
-                  "hasrelated",
-                  `Show only rows with related rows in ${m.table}`,
-                  <Funnel size={15} weight="fill" />
-                )}
-                {filterBtn(
-                  "norelated",
-                  `Show only rows with no related rows in ${m.table}`,
-                  <Prohibit size={15} weight="bold" />
-                )}
+                </div>
               </div>
             );
           })
         )}
+        <div className="px-3 py-2">
+          <button
+            data-el="relation-panel-new"
+            onClick={() => onNew(column)}
+            className="inline-flex items-center gap-1.5 rounded bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-violet-500"
+            aria-label="New Relation"
+            title={column ? `New relation from ${column}` : "New relation"}
+            {...helpHandlers(
+              column
+                ? `Define a new relation from ${column} to a column in another table`
+                : "Define a new relation from this table to another table"
+            )}
+          >
+            <Plus size={13} weight="bold" />
+            New Relation
+          </button>
+        </div>
       </div>
     </div>
   );

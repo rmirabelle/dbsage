@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CaretDown, Check, FloppyDisk, Plus, X } from "@phosphor-icons/react";
+import { CaretDown, Check, Code, FloppyDisk, Plus, X } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type { SavedQuery } from "../types";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 /**
  * Tab ids whose Saved menu has already auto-opened. Kept at module scope (not
@@ -15,6 +16,9 @@ const autoOpenedTabs = new Set<string>();
 interface Props {
   queries: SavedQuery[];
   activeName: string | null;
+  /** The editor's SQL differs from the loaded query: show a one-click save
+   * that overwrites it, instead of retyping its name. */
+  dirty?: boolean;
   /** Disabled (e.g. no database picked) — the trigger is inert. */
   disabled?: boolean;
   /** Identity of the owning query tab. When it changes to a tab not seen before,
@@ -29,6 +33,7 @@ interface Props {
 export function SavedQueryMenu({
   queries,
   activeName,
+  dirty = false,
   disabled,
   autoOpenKey,
   onApply,
@@ -37,6 +42,8 @@ export function SavedQueryMenu({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  /** Query awaiting delete confirmation; the dialog outlives the dropdown. */
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   /* Auto-open exactly once per query tab — see autoOpenedTabs above. */
@@ -86,7 +93,11 @@ export function SavedQueryMenu({
         className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-zinc-800 text-emerald-300 hover:bg-zinc-700"
         title={activeName ? `Loaded query: ${activeName}` : "Saved queries"}
       >
-        <FloppyDisk size={16} weight="fill" className="shrink-0" />
+        {activeName ? (
+          <Code size={16} weight="bold" className="shrink-0" />
+        ) : (
+          <FloppyDisk size={16} weight="fill" className="shrink-0" />
+        )}
         <span className="max-w-[160px] truncate font-bold">{activeName ?? "Saved"}</span>
         <span className="rounded-full px-1.5 text-[10px] font-semibold tabular-nums bg-black/30 text-zinc-100">
           {queries.length}
@@ -120,14 +131,28 @@ export function SavedQueryMenu({
                     className="flex-1 min-w-0 flex items-center gap-2 py-1.5 text-left"
                     title={`Load "${q.name}"`}
                   >
-                    <FloppyDisk size={14} weight="fill" className="text-emerald-400 shrink-0" />
+                    <Code size={14} weight="bold" className="text-emerald-400 shrink-0" />
                     <span className={clsx("truncate", active && "font-semibold text-zinc-100")}>
                       {q.name}
                     </span>
                   </button>
+                  {active && dirty && (
+                    <button
+                      onClick={() => {
+                        onSave(q.name);
+                        setOpen(false);
+                      }}
+                      className="shrink-0 p-1 rounded text-amber-300 hover:text-black hover:bg-amber-400 transition"
+                      title={`Save the editor's SQL over "${q.name}"`}
+                      aria-label={`Save changes to ${q.name}`}
+                    >
+                      <FloppyDisk size={14} weight="fill" />
+                    </button>
+                  )}
                   <button
                     onClick={() => {
-                      if (confirm(`Delete the saved query "${q.name}"?`)) onDelete(q.name);
+                      setOpen(false);
+                      setPendingDelete(q.name);
                     }}
                     className="shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition"
                     title={`Delete "${q.name}"`}
@@ -169,6 +194,24 @@ export function SavedQueryMenu({
             </div>
           </div>
         </div>
+      )}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete saved query"
+          message={
+            <p>
+              Delete the saved query{" "}
+              <span className="font-semibold text-zinc-100">{pendingDelete}</span>?
+              This cannot be undone.
+            </p>
+          }
+          onConfirm={() => {
+            onDelete(pendingDelete);
+            setPendingDelete(null);
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
       )}
     </div>
   );

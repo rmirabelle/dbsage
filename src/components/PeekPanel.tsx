@@ -10,8 +10,10 @@ import {
   X,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
-import { emit } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { emit, listen } from "@tauri-apps/api/event";
+import { PEEKS_CHANGED_EVENT } from "../lib/relatedExistence";
+import { findSameRow } from "../lib/sameRow";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
 import { useUi } from "../state/ui";
@@ -77,7 +79,12 @@ export function PeekPanel({
    * saved-view capture. */
   onViewChange?: (patch: PeekViewState) => void;
   /** Peek into a relation found on this peek's own table (opens a new window). */
-  onOpenChildPeek: (target: RelationTarget, sourceColumn: string, value: string) => void;
+  onOpenChildPeek: (
+    target: RelationTarget,
+    sourceColumn: string,
+    value: string | null,
+    kind: "has_one" | "has_many"
+  ) => void;
   /** Promote this peek's table to a full, filtered tab in the main window. */
   onOpenAsTab: () => void;
 }) {
@@ -113,11 +120,14 @@ export function PeekPanel({
     column: string;
   } | null>(null);
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
-  const [relationsOpen, setRelationsOpenState] = useState(
-    initialView?.relationsOpen ?? false
+  /* The user's (or saved View's) choice for the Relations panel; undefined
+     means untouched, and the panel then opens when the peeked table has
+     relations defined from it (same default as a table tab). */
+  const [relationsOpenPref, setRelationsOpenPref] = useState<boolean | undefined>(
+    initialView?.relationsOpen
   );
   const setRelationsOpen = (open: boolean) => {
-    setRelationsOpenState(open);
+    setRelationsOpenPref(open);
     onViewChange?.({ relationsOpen: open });
   };
   /* Report the active column so a saved view can re-select it on restore. */
@@ -137,13 +147,21 @@ export function PeekPanel({
   const baseFilter: ColumnFilter = {
     column: target.column,
     op: "equals",
-    value: target.value,
+    value: target.value ?? "",
   };
   /** The equality match always applies; header filters refine it further. */
   const filters = [baseFilter, ...extraFilters];
   const filtersKey = JSON.stringify(filters);
+  /** No row to match (the parent has no selection): show nothing, fetch nothing. */
+  const unmatched = target.value == null;
 
   useEffect(() => {
+    if (unmatched) {
+      setData((d) => (d ? { ...d, rows: [], total: 0 } : d));
+      setLoading(false);
+      setError(null);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -173,6 +191,10 @@ export function PeekPanel({
   }, [profileId, database, target.table, filtersKey, sort, reloadKey]);
 
   useEffect(() => {
+    if (unmatched) {
+      setTotal(0);
+      return;
+    }
     let cancelled = false;
     ipc
       .countRows({ profileId, database, table: target.table, filters })
@@ -200,6 +222,8 @@ export function PeekPanel({
   const relations =
     useStore((s) => s.relations[`${profileId}::${database}`]) ??
     EMPTY_RELATIONS;
+  const relationsOpen =
+    relationsOpenPref ?? relations.some((r) => r.fromTable === target.table);
   const peekableColumns = useMemo(
     () => peekableColumnsFor(relations, target.table),
     [relations, target.table]
@@ -255,10 +279,8 @@ export function PeekPanel({
      source value so nested peeks keep following even when the clicked cell
      itself is not a relation source column. */
   useEffect(() => {
-    if (!activeRow) return;
     for (const sourceColumn of peekableColumns) {
-      const value = cellToFilterValue(activeRow[sourceColumn]);
-      if (value == null) continue;
+      const value = activeRow ? cellToFilterValue(activeRow[sourceColumn]) : null;
       emit("dbsage://peek-follow", {
         profileId,
         database,
@@ -324,16 +346,37 @@ export function PeekPanel({
     }
   };
 
-  const openChild = (t: RowRelationTarget) => {
-    if (t.value == null) return;
-    onOpenChildPeek(t, t.sourceColumn, t.value);
-  };
+  /** A NULL source value still opens the child (matching nothing yet); it
+   * follows later selections. */
+  const openChild = (t: RowRelationTarget) =>
+    onOpenChildPeek(t, t.sourceColumn, t.value, t.relation.kind);
 
   /** Closing every peek at once is easy to hit by accident (it's the corner-flush
    * button), so confirm first via a themed modal — and say how many it'll close.
    * When this is the only open peek there's nothing to confirm: just close it
    * like any normal window, skipping the dialog. (A failed enumeration counts as
    * solo too — closing only this window is the safe, non-destructive default.) */
+  /* How many peeks are open app-wide: the "close all" titlebar button only
+     shows when this is not the only one. */
+  const [openPeekCount, setOpenPeekCount] = useState(1);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const n = (await ipc.listOpenPeeks()).length;
+        if (!cancelled) setOpenPeekCount(n);
+      } catch {
+        /* keep the last value */
+      }
+    };
+    void refresh();
+    const un = listen(PEEKS_CHANGED_EVENT, () => void refresh());
+    return () => {
+      cancelled = true;
+      un.then((f) => f());
+    };
+  }, []);
+
   const requestCloseAll = async () => {
     let count = 0;
     try {
@@ -354,25 +397,80 @@ export function PeekPanel({
      going blank until the cell is clicked again. Otherwise clear it. A fresh
      object is set so effects keyed on the cell (peek-follow, pinned menu)
      re-run for the new row. */
+  const seenRowsRef = useRef(data?.rows);
   useEffect(() => {
+    const oldRows = seenRowsRef.current;
+    seenRowsRef.current = data?.rows;
     setActiveCell((cell) => {
       if (!cell || !data) return null;
-      if (cell.rowIndex >= data.rows.length) return null;
       if (!data.columns.some((c) => c.name === cell.column)) return null;
-      return { ...cell };
+      /* Same row still present (by key, else by every cell): follow it.
+         Otherwise (the parent row moved on) keep the column on the same
+         row index when one exists, so an open Inspector stays useful. */
+      const idx = findSameRow(data.columns, oldRows, cell.rowIndex, data.rows);
+      if (idx >= 0) return { rowIndex: idx, column: cell.column };
+      if (cell.rowIndex < data.rows.length) return { ...cell };
+      return null;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.rows]);
 
-  /* Restoring a saved view: once rows arrive, select the saved column on the
-     first row so an open Inspector shows it right away. Applied once. */
-  const restoreColumnRef = useRef(initialView?.activeColumn ?? null);
+  /* A has-one peek shows one row: on first load, size the window to exactly
+     the titlebar + grid header + one row (+ scrollbar), and report that
+     height so arranging keeps it. A peek restored from a saved View keeps the
+     View's size instead. */
+  /* The Relations panel may open a moment after the rows (its relations load
+     separately), so the sizing re-runs while the window is still "fresh"
+     (first two seconds) and grows to fit the panel's content too. */
+  const mountedAtRef = useRef(Date.now());
+  const compactAppliedRef = useRef<number | null>(null);
   useEffect(() => {
-    const column = restoreColumnRef.current;
-    if (!column || !data || data.rows.length === 0) return;
+    if (!data || initialView?.kind !== "has_one") return;
+    if (Date.now() - mountedAtRef.current > 2000) return;
+    const px = (sel: string, fallback: number) =>
+      document.querySelector(sel)?.getBoundingClientRect().height ?? fallback;
+    const titlebar = px('[data-el="peek-titlebar"]', 40);
+    const header = px('[data-el="grid-header"]', 34);
+    const gridNeed = header + 26 * tabsZoom + 16;
+    const panelNeed =
+      px('[data-el="relations-panel-header"]', 0) +
+      (document.querySelector('[data-el="relations-panel-body"]')?.scrollHeight ?? 0);
+    const height = Math.ceil(titlebar + Math.max(gridNeed, panelNeed));
+    if (compactAppliedRef.current === height) return;
+    compactAppliedRef.current = height;
+    onViewChange?.({ compactHeight: height });
+    if (initialView?.fromView) return;
+    const win = getCurrentWindow();
+    void (async () => {
+      const [size, scale] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+      await win.setSize(new LogicalSize(size.width / scale, height));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, relationsOpen, relations]);
+
+  /* When rows arrive and nothing is selected, select the first row: the
+     saved View's column if restoring, else the first column. This makes the
+     Relations panel (and an open Inspector) active at once. Only skipped when
+     the user has a row selection of their own. */
+  const restoreColumnRef = useRef(initialView?.activeColumn ?? null);
+  /* The column last selected in this peek. When the peek is emptied (the
+     parent lost its row) and later reconnected, the selection returns to
+     this column, not the first one — as if it had never been interrupted. */
+  const lastColumnRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeCell) lastColumnRef.current = activeCell.column;
+  }, [activeCell]);
+  useEffect(() => {
+    if (!data || data.rows.length === 0) return;
+    if (activeCell || selectedRows.length > 0) return;
+    const wanted = restoreColumnRef.current ?? lastColumnRef.current;
     restoreColumnRef.current = null;
-    if (data.columns.some((c) => c.name === column))
-      setActiveCell({ rowIndex: 0, column });
+    const column =
+      wanted && data.columns.some((c) => c.name === wanted)
+        ? wanted
+        : data.columns[0]?.name;
+    if (column) setActiveCell({ rowIndex: 0, column });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
   const shown = data?.rows.length ?? 0;
@@ -386,22 +484,36 @@ export function PeekPanel({
         className="dbs-toolbar shrink-0 h-10 pl-3 flex items-center gap-2 border-b border-zinc-800/60 select-none"
       >
         <ShareNetwork size={16} className="text-violet-400 shrink-0 pointer-events-none" />
-        <span className="flex-1 min-w-0 text-[13px] text-zinc-200 truncate pointer-events-none">
+        <span className="min-w-0 shrink text-[13px] text-zinc-200 truncate pointer-events-none">
           <span className="font-semibold text-zinc-100">{target.table}</span>
           <span className="text-zinc-500"> where </span>
           <span className="font-mono text-zinc-300">{target.column}</span>
           <span className="text-zinc-500"> = </span>
-          <span className="font-mono text-accent-300">
-            {JSON.stringify(target.value)}
-          </span>
+          {unmatched ? (
+            <span className="italic text-zinc-500">no row selected</span>
+          ) : (
+            <span className="font-mono text-accent-300">
+              {JSON.stringify(target.value)}
+            </span>
+          )}
         </span>
-        <span className="text-[11px] text-zinc-500 shrink-0 pointer-events-none">
-          {total == null
-            ? `${shown} shown`
-            : capped
-            ? `${shown} of ${total.toLocaleString()} (first ${PEEK_LIMIT})`
-            : `${total.toLocaleString()} row${total === 1 ? "" : "s"}`}
-        </span>
+
+        <button
+          data-el="peek-relations-btn"
+          onClick={() => setRelationsOpen(!relationsOpen)}
+          disabled={!data}
+          className={clsx(
+            "shrink-0 inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-40",
+            relationsOpen
+              ? "bg-violet-600 text-white hover:bg-violet-500"
+              : "bg-zinc-800 text-violet-300 hover:bg-zinc-700 hover:text-violet-200"
+          )}
+          title="Toggle the Relations panel"
+          aria-label="Toggle the Relations panel"
+        >
+          <ShareNetwork size={15} />
+          Relations
+        </button>
 
         <button
           data-el="peek-inspector-btn"
@@ -424,22 +536,16 @@ export function PeekPanel({
           Inspector
         </button>
 
-        <button
-          data-el="peek-relations-btn"
-          onClick={() => setRelationsOpen(!relationsOpen)}
-          disabled={!data}
-          className={clsx(
-            "shrink-0 inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-40",
-            relationsOpen
-              ? "bg-violet-600 text-white hover:bg-violet-500"
-              : "bg-zinc-800 text-violet-300 hover:bg-zinc-700 hover:text-violet-200"
-          )}
-          title="Toggle the Relations panel"
-          aria-label="Toggle the Relations panel"
-        >
-          <ShareNetwork size={15} />
-          Relations
-        </button>
+        <span className="text-[11px] text-zinc-500 shrink-0 pointer-events-none">
+          {total == null
+            ? `${shown} shown`
+            : capped
+            ? `${shown} of ${total.toLocaleString()} (first ${PEEK_LIMIT})`
+            : `${total.toLocaleString()} row${total === 1 ? "" : "s"}`}
+        </span>
+
+        {/* Empty middle: still part of the drag region. */}
+        <span className="flex-1 pointer-events-none" />
 
         <button
           data-el="peek-arrange-btn"
@@ -460,7 +566,7 @@ export function PeekPanel({
         >
           <ArrowSquareOut size={15} />
         </button>
-        <WindowControls onCloseAll={requestCloseAll} />
+        <WindowControls onCloseAll={openPeekCount > 1 ? requestCloseAll : undefined} />
       </div>
 
       {error && (
@@ -486,6 +592,7 @@ export function PeekPanel({
             <DataGrid
               readOnly
               hideValueTooltip
+              stripeTint="violet"
               columns={data.columns}
               rows={data.rows}
               offset={data.offset}
@@ -518,7 +625,6 @@ export function PeekPanel({
               onDeleteRows={hasPrimaryKey ? deleteRows : undefined}
               onCascadePreview={hasPrimaryKey ? previewCascade : undefined}
             />
-            <div className="pointer-events-none absolute inset-0 bg-violet-500/[0.06]" />
           </div>
           {relationsOpen && (
             <RelationsPanel

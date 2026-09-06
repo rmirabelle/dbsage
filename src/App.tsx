@@ -122,7 +122,7 @@ export default function App() {
         await setRowsFilter(tabId, target.column, {
           column: target.column,
           op: "equals",
-          value: target.value,
+          value: target.value ?? "",
         });
         await getCurrentWindow().setFocus();
       } catch {

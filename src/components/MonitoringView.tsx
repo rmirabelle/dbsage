@@ -15,6 +15,7 @@ import { ipc } from "../ipc";
 import { notifyError, notifySuccess } from "../state/notify";
 import { StyledSelect } from "./StyledSelect";
 import { ExpandedPanel } from "./ExpandedPanel";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type {
   ColumnInfo,
   MonitorSample,
@@ -215,6 +216,8 @@ export function MonitoringView({ profileId }: { profileId: string }) {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [hideSleeping, setHideSleeping] = useState(true);
   const [killing, setKilling] = useState<Set<number>>(new Set());
+  /** Connection awaiting kill confirmation. */
+  const [killConfirm, setKillConfirm] = useState<ProcessRow | null>(null);
   /** The process whose full SQL is shown in the Inspector panel, or null. */
   const [inspecting, setInspecting] = useState<ProcessRow | null>(null);
   /** `long_query_time` (the slow-query threshold), formatted; null until read. */
@@ -329,14 +332,10 @@ export function MonitoringView({ profileId }: { profileId: string }) {
     [history]
   );
 
-  const onKill = async (p: ProcessRow) => {
-    const what = p.info?.trim() ? `\n\n${p.info.trim()}` : "";
-    if (
-      !confirm(
-        `Kill connection ${p.id}${p.user ? ` (${p.user})` : ""}?${what}`
-      )
-    )
-      return;
+  const onKill = (p: ProcessRow) => setKillConfirm(p);
+
+  const killNow = async (p: ProcessRow) => {
+    setKillConfirm(null);
     setKilling((s) => new Set(s).add(p.id));
     try {
       await ipc.killProcess(profileId, p.id, false);
@@ -359,6 +358,28 @@ export function MonitoringView({ profileId }: { profileId: string }) {
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
+      {killConfirm && (
+        <ConfirmDialog
+          title="Kill connection"
+          confirmLabel="Kill"
+          message={
+            <div className="space-y-2">
+              <p>
+                Kill connection{" "}
+                <span className="font-semibold text-zinc-100">{killConfirm.id}</span>
+                {killConfirm.user ? ` (${killConfirm.user})` : ""}?
+              </p>
+              {killConfirm.info?.trim() && (
+                <pre className="max-h-40 overflow-auto rounded bg-zinc-950 px-2 py-1.5 font-mono text-[11px] text-zinc-300 whitespace-pre-wrap break-words">
+                  {killConfirm.info.trim()}
+                </pre>
+              )}
+            </div>
+          }
+          onConfirm={() => void killNow(killConfirm)}
+          onCancel={() => setKillConfirm(null)}
+        />
+      )}
       <div
         data-el="monitoring-toolbar"
         data-toolbar="monitoring"

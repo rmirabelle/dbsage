@@ -30,8 +30,10 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { emit } from "@tauri-apps/api/event";
-import { useStore, isDesignerTabDirty } from "../state/store";
+import { emit, listen } from "@tauri-apps/api/event";
+import { useStore, isDesignerTabDirty, peeksReachableFrom } from "../state/store";
+import { PEEKS_CHANGED_EVENT } from "../lib/relatedExistence";
+import { findSameRow } from "../lib/sameRow";
 import { notifyError, notifySuccess } from "../state/notify";
 import { helpHandlers } from "../state/help";
 import { CloseTabConfirmDialog } from "./CloseTabConfirmDialog";
@@ -54,6 +56,7 @@ import { ipc } from "../ipc";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import type {
   CascadeTarget,
+  PeekDescriptor,
   PeekSeed,
   Relation,
   RowsTab,
@@ -585,6 +588,47 @@ export function TabBody({ tab }: { tab: Tab }) {
   return <RowsTabBody tab={tab} />;
 }
 
+/** A peek descriptor reduced to what a saved view compares: no window label,
+ * no null/undefined fields, geometry rounded to whole pixels. */
+function normalizePeek(p: PeekDescriptor): string {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(p)) {
+    if (k === "label" || v == null) continue;
+    out[k] = typeof v === "number" ? Math.round(v) : v;
+  }
+  return JSON.stringify(out, Object.keys(out).sort());
+}
+
+/** Whether the peeks on screen (reachable from `tab`) differ from the ones the
+ * active saved view captured — a different set, a moved/resized window, or a
+ * changed filter/sort/Inspector inside one. */
+function samePeeks(live: PeekDescriptor[], saved: PeekDescriptor[]): boolean {
+  const a = live.map(normalizePeek).sort();
+  const b = saved.map(normalizePeek).sort();
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+/** Table opens (`tabId:openSeq`) whose first cell was already auto-selected.
+ * Module scope so a tab switch (which remounts the body) does not re-select. */
+const autoSelectedTabs = new Set<string>();
+
+/** Whether the tab's current setup differs from its active saved view (sort,
+ * filters, hidden columns, JSON display, column widths, Relations panel). */
+function isViewDirty(tab: RowsTab, relationsOpen: boolean): boolean {
+  const setup = tab.presets.find((p) => p.name === tab.activePreset)?.setup;
+  if (!setup) return false;
+  const same = (a: unknown, b: unknown) =>
+    JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  return (
+    !same(tab.sort, setup.sort) ||
+    !same(tab.filters, setup.filters) ||
+    !same(tab.hiddenColumns, setup.hiddenColumns) ||
+    !same(tab.jsonDisplay, setup.jsonDisplay) ||
+    !same(tab.columnWidths, setup.columnWidths) ||
+    (setup.relationsOpen != null && relationsOpen !== setup.relationsOpen)
+  );
+}
+
 function RowsTabBody({ tab }: { tab: RowsTab }) {
   const setTabPage = useStore((s) => s.setTabPage);
   const setPageSize = useStore((s) => s.setPageSize);
@@ -633,6 +677,35 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const [importOpen, setImportOpen] = useState(false);
   /** The open relation dialog: an existing relation, or null for a new one
    * seeded from `column`. */
+  /* Peek windows live outside this window: re-compare them with the active
+     view's captured peeks whenever Rust reports a peek changed. */
+  const [peeksDirty, setPeeksDirty] = useState(false);
+  const activeSetup = tab.presets.find((p) => p.name === tab.activePreset)?.setup;
+  useEffect(() => {
+    if (!activeSetup) {
+      setPeeksDirty(false);
+      return;
+    }
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const open = await ipc.listOpenPeeks<PeekDescriptor>();
+        if (cancelled) return;
+        const live = peeksReachableFrom(open, tab);
+        setPeeksDirty(!samePeeks(live, activeSetup.peeks ?? []));
+      } catch {
+        /* leave the flag as is */
+      }
+    };
+    void check();
+    const un = listen(PEEKS_CHANGED_EVENT, () => void check());
+    return () => {
+      cancelled = true;
+      un.then((f) => f());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSetup, tab.profileId, tab.database, tab.table]);
+
   const [relDialog, setRelDialog] = useState<{
     relation: Relation | null;
     column: string;
@@ -642,16 +715,49 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
     loadRelations(tab.profileId, tab.database).catch(() => {});
   }, [tab.profileId, tab.database, loadRelations]);
 
-  /** Drop the active cell when the row set actually changes (page / refresh /
-   * sort / filter), but NOT on remount — so switching tabs keeps the selection.
-   * A ref tracks the rows identity seen on the previous render. */
+  /** When the row set changes (page / refresh / sort / filter), follow the
+   * selected row to its new position if it is still present (matched by
+   * primary key, else by every cell), otherwise drop the selection. NOT on
+   * remount — so switching tabs keeps the selection. A ref tracks the rows
+   * identity seen on the previous render. */
   const seenRowsRef = useRef(tab.data?.rows);
   useEffect(() => {
-    if (seenRowsRef.current !== tab.data?.rows) {
-      seenRowsRef.current = tab.data?.rows;
-      setRowsActiveCell(tab.id, null);
-    }
+    const rows = tab.data?.rows;
+    if (seenRowsRef.current === rows) return;
+    const oldRows = seenRowsRef.current;
+    seenRowsRef.current = rows;
+    const cell = tab.activeCell;
+    if (!cell) return;
+    const idx =
+      rows && tab.data
+        ? findSameRow(tab.data.columns, oldRows, cell.rowIndex, rows)
+        : -1;
+    setRowsActiveCell(
+      tab.id,
+      idx >= 0 && tab.data?.columns.some((c) => c.name === cell.column)
+        ? { rowIndex: idx, column: cell.column }
+        : null
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.data?.rows, tab.id, setRowsActiveCell]);
+
+  /* A table with relations defined from it starts with its first cell
+     selected (first row, first visible column), so the Relations panel is
+     active at once. Once per table open (`openSeq`), and only while nothing
+     is selected. */
+  useEffect(() => {
+    const key = `${tab.id}:${tab.openSeq ?? ""}`;
+    if (autoSelectedTabs.has(key)) return;
+    if (!tab.data || tab.data.rows.length === 0) return;
+    if (!relations.some((r) => r.fromTable === tab.table)) return;
+    autoSelectedTabs.add(key);
+    if (tab.activeCell || tab.selectedRows?.length) return;
+    const column = tab.data.columns.find(
+      (c) => !tab.hiddenColumns.includes(c.name)
+    )?.name;
+    if (column) setRowsActiveCell(tab.id, { rowIndex: 0, column });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab.data, relations]);
 
   /** Esc collapses the expanded inspector panel. */
   useEffect(() => {
@@ -717,10 +823,10 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
      source value from that row so open peeks keep following even when the
      clicked cell itself is not a relation source column. */
   useEffect(() => {
-    if (!activeRow) return;
+    /* With no selected row (cleared, or filtered away) every peek is told
+       to show nothing, so none stays open on a row that is no longer here. */
     for (const sourceColumn of peekableColumns) {
-      const value = cellToFilterValue(activeRow[sourceColumn]);
-      if (value == null) continue;
+      const value = activeRow ? cellToFilterValue(activeRow[sourceColumn]) : null;
       emit("dbsage://peek-follow", {
         profileId: tab.profileId,
         database: tab.database,
@@ -733,13 +839,15 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
 
   /** Launch a peek for a relation in its own OS window, placed just below the
    * active cell (screen px). The window persists until closed manually. */
+  /** A NULL / missing source value still opens the peek (matching nothing
+   * yet): it follows later selections, so it can be set up ahead of time. */
   const openPeek = (t: RowRelationTarget) => {
-    if (t.value == null) return;
     const cell = document
       .querySelector('[data-el="main-pane"] [data-active-cell]')
       ?.getBoundingClientRect();
-    const x = window.screenX + (cell ? cell.left : 80);
-    const y = window.screenY + (cell ? cell.bottom + 6 : 120);
+    /* Open just right of the selected cell, top-aligned with it. */
+    const x = window.screenX + (cell ? cell.right + 6 : 80);
+    const y = window.screenY + (cell ? cell.top : 120);
     const seed: PeekSeed = {
       profileId: tab.profileId,
       profileName: tab.profileName,
@@ -747,6 +855,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       target: { table: t.table, column: t.column, value: t.value },
       sourceTable: tab.table,
       sourceColumn: t.sourceColumn,
+      kind: t.relation.kind,
     };
     ipc
       .openPeekWindow(seed, x, y, 900, 440)
@@ -826,7 +935,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         <TableViewPresetMenu
           presets={tab.presets}
           activeName={tab.activePreset}
-          autoOpenKey={`${tab.id}:${tab.openSeq ?? ""}`}
+          dirty={isViewDirty(tab, relationsOpen) || peeksDirty}
           onApply={(name) => applyTablePreset(tab.id, name)}
           onSave={(name) => saveTablePreset(tab.id, name)}
           onDelete={(name) => deleteTablePreset(tab.id, name)}

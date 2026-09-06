@@ -16,7 +16,7 @@ import {
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useStore } from "../state/store";
+import { useStore, isQueryTabDirty } from "../state/store";
 import { notifyError } from "../state/notify";
 import { ipc } from "../ipc";
 import { DataGrid } from "./DataGrid";
@@ -482,6 +482,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         <SavedQueryMenu
           queries={tab.savedQueries}
           activeName={tab.activeSavedQuery}
+          dirty={isQueryTabDirty(tab)}
           disabled={!tab.database}
           autoOpenKey={tab.id}
           onApply={(name) => applySavedQuery(tab.id, name)}
@@ -776,6 +777,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           activeCell={activeCell}
           clearActiveCellOnRowSelect
           resultCopy
+          stripeTint="green"
           onActiveCellChange={setActiveCell}
           onSelectionChange={setSelectedRows}
           onSortChange={setSort}

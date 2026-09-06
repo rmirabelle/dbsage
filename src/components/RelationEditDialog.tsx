@@ -296,6 +296,13 @@ export function RelationEditDialog({
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-4 py-3">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-3 py-1.5 rounded text-[12px] text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50"
+          >
+            Cancel
+          </button>
           {relation && (
             <button
               data-el="relation-dialog-delete"
@@ -311,13 +318,6 @@ export function RelationEditDialog({
               Delete Relation
             </button>
           )}
-          <button
-            onClick={onClose}
-            disabled={busy}
-            className="px-3 py-1.5 rounded text-[12px] text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50"
-          >
-            Cancel
-          </button>
           <button
             data-el="relation-dialog-save"
             onClick={onSave}

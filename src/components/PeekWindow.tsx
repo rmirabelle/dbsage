@@ -17,7 +17,7 @@ interface PeekFollow {
   database: string;
   sourceTable: string;
   sourceColumn: string;
-  value: string;
+  value: string | null;
 }
 
 /**
@@ -96,7 +96,8 @@ export function PeekWindow({ label }: { label: string }) {
   const openChildPeek = (
     target: RelationTarget,
     sourceColumn: string,
-    value: string
+    value: string | null,
+    kind: "has_one" | "has_many"
   ) => {
     if (!seed) return;
     const childSeed: PeekSeed = {
@@ -106,6 +107,7 @@ export function PeekWindow({ label }: { label: string }) {
       target: { table: target.table, column: target.column, value },
       sourceTable: seed.target.table,
       sourceColumn,
+      kind,
     };
     /* Offset from this window so the child doesn't land exactly on top. */
     ipc

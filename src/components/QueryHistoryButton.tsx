@@ -5,6 +5,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import type { QueryHistoryItem } from "../types";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 interface Props {
   items: QueryHistoryItem[];
@@ -72,6 +73,7 @@ function QueryHistoryDialog({
   onClear: () => void;
   onClose: () => void;
 }) {
+  const [clearConfirm, setClearConfirm] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -82,10 +84,7 @@ function QueryHistoryDialog({
 
   const handleClear = () => {
     if (items.length === 0) return;
-    const ok = confirm(
-      `Clear all ${items.length} history entries for this database? This cannot be undone.`
-    );
-    if (ok) onClear();
+    setClearConfirm(true);
   };
 
   return (
@@ -154,6 +153,24 @@ function QueryHistoryDialog({
           )}
         </div>
       </div>
+      {clearConfirm && (
+        <ConfirmDialog
+          title="Clear query history"
+          confirmLabel="Clear"
+          message={
+            <p>
+              Clear all{" "}
+              <span className="font-semibold text-zinc-100">{items.length}</span>{" "}
+              history entries for this database? This cannot be undone.
+            </p>
+          }
+          onConfirm={() => {
+            setClearConfirm(false);
+            onClear();
+          }}
+          onCancel={() => setClearConfirm(false)}
+        />
+      )}
     </div>
   );
 }

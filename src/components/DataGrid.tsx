@@ -36,6 +36,7 @@ import { ColumnHeaderMenu } from "./ColumnHeaderMenu";
 import { Tooltip } from "./Tooltip";
 import { ColumnsVisibilityMenu } from "./ColumnsVisibilityMenu";
 import { RowDeleteConfirmDialog } from "./RowDeleteConfirmDialog";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { FormViewDialog } from "./FormViewDialog";
 import { extractJsonDisplay, extractJsonShowParts } from "../lib/jsonPath";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
@@ -180,6 +181,10 @@ interface Props {
    * header still highlights as filtered, but its menu shows the fixed value
    * instead of filter controls. */
   lockedFilterColumns?: string[];
+  /** Tint the alternating row stripes with a hint of colour — green for
+   * query results, violet for peek windows — so those grids read differently
+   * from a table's rows at a glance. */
+  stripeTint?: "green" | "violet";
   /** Suppress the native hover tooltip showing a cell's full value (used in peek
    * windows, where the value tooltip is noise). */
   hideValueTooltip?: boolean;
@@ -201,6 +206,15 @@ const ROW_HEIGHT = 26;
 /** Peek windows shorter than this grow to it while a column menu is open. */
 const PEEK_MENU_MIN_HEIGHT = 520;
 const MIN_COL_WIDTH = 80;
+
+/** Column types whose content is short enough to size a column to: numbers,
+ * short strings, dates and the like. JSON/TEXT/BLOB families are excluded. */
+function isAutoFitType(dataType: string): boolean {
+  const t = dataType.trim().toLowerCase();
+  return !/^(json|text|tinytext|mediumtext|longtext|blob|tinyblob|mediumblob|longblob|geometry|point|linestring|polygon)/.test(
+    t
+  );
+}
 const MAX_INITIAL_COL_WIDTH = 360;
 const ROW_GUTTER_W = 56; // pinned row-number gutter
 
@@ -285,6 +299,7 @@ export function DataGrid({
   canDuplicateRows = false,
   peekableColumns,
   lockedFilterColumns,
+  stripeTint,
   hideValueTooltip = false,
   onCellContextMenu,
   onCellCopyMenuOpen,
@@ -342,6 +357,11 @@ export function DataGrid({
   const [anchor, setAnchor] = useState<number | null>(null);
   /** Row indices pending a delete confirmation (null = dialog closed). */
   const [deleteConfirm, setDeleteConfirm] = useState<number[] | null>(null);
+  /** A primary-key cell awaiting the user's OK before it becomes editable. */
+  const [pkEditConfirm, setPkEditConfirm] = useState<{
+    rowIndex: number;
+    column: string;
+  } | null>(null);
   const draggingRef = useRef(false);
   const [editing, setEditing] = useState<{ rowIndex: number; column: string } | null>(
     null
@@ -449,6 +469,40 @@ export function DataGrid({
 
   /* On resize completion, report every visible column's width (merged over any
      persisted widths for currently-hidden columns) so the setup survives. */
+  /** Double-clicking a column's resize handle sizes it to its content: the
+   * widest loaded value (or the header), measured in the grid's own font.
+   * Wide-content types (JSON, TEXT, BLOB, …) are left alone. */
+  const autoFitColumn = (index: number) => {
+    const col = visibleColumns[index];
+    if (!col || !isAutoFitType(col.dataType)) return;
+    const font = (el: Element | null, fallback: string) =>
+      el ? getComputedStyle(el).font || fallback : fallback;
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (!ctx) return;
+    ctx.font = font(
+      scrollRef.current?.querySelector('[data-el="grid-cell"]') ?? null,
+      "12px ui-monospace, monospace"
+    );
+    let content = 0;
+    const sample = Math.min(rows.length, 2000);
+    for (let i = 0; i < sample; i++) {
+      const v = rows[i]?.[col.name];
+      const s = v == null ? "NULL" : typeof v === "string" ? v : String(v);
+      content = Math.max(content, ctx.measureText(s).width);
+    }
+    ctx.font = font(
+      scrollRef.current?.querySelector(`[data-column-header="${CSS.escape(col.name)}"]`) ?? null,
+      "600 12px system-ui, sans-serif"
+    );
+    const header = ctx.measureText(col.name).width;
+    const px = Math.min(800, Math.max(MIN_COL_WIDTH, Math.ceil(Math.max(content, header) + 26)));
+    const next = widthsRef.current.slice();
+    next[index] = px;
+    widthsRef.current = next;
+    setWidths(next);
+    handleResizeEnd();
+  };
+
   const handleResizeEnd = () => {
     if (!onColumnWidthsChange) return;
     const next = { ...(columnWidths ?? {}) };
@@ -1033,10 +1087,8 @@ export function DataGrid({
   const beginEdit = (rowIndex: number, col: ColumnInfo) => {
     if (!editable) return;
     if (col.key === "PRI") {
-      const ok = confirm(
-        `"${col.name}" is a primary-key column. Editing it can break foreign-key references and shifts the row's identity.\n\nContinue?`
-      );
-      if (!ok) return;
+      setPkEditConfirm({ rowIndex, column: col.name });
+      return;
     }
     setEditing({ rowIndex, column: col.name });
   };
@@ -1225,7 +1277,14 @@ export function DataGrid({
       data-el="data-grid"
       tabIndex={0}
       onKeyDown={handleGridKeyDown}
-      className="flex-1 overflow-auto bg-zinc-950 select-none focus:outline-none"
+      className={clsx(
+        "flex-1 overflow-auto select-none focus:outline-none",
+        stripeTint === "green"
+          ? "bg-[#22292d]"
+          : stripeTint === "violet"
+          ? "bg-[#272433]"
+          : "bg-zinc-950"
+      )}
       style={{ contain: "strict" }}
     >
       <div style={{ width: totalWidth, minWidth: "100%" }}>
@@ -1243,6 +1302,7 @@ export function DataGrid({
             })
           }
           onResizeEnd={handleResizeEnd}
+          onAutoFitColumn={autoFitColumn}
           sort={sort}
           filterByColumn={filterByColumn}
           jsonDisplay={jsonDisplay}
@@ -1297,13 +1357,30 @@ export function DataGrid({
               }
               const { row, sourceIndex } = entry;
               const isSelected = selectedRows.has(sourceIndex);
-              const stripe = vItem.index % 2 === 0 ? "bg-zinc-950" : "bg-zinc-900/30";
+              const even = vItem.index % 2 === 0;
+              /* Green-tinted stripes are the zinc-950 / #242732 pair nudged
+                 toward emerald — opaque, so they double as the gutter colour. */
+              const stripe =
+                stripeTint === "green"
+                  ? even
+                    ? "bg-[#22292d]"
+                    : "bg-[#262f33]"
+                  : stripeTint === "violet"
+                  ? even
+                    ? "bg-[#272433]"
+                    : "bg-[#2b2838]"
+                  : even
+                  ? "bg-zinc-950"
+                  : "bg-zinc-900/30";
               /* The pinned row-number gutter must be OPAQUE, or columns scrolled
                  underneath it show through. The odd-row stripe (bg-zinc-900/30)
                  is translucent, so the gutter uses its pre-blended opaque
                  equivalent over the zinc-950 grid bg (#242732). */
-              const gutterStripe =
-                vItem.index % 2 === 0 ? "bg-zinc-950" : "bg-[#242732]";
+              const gutterStripe = stripeTint
+                ? stripe
+                : even
+                ? "bg-zinc-950"
+                : "bg-[#242732]";
               return (
                 <div
                   key={vItem.key}
@@ -1536,6 +1613,26 @@ export function DataGrid({
             void copyCellSelection(cellCopyMenu.selection, "JSON")
           }
           onClose={() => setCellCopyMenu(null)}
+        />
+      )}
+
+      {pkEditConfirm && (
+        <ConfirmDialog
+          title="Edit a primary key?"
+          confirmLabel="Edit"
+          danger={false}
+          message={
+            <p>
+              <span className="font-mono text-zinc-100">{pkEditConfirm.column}</span>{" "}
+              is a primary-key column. Editing it can break foreign-key
+              references and changes the row's identity. Continue?
+            </p>
+          }
+          onConfirm={() => {
+            setEditing(pkEditConfirm);
+            setPkEditConfirm(null);
+          }}
+          onCancel={() => setPkEditConfirm(null)}
         />
       )}
 
@@ -1883,6 +1980,7 @@ function HeaderRow({
   widths,
   onResizeColumn,
   onResizeEnd,
+  onAutoFitColumn,
   sort,
   filterByColumn,
   jsonDisplay,
@@ -1895,6 +1993,7 @@ function HeaderRow({
   widths: number[];
   onResizeColumn: (index: number, delta: number) => void;
   onResizeEnd: () => void;
+  onAutoFitColumn: (index: number) => void;
   sort: SortSpec | null;
   filterByColumn: Map<string, ColumnFilter>;
   jsonDisplay: Record<string, string>;
@@ -2025,6 +2124,7 @@ function HeaderRow({
             <ResizeHandle
               onDelta={(delta) => onResizeColumn(i, delta)}
               onEnd={onResizeEnd}
+              onAutoFit={() => onAutoFitColumn(i)}
             />
           </div>
         );
@@ -2053,13 +2153,21 @@ function HeaderRow({
 function ResizeHandle({
   onDelta,
   onEnd,
+  onAutoFit,
 }: {
   onDelta: (delta: number) => void;
   onEnd: () => void;
+  /** Double-click: size the column to its content. */
+  onAutoFit: () => void;
 }) {
   return (
     <div
       data-resize-handle
+      title="Drag to resize · double-click to fit the content"
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onAutoFit();
+      }}
       onPointerDown={(e) => {
         e.preventDefault();
         e.stopPropagation();

@@ -28,6 +28,9 @@ interface Props {
   menuClassName?: string;
   /** Muted text shown in the trigger when no option matches `value`. */
   placeholder?: string;
+  /** Compact trigger: only the current option's icon (or `icon`) and the
+   * caret, no label. The popup still lists full labels. */
+  iconOnly?: boolean;
 }
 
 /**
@@ -46,6 +49,7 @@ export function StyledSelect({
   className,
   menuClassName,
   placeholder,
+  iconOnly = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -133,12 +137,16 @@ export function StyledSelect({
           className
         )}
       >
-        <span className="inline-flex min-w-0 items-center gap-1.5">
-          {icon}
-          <span className={clsx("truncate", !current && placeholder && "text-zinc-500")}>
-            {current?.label ?? placeholder ?? ""}
+        {iconOnly ? (
+          <span className="inline-flex items-center">{icon ?? current?.icon}</span>
+        ) : (
+          <span className="inline-flex min-w-0 items-center gap-1.5">
+            {icon}
+            <span className={clsx("truncate", !current && placeholder && "text-zinc-500")}>
+              {current?.label ?? placeholder ?? ""}
+            </span>
           </span>
-        </span>
+        )}
         <CaretDown size={12} className="shrink-0 opacity-80" />
       </button>
       {open &&

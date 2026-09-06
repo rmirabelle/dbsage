@@ -3,9 +3,18 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State,
-    WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
+    State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+
+/// Broadcast whenever the set of open peeks, one's view state, or one's
+/// position/size changes, so a table view can tell whether its saved peek
+/// layout still matches what's on screen.
+pub const PEEKS_CHANGED_EVENT: &str = "dbsage://peeks-changed";
+
+fn notify_peeks_changed(app: &AppHandle) {
+    let _ = app.emit(PEEKS_CHANGED_EVENT, ());
+}
 
 /**
  * Secondary-window plumbing for tear-off tabs and independent peek windows.
@@ -106,6 +115,7 @@ fn peek_identity(v: &Value) -> Option<[String; 6]> {
 /// is the peek descriptor (`{ profileId, profileName, database, target,
 /// sourceTable, sourceColumn }`). Registered in `AppState.peeks` until closed.
 /// If an identical peek is already open it is focused instead of duplicated.
+/// A peek never remembers its own size or position: only a saved View does.
 #[tauri::command]
 pub async fn open_peek_window(
     app: AppHandle,
@@ -161,14 +171,18 @@ pub async fn open_peek_window(
     let _ = win.set_position(LogicalPosition::new(x, y));
     let on_close = app.clone();
     let lbl = label.clone();
-    win.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Destroyed) {
+    win.on_window_event(move |event| match event {
+        WindowEvent::Destroyed => {
             if let Some(state) = on_close.try_state::<AppState>() {
                 state.peeks.lock().unwrap().remove(&lbl);
                 state.window_seeds.lock().unwrap().remove(&lbl);
             }
+            notify_peeks_changed(&on_close);
         }
+        WindowEvent::Moved(_) | WindowEvent::Resized(_) => notify_peeks_changed(&on_close),
+        _ => {}
     });
+    notify_peeks_changed(&app);
     Ok(())
 }
 
@@ -208,7 +222,12 @@ pub fn list_open_peeks(app: AppHandle, state: State<'_, AppState>) -> Vec<Value>
 /// whose keys overwrite the stored ones. No-op if the peek isn't registered
 /// (already closed).
 #[tauri::command]
-pub fn set_peek_state(state: State<'_, AppState>, label: String, patch: Value) {
+pub fn set_peek_state(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    label: String,
+    patch: Value,
+) {
     let Value::Object(fields) = patch else {
         return;
     };
@@ -222,6 +241,7 @@ pub fn set_peek_state(state: State<'_, AppState>, label: String, patch: Value) {
             m.insert(k, v);
         }
     }
+    notify_peeks_changed(&app);
 }
 
 /// Open the Help library in its own window (or focus it if already open), so
@@ -309,15 +329,30 @@ pub fn arrange_peeks(app: AppHandle, state: State<'_, AppState>) {
     let base_rows = n / cols;
     let extra = n % cols;
 
+    /* A has-one peek reported the height that shows its single row (CSS px):
+       keep it at that height and share the rest among the other peeks. */
+    let fixed_height = |label: &str| -> Option<i32> {
+        let registry = state.peeks.lock().unwrap();
+        let compact = registry.get(label)?.get("compactHeight")?.as_f64()?;
+        let scale = app.get_webview_window(label)?.scale_factor().ok()?;
+        Some((compact * scale).round() as i32)
+    };
+
     let mut next = 0usize;
     let mut col_x = start_x;
     for c in 0..cols {
         let rows = base_rows + if c < extra { 1 } else { 0 };
-        /* Share the main window's height evenly; the first rows absorb the
-           rounding remainder so the last bottom lands exactly on main's. */
-        let avail = main_h - GAP * (rows - 1);
-        let base_h = avail / rows;
-        let rem = avail % rows;
+        let col_labels: Vec<&String> = labels[next..next + rows as usize].iter().collect();
+        let fixed: Vec<Option<i32>> = col_labels.iter().map(|l| fixed_height(l)).collect();
+        let fixed_total: i32 = fixed.iter().flatten().sum();
+        let flex_count = fixed.iter().filter(|f| f.is_none()).count() as i32;
+        /* Share the main window's remaining height evenly among the flexible
+           peeks; the first ones absorb the rounding remainder so the last
+           bottom lands exactly on main's. */
+        let avail = (main_h - GAP * (rows - 1) - fixed_total).max(MIN_H * flex_count);
+        let base_h = if flex_count > 0 { avail / flex_count } else { 0 };
+        let rem = if flex_count > 0 { avail % flex_count } else { 0 };
+        let mut flex_seen = 0;
         let mut y = top;
         let mut col_width = 0;
         for r in 0..rows {
@@ -330,7 +365,14 @@ pub fn arrange_peeks(app: AppHandle, state: State<'_, AppState>) {
             if win.is_maximized().unwrap_or(false) {
                 let _ = win.unmaximize();
             }
-            let h = base_h + if r < rem { 1 } else { 0 };
+            let h = match fixed[r as usize] {
+                Some(fh) => fh,
+                None => {
+                    let h = base_h + if flex_seen < rem { 1 } else { 0 };
+                    flex_seen += 1;
+                    h
+                }
+            };
             let w = win.inner_size().map(|s| s.width as i32).unwrap_or(0);
             /* set_position moves the outer (frame) rect; we want the visible
                client rect at (col_x, y), so subtract the frame inset. */
