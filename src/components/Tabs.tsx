@@ -99,18 +99,20 @@ export function tabTitle(tab: Tab): string {
 }
 
 /**
- * Render-prop wrapper that makes a tab both draggable (to reorder tabs) and a
+ * Render-prop wrapper that makes a tab draggable (to reorder or tear off) and a
  * drop target (the tab another tab lands on). Drops are handled by
- * `TabDndProvider` (source "tab" → `reorderTabs`).
+ * `TabDndProvider`, using the pointer's position relative to the tab bar.
  */
 function TabReorderSlot({
   tabId,
   label,
+  onTearOff,
   index,
   children,
 }: {
   tabId: string;
   label: string;
+  onTearOff?: () => void;
   index: number;
   children: (p: {
     setNodeRef: (el: HTMLElement | null) => void;
@@ -122,10 +124,12 @@ function TabReorderSlot({
   const tabs = useStore((s) => s.tabs);
   const drag = useDraggable({
     id: `tab-drag:${tabId}`,
-    data: { source: "tab", tabId, label },
+    disabled: tabs.length < 2 && !onTearOff,
+    data: { source: "tab", tabId, label, onTearOff },
   });
   const drop = useDroppable({
     id: `tab-drop:${tabId}`,
+    disabled: tabs.length < 2,
     data: { kind: "tab-slot", tabId },
   });
   const setNodeRef = (el: HTMLElement | null) => {
@@ -346,6 +350,7 @@ export function Tabs() {
                 key={tab.id}
                 tabId={tab.id}
                 label={tabTitle(tab)}
+                onTearOff={tab.kind !== "database" ? () => tearOff(tab) : undefined}
                 index={index}
               >
                 {({ setNodeRef, listeners, dropEdge, isDragging }) => (
@@ -426,20 +431,6 @@ export function Tabs() {
                     </span>
                   ))}
                 </div>
-                {tab.kind !== "database" && (
-                  <button
-                    data-el="tab-popout-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      tearOff(tab);
-                    }}
-                    className="ml-1 p-0.5 rounded text-zinc-500 hover:text-accent-300 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition"
-                    aria-label="Open in new window"
-                    title="Open in new window"
-                  >
-                    <ArrowSquareOut size={14} />
-                  </button>
-                )}
                 <button
                   data-el="tab-close-btn"
                   onClick={(e) => {

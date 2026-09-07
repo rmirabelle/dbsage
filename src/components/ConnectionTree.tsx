@@ -1163,7 +1163,7 @@ function DbContextMenu({
         onClick={onCompareSchema}
       >
         <GitDiff size={14} className="text-amber-400 shrink-0" />
-        Compare Schema…
+        Compare DB Schemas…
       </button>
       <div className="my-1 border-t border-zinc-800" />
       <button

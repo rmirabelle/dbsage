@@ -3,7 +3,7 @@ import clsx from "clsx";
 
 /**
  * A textarea that renders as a single line when blurred (overflow clipped with
- * an ellipsis) and grows to fit its full content while focused. Used for the
+ * an ellipsis) and grows while focused, scrolling at an optional height cap. Used for the
  * column Comment field and the JSON "Show" path field.
  */
 export function AutoGrowTextarea({
@@ -13,12 +13,14 @@ export function AutoGrowTextarea({
   placeholder,
   dataEl,
   onKeyDown,
+  maxHeight,
 }: {
   value: string;
   onChange: (value: string) => void;
   className?: string;
   placeholder?: string;
   dataEl?: string;
+  maxHeight?: number;
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -31,12 +33,12 @@ export function AutoGrowTextarea({
       /* While editing, grow to fit the full content. */
       el.style.height = "auto";
       const border = el.offsetHeight - el.clientHeight;
-      el.style.height = `${el.scrollHeight + border}px`;
+      el.style.height = `${Math.min(el.scrollHeight + border, maxHeight ?? Infinity)}px`;
     } else {
       /* Collapsed: a single line (the `min-h-8` class height), overflow clipped. */
       el.style.height = "";
     }
-  }, [value, focused]);
+  }, [value, focused, maxHeight]);
 
   return (
     <textarea
@@ -51,7 +53,8 @@ export function AutoGrowTextarea({
       placeholder={placeholder}
       className={clsx(
         className,
-        "min-h-8 resize-none overflow-hidden",
+        "min-h-8 resize-none",
+        focused && maxHeight ? "overflow-y-auto" : "overflow-hidden",
         !focused && "whitespace-nowrap text-ellipsis"
       )}
     />

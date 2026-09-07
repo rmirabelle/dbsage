@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Copy,
   X,
@@ -13,6 +13,8 @@ import clsx from "clsx";
 import { useUi, PANEL_BOUNDS } from "../state/ui";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { JsonTreeView } from "./JsonTreeView";
+import { InspectorTextBackdrop } from "./InspectorTextBackdrop";
+import { matchOffsets } from "../lib/jsonTreeModel";
 import type { ColumnInfo } from "../types";
 
 interface Props {
@@ -89,6 +91,15 @@ export function ExpandedPanel({
 
   const [text, setText] = useState(initialText);
   const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const searchPending = search !== appliedSearch;
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAppliedSearch(search);
+      setActiveMatch(0);
+    }, search ? 140 : 0);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [activeMatch, setActiveMatch] = useState(0);
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -98,7 +109,6 @@ export function ExpandedPanel({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
-  const activeMatchRef = useRef<HTMLElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   /** Reset the editor text whenever the inspected value changes. */
@@ -172,36 +182,16 @@ export function ExpandedPanel({
     }
   };
 
-  const matches = useMemo(() => findMatches(text, search), [text, search]);
+  const lowerText = useMemo(() => text.toLowerCase(), [text]);
+  const matches = useMemo(() => matchOffsets(lowerText, appliedSearch.toLowerCase()), [lowerText, appliedSearch]);
   const matchCount = matches.length;
   const activeIndex =
     matchCount > 0 ? ((activeMatch % matchCount) + matchCount) % matchCount : 0;
 
-  const highlighted = useMemo(
-    () =>
-      renderHighlight(text, matches, search.length, activeIndex, activeMatchRef),
-    [text, matches, activeIndex, search.length]
-  );
-
-  /** Reset to the first match whenever the search term changes. */
-  useEffect(() => {
-    setActiveMatch(0);
-  }, [search]);
-
   const gotoMatch = (delta: number) => {
-    if (matchCount === 0) return;
+    if (matchCount === 0 || searchPending) return;
     setActiveMatch((m) => m + delta);
   };
-
-  /** Scroll the active match into view in the textarea. */
-  useLayoutEffect(() => {
-    const ta = textareaRef.current;
-    const mark = activeMatchRef.current;
-    if (!ta || !mark || matchCount === 0) return;
-    const target = Math.max(0, mark.offsetTop - 8);
-    ta.scrollTop = target;
-    if (backdropRef.current) backdropRef.current.scrollTop = target;
-  }, [activeIndex, matchCount, search]);
 
   const syncScroll = () => {
     const ta = textareaRef.current;
@@ -393,16 +383,18 @@ export function ExpandedPanel({
               column && isJsonColumn && "border-r border-zinc-800"
             )}
           >
-            <div
-              ref={backdropRef}
-              aria-hidden="true"
+            <InspectorTextBackdrop
+              backdropRef={backdropRef}
+              textareaRef={textareaRef}
+              text={column ? text : ""}
+              matches={matches}
+              queryLength={appliedSearch.length}
+              activeIndex={activeIndex}
               className={clsx(
                 "absolute inset-0 overflow-hidden text-zinc-200 select-none pointer-events-none",
                 layerClass
               )}
-            >
-              {column ? highlighted : null}
-            </div>
+            />
             <textarea
               ref={textareaRef}
               data-el="expanded-editor"
@@ -433,7 +425,7 @@ export function ExpandedPanel({
               <JsonTreeView
                 key={`${column?.name ?? ""}:${rowOrdinal ?? ""}`}
                 data={treeData}
-                search={search}
+                search={appliedSearch}
                 activeIndex={activeIndex}
               />
             ) : (
@@ -491,7 +483,7 @@ export function ExpandedPanel({
           )}
         </div>
         {search &&
-          (matchCount > 0 ? (
+          (searchPending ? <span className="text-[10px] text-zinc-500" role="status">Searching…</span> : matchCount > 0 ? (
             <div className="flex items-center gap-0.5 shrink-0 text-zinc-400">
               <button
                 data-el="search-prev-btn"
@@ -551,62 +543,6 @@ export function ExpandedPanel({
       </div>
     </div>
   );
-}
-
-/** Start offsets of every case-insensitive occurrence of `query` in `text`. */
-function findMatches(text: string, query: string): number[] {
-  if (!query) return [];
-  const lower = text.toLowerCase();
-  const q = query.toLowerCase();
-  const out: number[] = [];
-  let idx = lower.indexOf(q, 0);
-  while (idx !== -1) {
-    out.push(idx);
-    idx = lower.indexOf(q, idx + q.length);
-  }
-  return out;
-}
-
-/**
- * Render the highlight backdrop: the value text with each match wrapped in a
- * <mark>. The active match gets a stronger highlight and its element is
- * captured in `activeRef` so it can be scrolled into view.
- */
-function renderHighlight(
-  text: string,
-  matches: number[],
-  qLen: number,
-  activeIndex: number,
-  activeRef: React.MutableRefObject<HTMLElement | null>
-): React.ReactNode {
-  if (matches.length === 0 || qLen === 0) return text;
-  const nodes: React.ReactNode[] = [];
-  let from = 0;
-  matches.forEach((start, i) => {
-    if (start > from) nodes.push(text.slice(from, start));
-    const isActive = i === activeIndex;
-    nodes.push(
-      <mark
-        key={start}
-        ref={
-          isActive
-            ? (el) => {
-                activeRef.current = el;
-              }
-            : undefined
-        }
-        className={clsx(
-          "rounded-[1px] bg-lime-400 text-black",
-          isActive && "ring-2 ring-black"
-        )}
-      >
-        {text.slice(start, start + qLen)}
-      </mark>
-    );
-    from = start + qLen;
-  });
-  if (from < text.length) nodes.push(text.slice(from));
-  return nodes;
 }
 
 function formatValue(

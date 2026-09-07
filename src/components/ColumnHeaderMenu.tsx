@@ -9,11 +9,13 @@ import {
   LockSimple,
   ShareNetwork,
   CalendarBlank,
+  ArrowsOutSimple,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
-import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { DateTimePicker, dateModeFor, type DateMode } from "./DateTimePicker";
 import { COMPARE_OPS } from "../types";
+import { validateJsonShow } from "../lib/jsonPath";
+import { JsonShowEditorDialog } from "./JsonShowEditorDialog";
 import type {
   ColumnFilter,
   FilterOp,
@@ -31,6 +33,8 @@ interface Props {
   currentSort: SortSpec | null;
   currentFilter: ColumnFilter | null;
   currentJsonShow: string | null;
+  previewRows?: Record<string, unknown>[];
+  previewRowIndex?: number;
   onClose: () => void;
   onSort: (direction: SortDirection | null) => void;
   onFilter: (filter: ColumnFilter | null) => void;
@@ -56,6 +60,8 @@ export function ColumnHeaderMenu({
   currentSort,
   currentFilter,
   currentJsonShow,
+  previewRows = [],
+  previewRowIndex = 0,
   onClose,
   onSort,
   onFilter,
@@ -92,18 +98,21 @@ export function ColumnHeaderMenu({
   );
   const [jsonPath, setJsonPath] = useState(currentFilter?.jsonPath ?? "");
   const [showPath, setShowPath] = useState(currentJsonShow ?? "");
+  const [showEditor, setShowEditor] = useState(false);
+  const showError = validateJsonShow(showPath);
   const ref = useRef<HTMLDivElement>(null);
 
   /** The displayed (extracted) property is independent of the filter property,
    *  and updates the column live as the user types. */
   const onShowChange = (v: string) => {
     setShowPath(v);
-    onJsonShow(v.trim() ? v.trim() : null);
+    if (!validateJsonShow(v)) onJsonShow(v.trim() ? v.trim() : null);
   };
 
   const showActive = showPath.trim().length > 0;
 
   useEffect(() => {
+    if (showEditor) return;
     const onMouseDown = (e: MouseEvent) => {
       if (!ref.current) return;
       const target = e.target as HTMLElement | null;
@@ -127,7 +136,7 @@ export function ColumnHeaderMenu({
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("keydown", onKey);
     };
-  }, [onClose]);
+  }, [onClose, showEditor]);
 
   const left = Math.max(8, Math.min(window.innerWidth - MENU_WIDTH - 8, anchor.x));
   const top = Math.max(8, Math.min(window.innerHeight - 24, anchor.y));
@@ -167,6 +176,15 @@ export function ColumnHeaderMenu({
     onFilter(v ? { column, op: compareOp, value: v } : null);
     onClose();
   };
+
+  if (showEditor) return <JsonShowEditorDialog
+    column={column}
+    initialValue={showPath}
+    rows={previewRows}
+    initialRowIndex={previewRowIndex}
+    onClose={() => setShowEditor(false)}
+    onApply={(value) => { onShowChange(value); setShowEditor(false); onClose(); }}
+  />;
 
   return createPortal(
     <div
@@ -225,14 +243,17 @@ export function ColumnHeaderMenu({
             >
               Show
             </span>
-            <AutoGrowTextarea
-              dataEl="json-show-input"
-              value={showPath}
-              placeholder="key · or a, b, c for several"
-              onChange={onShowChange}
+            <input
+              type="text"
+              data-el="json-show-input"
+              aria-label="JSON SHOW expression"
+              value={showPath.replace(/[\r\n]+/g, " ")}
+              placeholder="path AS Label, another.path"
+              onChange={(event) => onShowChange(event.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
+                  if (showError) return;
                   onShowChange(showPath);
                   onClose();
                 }
@@ -242,11 +263,22 @@ export function ColumnHeaderMenu({
                 showActive ? "border-2 border-emerald-500" : "border border-zinc-700"
               )}
             />
+            <button
+              type="button"
+              data-el="json-show-expand"
+              title="Expand expression editor"
+              aria-label="Expand expression editor"
+              onClick={() => setShowEditor(true)}
+              className="ml-1 shrink-0 self-start rounded p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+            ><ArrowsOutSimple size={16} /></button>
           </div>
+          {showError && <p role="alert" className="text-xs text-red-400">{showError}</p>}
           <p className="text-[11px] leading-snug text-zinc-500">
             Dotted path. Use{" "}
             <span className="font-mono text-zinc-400">arr[key=value].field</span>{" "}
-            to target a matching element; comma-separate for several.
+            to target a matching element; comma-separate for several. Add AS Label
+            to name a value, or + ' ' + to join values.
+            {" "}Use <span className="font-mono text-zinc-400">[name LIKE 'eTimes%']</span> for wildcard matching.
           </p>
         </div>
       )}

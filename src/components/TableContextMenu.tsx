@@ -93,7 +93,7 @@ export function TableContextMenu({
             onClick={onCompareSchema}
           >
             <GitDiff size={16} className="text-amber-400 shrink-0" />
-            Compare Schema…
+            Compare Table Schemas…
           </button>
         </>
       )}

@@ -1529,6 +1529,8 @@ export function DataGrid({
           currentSort={sort}
           currentFilter={filterByColumn.get(menu.column) ?? null}
           currentJsonShow={jsonDisplay[menu.column] ?? null}
+          previewRows={rows}
+          previewRowIndex={activeCell?.rowIndex ?? selectedRows.values().next().value ?? 0}
           onClose={() => setMenu(null)}
           onSort={(direction: SortDirection | null) =>
             onSortChange(direction ? { column: menu.column, direction } : null)

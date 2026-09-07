@@ -294,7 +294,7 @@ export const HELP_GROUPS: HelpGroup[] = [
                   "New Database is available from a connection's context menu.",
                   "Backup Database writes a DB Sage backup file and shows progress.",
                   "Restore Database restores into a safe copy first; review it before choosing Make Live.",
-                  "Compare Schema compares whole databases and expands any changed table to show its column and index differences in place.",
+                  "Compare DB Schemas compares whole databases and expands any changed table to show its column and index differences in place.",
                   "Drop Database is destructive and always requires confirmation.",
                 ],
               },
@@ -561,7 +561,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               {
                 type: "steps",
                 items: [
-                  "Right-click a database and choose Compare Schema, or use Compare Schema on a table for a focused comparison.",
+                  "Right-click a database and choose Compare DB Schemas, or use Compare Table Schemas on a table for a focused comparison.",
                   "Set both sides. Each card has its own connection, database, and (for a table compare) table, so any two tables or databases can be compared, even across connections.",
                   "Choose Compare. The result opens in a Diff tab.",
                 ],
@@ -881,15 +881,15 @@ export const HELP_GROUPS: HelpGroup[] = [
         summary: "Search, filter, extract, inspect, and edit large or structured values.",
         sections: [
           {
-            title: "JSON-aware tools",
+            title: "Filter rows or customize the JSON display",
             blocks: [
               {
                 type: "bullets",
                 items: [
-                  "Filter a JSON column by a property and value, including paths inside arrays of objects.",
-                  "Use Show to display one or more extracted JSON properties inline instead of the raw document.",
-                  "Select a cell and open Inspector for a large editable text view beside a collapsible JSON tree.",
-                  "Search inside the Inspector and move through matches in both the text and tree panes.",
+                  "Open a JSON column’s menu to filter rows by a property and value, or use SHOW to choose which values appear inside that column’s cells.",
+                  "SHOW changes the display, not the stored JSON or the rows returned by the query. Editing and Inspector continue to use the original document.",
+                  "The SHOW field stays on one line. Valid edits there update the display immediately; invalid expressions show an error and leave the last valid display applied. Clear SHOW to display the original JSON again.",
+                  "JSON display choices are included when you save a Table View.",
                 ],
               },
               shot(
@@ -898,6 +898,84 @@ export const HELP_GROUPS: HelpGroup[] = [
                 "Enter a JSON path to filter or show extracted values in the grid. Inspector keeps the stored JSON editable beside a collapsible tree, and its search remains active as you select other rows.",
                 "wide"
               ),
+            ],
+          },
+          {
+            title: "Edit long SHOW expressions",
+            blocks: [
+              {
+                type: "steps",
+                items: [
+                  "Choose the expand button beside SHOW to open Edit JSON display. Drag its header to move it, or drag its resize corner for more space.",
+                  "Type or paste into Expressions. Separate display expressions with commas; newlines can spread a long expression across several lines without starting a new expression.",
+                  "Check Preview against the current row. Use its previous and next buttons to try other loaded rows. With no loaded rows, you can still write and apply valid expressions.",
+                  "Use the Expression guide below the panels for examples and notes. Validation appears below Expressions; correct any syntax error before applying.",
+                  "Choose Apply to update the column and close both the editor and the column menu, revealing the result. Cancel or Escape discards changes made in the editor and returns to the column menu.",
+                ],
+              },
+            ],
+          },
+          {
+            title: "Paths, arrays, and first matches",
+            blocks: [
+              {
+                type: "bullets",
+                items: [
+                  "first_name — display the document’s first_name property. Use dotted paths such as address.city for nested properties.",
+                  "[prop=x].prop2 — in a root JSON array, find items whose prop equals x and display each matching item’s prop2.",
+                  "things[prop=x].prop2 — search the named things array and display prop2 from each matching item. The = selector matches the value exactly.",
+                  "items[0].date — display the date of the first item in items. Array indices start at zero.",
+                  "[category=favorites][0].name — find the first item in a root array whose category equals favorites, then display its name.",
+                  "[category=favorites].0.name — the older dotted index syntax still works. You can also chain bracket indices, such as items[0][1].name, for nested arrays.",
+                  "When a path returns multiple values, SHOW joins them with a middle dot ( · ). A path with no matching value displays no extracted value.",
+                ],
+              },
+            ],
+          },
+          {
+            title: "Aliases and joined values",
+            blocks: [
+              {
+                type: "bullets",
+                items: [
+                  "prop AS test — display the result as test: {prop value}. AS applies to the expression immediately before it.",
+                  "first AS First, last AS Last — display two independently labeled values. Without an alias, a single expression shows only its value; multiple expressions use their paths or expressions as labels.",
+                  "first + ' ' + last AS Name — join first and last with a literal space and label the result, for example Name: Jane Smith.",
+                  "The + operator joins text; it does not perform arithmetic. Missing or null values contribute empty text inside a joined expression. Literal spaces remain, even if a neighboring value is missing.",
+                  'first AS "Name, First" — quote an alias containing a comma. Single or double quotes can enclose literal text and aliases; commas and + inside quoted text are literal characters.',
+                ],
+              },
+            ],
+          },
+          {
+            title: "LIKE and NOT LIKE in SHOW",
+            blocks: [
+              {
+                type: "bullets",
+                items: [
+                  "items[name LIKE 'report%'].name — display names that start with report. LIKE matches the whole value, so use % where additional characters are allowed.",
+                  "items[name LIKE '%report%'].name — display names containing report anywhere.",
+                  "items[name LIKE 'report_'].name — display names with exactly one character after report. The underscore matches any single character, not just a digit.",
+                  "items[name NOT LIKE 'report%'].name — display names that do not start with report.",
+                  "Patterns must be quoted. Matching is case-sensitive: Report and report are different. Use \\% or \\_ for a literal percent sign or underscore. The = selector always treats these characters literally.",
+                  "LIKE and NOT LIKE exclude missing, null, object, and array values. They work with indexing, aliases, and joined expressions, for example items[name LIKE 'report%'][0].name AS First Report.",
+                ],
+              },
+            ],
+          },
+          {
+            title: "Inspect, search, and edit values",
+            blocks: [
+              {
+                type: "bullets",
+                items: [
+                  "Select a cell and open Inspector. JSON columns have a raw text editor beside a collapsible tree; read-only query results show the JSON tree without the raw editor. Copy uses the original value, not its SHOW display.",
+                  "Search matches are highlighted after a brief pause in typing. Use the previous and next buttons, Enter, or Shift+Enter to move through matches. The active match scrolls near the top where the available content allows.",
+                  "Searching expands the tree to expose matches. Clear the search to return to the tree’s previous expanded and collapsed state. Search remains active as you select other rows in the same column; switching columns clears it.",
+                  "Large JSON trees display visible rows as you scroll. Search still covers the full document, including content outside the visible area.",
+                  "For an editable table cell, change the raw text and choose Save to write the value back. Read-only values retain Copy and Search.",
+                ],
+              },
             ],
           },
         ],
@@ -1264,7 +1342,10 @@ export const HELP_GROUPS: HelpGroup[] = [
                   "Drag the vertical splitter to resize the connection sidebar.",
                   "Zoom applies independently to the sidebar or main pane, based on the last pane you focused.",
                   "Ctrl+W closes the active tab. Unsaved designer tabs ask before closing.",
-                  "Right-click a tab for close options; use the pop-out button when a comparison or query deserves its own window.",
+                  "With more than one tab open, drag within the tab bar to reorder tabs. The drag indicator shows Reorder: followed by the tab’s name.",
+                  "Drag a table, query, or comparison tab outside the tab bar and release to open it in a new window. The indicator changes to Open {tab name} in a new window. A single tab can still be detached.",
+                  "Database View tabs stay in the main window. They can be reordered when other tabs are open, but cannot be detached; a lone Database View tab cannot be dragged.",
+                  "Right-click a tab for close options or choose Open in New Window when a comparison or query deserves its own window.",
                 ],
               },
             ],

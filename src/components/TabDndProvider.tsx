@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   DndContext,
@@ -10,7 +10,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Table as Table2, PlugsConnected, Tabs } from "@phosphor-icons/react";
+import { Table as Table2, PlugsConnected } from "@phosphor-icons/react";
 import { useStore } from "../state/store";
 import { useUi } from "../state/ui";
 
@@ -26,7 +26,16 @@ type DragData =
     }
   | { source: "tree"; profileId: string; db: string; table: string }
   | { source: "connection"; profileId: string; name: string }
-  | { source: "tab"; tabId: string; label: string };
+  | { source: "tab"; tabId: string; label: string; onTearOff?: () => void };
+
+/** Use pointer coordinates and the whole bar, including its empty space. */
+function isOutsideTabBar(point: { x: number; y: number } | null): boolean {
+  const rect = document.querySelector('[data-el="tab-bar"]')?.getBoundingClientRect();
+  return !!point && !!rect && (
+    point.x < rect.left || point.x > rect.right ||
+    point.y < rect.top || point.y > rect.bottom
+  );
+}
 
 /** What a drop target advertises (read off the droppable's data). */
 type OverData =
@@ -49,11 +58,30 @@ export function TabDndProvider({ children }: { children: ReactNode }) {
   const setTablesFolder = useStore((s) => s.setTablesFolder);
   const assignTableFolder = useStore((s) => s.assignTableFolder);
   const openTableCopyPrompt = useUi((s) => s.openTableCopyPrompt);
+  const canReorderTabs = useStore((s) => s.tabs.length > 1);
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const tabDrag = useRef<Extract<DragData, { source: "tab" }> | null>(null);
+  const [outsideTabBar, setOutsideTabBar] = useState(false);
+
+  useEffect(() => {
+    const trackPointer = (event: PointerEvent) => {
+      pointer.current = { x: event.clientX, y: event.clientY };
+      if (tabDrag.current) setOutsideTabBar(isOutsideTabBar(pointer.current));
+    };
+    /** Capture the release position before dnd-kit's drag-end handler runs. */
+    document.addEventListener("pointermove", trackPointer, true);
+    document.addEventListener("pointerup", trackPointer, true);
+    return () => {
+      document.removeEventListener("pointermove", trackPointer, true);
+      document.removeEventListener("pointerup", trackPointer, true);
+    };
+  }, []);
 
   const [drag, setDrag] = useState<{
     label: string;
     count: number;
     kind: "table" | "connection" | "tab";
+    canTearOff?: boolean;
   } | null>(null);
 
   const sensors = useSensors(
@@ -63,27 +91,37 @@ export function TabDndProvider({ children }: { children: ReactNode }) {
   const onDragStart = (e: DragStartEvent) => {
     const a = e.active.data.current as DragData | undefined;
     if (!a) return;
+    tabDrag.current = a.source === "tab" ? a : null;
+    setOutsideTabBar(isOutsideTabBar(pointer.current));
     if (a.source === "dbview")
       setDrag({ label: a.grabbed, count: a.names.length, kind: "table" });
     else if (a.source === "connection")
       setDrag({ label: a.name, count: 1, kind: "connection" });
     else if (a.source === "tab")
-      setDrag({ label: a.label, count: 1, kind: "tab" });
+      setDrag({ label: a.label, count: 1, kind: "tab", canTearOff: !!a.onTearOff });
     else setDrag({ label: a.table, count: 1, kind: "table" });
   };
 
   const onDragEnd = (e: DragEndEvent) => {
     setDrag(null);
+    tabDrag.current = null;
     const a = e.active.data.current as DragData | undefined;
     const o = e.over?.data.current as OverData | undefined;
-    if (!a || !o) return;
+    if (!a) return;
 
     if (a.source === "tab") {
-      if (o.kind === "tab-slot" && o.tabId !== a.tabId) {
-        useStore.getState().reorderTabs(a.tabId, o.tabId);
+      const state = useStore.getState();
+      const tab = state.tabs.find((t) => t.id === a.tabId);
+      if (!tab) return;
+      if (isOutsideTabBar(pointer.current)) {
+        if (tab.kind !== "database") a.onTearOff?.();
+      } else if (state.tabs.length > 1 && o?.kind === "tab-slot" && o.tabId !== a.tabId) {
+        state.reorderTabs(a.tabId, o.tabId);
       }
       return;
     }
+
+    if (!o) return;
 
     if (a.source === "connection") {
       if (o.kind === "connection-row" && o.profileId !== a.profileId) {
@@ -133,21 +171,30 @@ export function TabDndProvider({ children }: { children: ReactNode }) {
       collisionDetection={pointerWithin}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      onDragCancel={() => setDrag(null)}
+      onDragCancel={() => {
+        tabDrag.current = null;
+        setDrag(null);
+      }}
     >
       {children}
       {createPortal(
         <DragOverlay dropAnimation={null}>
-          {drag ? (
-            <div className="inline-flex items-center gap-2 rounded border border-accent-500/60 bg-zinc-900/95 px-2.5 py-1 text-xs text-zinc-100 shadow-xl shadow-black/60">
+          {drag && (drag.kind !== "tab" || (outsideTabBar ? drag.canTearOff : canReorderTabs)) ? (
+            <div className="inline-flex items-center gap-2 whitespace-nowrap rounded border border-accent-500/60 bg-zinc-900/95 px-2.5 py-1 text-xs text-zinc-100 shadow-xl shadow-black/60">
               {drag.kind === "connection" ? (
                 <PlugsConnected size={13} className="text-accent-400 shrink-0" />
-              ) : drag.kind === "tab" ? (
-                <Tabs size={13} className="text-accent-400 shrink-0" />
-              ) : (
+              ) : drag.kind !== "tab" ? (
                 <Table2 size={13} className="text-accent-400 shrink-0" />
-              )}
-              {drag.label}
+              ) : null}
+              {drag.kind === "tab" ? (
+                <span>
+                  {outsideTabBar && drag.canTearOff ? (
+                    <>Open {drag.label} in a new window</>
+                  ) : (
+                    <><span className="text-zinc-500">Reorder:</span> {drag.label}</>
+                  )}
+                </span>
+              ) : drag.label}
               {drag.count > 1 && (
                 <span className="rounded-full bg-accent-500/20 text-accent-200 px-1.5 text-[10px] font-semibold tabular-nums">
                   {drag.count}
