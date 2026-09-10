@@ -64,6 +64,7 @@ import type {
 } from "../types";
 import {
   peekableColumnsFor,
+  rowRelationTargets,
   type RowRelationTarget,
 } from "../lib/relations";
 import { previewCascadeTargets } from "../lib/rowDelete";
@@ -988,6 +989,15 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           onFilterChange={(column, filter) =>
             setRowsFilter(tab.id, column, filter)
           }
+          onOpenRelation={(column, target) => {
+            const rel = relations.find((r) =>
+              r.fromTable === tab.table && r.fromColumn === column &&
+              r.toTable === target.table && r.toColumn === target.column);
+            const rowTarget = rel && relationsRow
+              ? rowRelationTargets(relations, tab.table, column, relationsRow, false).find((t) => t.relation.id === rel.id)
+              : undefined;
+            if (rowTarget) toggleRelationPeek(rowTarget, true); else showPeekPanel();
+          }}
           onHiddenColumnsChange={(hidden) => setHiddenColumns(tab.id, hidden)}
           onJsonShow={(column, path) => setJsonDisplay(tab.id, column, path)}
           onCellEdit={(rowIndex, column, value) =>

@@ -220,6 +220,12 @@ export interface PeekSeed {
    * 1 when the peek loads, so the Inspector shows that column at once). */
   relationsOpen?: boolean;
   inspectorHeight?: number;
+  /** The Inspector's search term, restored when the peek reloads for a new
+   * parent row so the same JSON path stays highlighted. */
+  inspectorSearch?: string;
+  /** Whether the Inspector's JSON tree was last set to Expand all. Individual
+   * node state isn't kept: JSON columns have no fixed shape. */
+  inspectorExpandAll?: boolean;
   activeColumn?: string | null;
   /** The relation's kind. A `has_one` peek sizes itself to a single row on
    * first load and reports that height as `compactHeight` (CSS px), which
@@ -244,6 +250,8 @@ export type PeekViewState = Pick<
   | "relationsOpen"
   | "relationsSolo"
   | "inspectorHeight"
+  | "inspectorSearch"
+  | "inspectorExpandAll"
   | "activeColumn"
   | "kind"
   | "compactHeight"

@@ -3,7 +3,10 @@ import { useContext, useEffect, useId, useMemo, useRef, useState, type CSSProper
 import { findPeekLocation, type PeekLocation } from "../lib/peekNavigation";
 import { PeekNavigation } from "./PeekNavigation";
 import { CaretDoubleRight, ShareNetwork, X } from "@phosphor-icons/react";
-import { followIntegratedPeeks, resizeIntegratedPeek, refreshPeekRelations } from "../lib/integratedPeek";
+import { createPortal } from "react-dom";
+import { followIntegratedPeeks, resizeIntegratedPeek, refreshPeekRelations, toggleIntegratedPeek } from "../lib/integratedPeek";
+import { useAnchoredPosition } from "../lib/useAnchoredPosition";
+import { oneRowGridHeight } from "../lib/gridMeasure";
 import { useStore } from "../state/store";
 import type { IntegratedPeekState, PeekViewState, RowRecord } from "../types";
 import { PeekTab } from "./PeekTab";
@@ -13,8 +16,12 @@ import { PeekDepth, peekDepthColor, peekDepthTint } from "./PeekDepth";
 /** Inspector chrome (28 + 36), one 20px text line, 16px padding, and border. */
 export const SINGLE_ROW_INSPECTOR_HEIGHT = 101;
 
-export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel, onClose, onChange, active = true, parentLocation, dock = "bottom", selectionBlocked = false }: {
+export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel, onClose, onChange, active = true, parentLocation, dock = "bottom", selectionBlocked = false, parentTitle }: {
   selectionBlocked?: boolean;
+  /** The breadcrumb from the root table down to the hosting peek (`table ›
+   * relation › …`) when this panel is nested under a peek; its tabs are then
+   * shorter and their help text shows the full trail. */
+  parentTitle?: string;
   dock?: "bottom" | "right";
   parentLocation?: PeekLocation;
   table: string;
@@ -61,7 +68,9 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
     const measure = () => {
       const total = rightDock ? panel.parentElement?.clientWidth ?? 0 : panel.offsetHeight + rows.offsetHeight;
       if (total === 0) return;
-      setMaxHeight(Math.max(0, total - Math.min(rightDock ? 240 : 80, total / 3)));
+      /* Bottom dock keeps the parent grid tall enough for its header, one
+         row, and the horizontal scrollbar; right dock keeps 240px of width. */
+      setMaxHeight(Math.max(0, total - Math.min(rightDock ? 240 : oneRowGridHeight(rows), total / 3)));
     };
     const observer = new ResizeObserver(measure);
     observer.observe(panel);
@@ -78,6 +87,28 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
   const select = (id: string) => {
     setVisited((prev) => new Set([...prev, id]));
     change({ activeId: id });
+  };
+  /** Right-click menu on a tab: closes that peek (unchecks its relation). */
+  const [tabMenu, setTabMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!tabMenu) return;
+    const close = () => setTabMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [tabMenu]);
+  const closePeek = (id: string) => {
+    setTabMenu(null);
+    onChange((current) => {
+      const peek = current.peeks.find((p) => p.id === id);
+      return peek ? toggleIntegratedPeek(current, peek) : current;
+    });
   };
   const updateView = (id: string, patch: PeekViewState) => {
     onChange((current) => ({ ...current,
@@ -97,7 +128,7 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
     <PeekDepth.Provider value={depth + 1}>
     <div ref={panelRef} data-el="integrated-peek-panel" data-peek-depth={depth + 1}
       style={panelStyle}
-      className={`relative min-w-0 min-h-0 flex flex-col border-zinc-800 bg-zinc-950 text-zinc-200 ${rightDock ? "shrink-0 border-l" : "shrink border-t"}`}>
+      className={`relative min-w-0 min-h-0 flex flex-col border-zinc-800 bg-zinc-950 text-zinc-200 ${rightDock ? "shrink-0 border-l" : depth > 0 ? "shrink" : "shrink border-t"}`}>
       <div role="separator" aria-label="Resize Relations workspace" aria-orientation={rightDock ? "vertical" : "horizontal"}
         className={`absolute z-10 hover:bg-violet-500/40 ${rightDock ? "top-0 bottom-0 left-0 w-1.5 -translate-x-1/2 cursor-ew-resize" : "top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize"}`}
         {...helpHandlers("Drag to resize · double-click to split the available rows area evenly")}
@@ -147,9 +178,10 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
         </button>
       ) : relationsPanel)}
       <div className="flex flex-col flex-1 min-w-0 min-h-0">
-      <div role="tablist" aria-label="Relation peeks" className="flex shrink-0 overflow-x-auto bg-zinc-950">
-        {peeks.map((p) => <PeekTab key={p.id} idPrefix={idPrefix} peek={p} active={p.id === activeId} accentColor={depthColor} onSelect={() => select(p.id)} />)}
-        <div className="flex-1 border-b border-zinc-800/80" />
+      <div role="tablist" aria-label="Relation peeks" className="flex shrink-0 overflow-x-auto bg-zinc-950"
+        style={depth > 0 ? { backgroundColor: peekDepthTint(depth - 1) } : undefined}>
+        {peeks.map((p) => <PeekTab key={p.id} idPrefix={idPrefix} peek={p} active={p.id === activeId} accentColor={depthColor} parentTitle={parentTitle} onSelect={() => select(p.id)} onContextMenu={(x, y) => setTabMenu({ id: p.id, x, y })} />)}
+        <div className="flex-1 border-b border-zinc-700" />
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
         {peeks.map((p) => <div key={p.id} role="tabpanel" id={`${idPrefix}panel-${p.id}`}
@@ -159,7 +191,7 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
             profileName={p.profileName}
             parentTable={table}
             parentSolo={state.solo ?? false}
-            profileId={p.profileId} database={p.database} target={p.target} initialView={p}
+            profileId={p.profileId} database={p.database} target={p.target} initialView={p} title={p.title} trail={`${parentTitle ?? table} › ${p.title}`}
             onViewChange={(patch) => updateView(p.id, patch)} />}
           </PeekNavigation.Provider>
         </div>)}
@@ -168,6 +200,21 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
       </div>
       </div>
     </div>
+    {tabMenu && <PeekTabMenu x={tabMenu.x} y={tabMenu.y} onClose={() => closePeek(tabMenu.id)} />}
     </PeekDepth.Provider>
+  );
+}
+
+function PeekTabMenu({ x, y, onClose }: { x: number; y: number; onClose: () => void }) {
+  const { ref, style } = useAnchoredPosition(x, y);
+  return createPortal(
+    <div ref={ref} data-el="peek-tab-menu" style={style} onClick={(e) => e.stopPropagation()}
+      className="dbs-context-menu fixed z-50 min-w-[140px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60">
+      <button className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-zinc-200 hover:bg-zinc-800" onClick={onClose}>
+        <X size={14} className="shrink-0 text-rose-400" />
+        Close
+      </button>
+    </div>,
+    document.body
   );
 }

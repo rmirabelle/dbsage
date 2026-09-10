@@ -11,6 +11,7 @@ import {
   Table,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
+import { oneRowGridHeight } from "../lib/gridMeasure";
 import { listen } from "@tauri-apps/api/event";
 import { TABLE_CHANGED_EVENT, invalidateRelatedExistence, type TableChanged } from "../lib/relatedExistence";
 import { editRows, type CellEdit } from "../lib/editRows";
@@ -59,6 +60,8 @@ export function PeekPanel({
   parentTable,
   parentSolo = false,
   initialView,
+  title,
+  trail,
   onViewChange,
   active = true,
 }: {
@@ -73,6 +76,10 @@ export function PeekPanel({
    * Inspector visibility to start from — set when restoring a saved view or
    * re-seeding after a reload; a freshly-launched peek starts from defaults. */
   initialView?: PeekViewState;
+  /** This peek's relation name, named as the parent in nested tabs' help text. */
+  title?: string;
+  /** Breadcrumb from the root table to this peek, shown in nested tabs' help. */
+  trail?: string;
   /** Report every change to that state so the host can persist it for
    * saved-view capture. */
   onViewChange?: (patch: PeekViewState) => void;
@@ -248,6 +255,12 @@ export function PeekPanel({
   const onlyReturnsToParent = tableRelations.length === 1 && tableRelations[0].toTable === parentTable;
   const relationsOpen =
     relationsOpenPref ?? (tableRelations.length > 0 && !onlyReturnsToParent);
+  const relationsVisible = !childPeekAll?.closed && relationsOpen;
+  /** The collapsed Relations strip draws no border of its own; the grid and
+   * the panels below it each draw a left border, so the gap between them
+   * shows no line. */
+  const relationsStrip = !childPeekAll?.closed && !relationsOpen;
+  const childPanelVisible = childPeekOpen && !!childPeekAll && !childPeekAll.closed;
   const peekableColumns = useMemo(
     () => peekableColumnsFor(relations, target.table),
     [relations, target.table]
@@ -563,6 +576,8 @@ export function PeekPanel({
               filters={filters}
               lockedFilterColumns={[target.column]}
               hideColumnTypes
+              peekBackground
+              contentBorderLeft={relationsStrip}
               hiddenColumns={hiddenColumns}
               jsonDisplay={jsonDisplay}
               columnWidths={columnWidths}
@@ -595,6 +610,7 @@ export function PeekPanel({
               onCascadePreview={hasPrimaryKey ? previewCascade : undefined}
             />
             </div>
+            {(showInspector || childPanelVisible) && <div className={clsx("shrink-0 flex flex-col min-h-0 mt-[10px]", relationsStrip && "border-l border-zinc-700")}>
             {showInspector && (
               <ExpandedPanel
                 key={matchKey}
@@ -605,20 +621,27 @@ export function PeekPanel({
                 rowOrdinal={activeRowOrdinal}
                 onClose={() => setExpanded(false)}
                 initialHeight={initialView?.inspectorHeight}
-                heightLimit={Math.max(80, hostHeight - 140)}
+                initialSearch={initialView?.inspectorSearch}
+                onSearchChange={(inspectorSearch) => onViewChange?.({ inspectorSearch })}
+                initialExpandAll={initialView?.inspectorExpandAll}
+                onExpandAllChange={(inspectorExpandAll) => onViewChange?.({ inspectorExpandAll })}
+                heightLimit={Math.max(80, hostHeight - 40 - 10 - oneRowGridHeight(peekRowsRef.current)
+                  - (childPanelVisible ? childPeekAll?.height ?? 0 : 0))}
                 onHeightChange={(px) => onViewChange?.({ inspectorHeight: px })}
               />
             )}
-            {childPeekOpen && childPeekAll && !childPeekAll.closed && <IntegratedPeekPanel table={target.table} state={childPeekAll}
+            {childPanelVisible && childPeekAll && <IntegratedPeekPanel table={target.table} state={childPeekAll}
               selectionBlocked={relationsSelectionBlocked}
+              parentTitle={trail ?? title ?? target.table}
               parentLocation={currentLocation}
               row={relationsRow} rowsRef={peekRowsRef} active={active}
               onClose={() => showChildren(false)}
               onChange={(update) => {
                 if (childPeekRef.current) changeChildren(update(childPeekRef.current));
               }} />}
+            </div>}
           </div>
-          {childPeekAll?.closed ? null : relationsOpen ? (
+          {relationsVisible ? (
             <RelationsPanel
               solo={relationsSolo}
               onSoloChange={(solo) => {
@@ -664,7 +687,7 @@ export function PeekPanel({
             <button type="button" data-el="relations-panel-collapsed"
               aria-label={`Show ${target.table} Relations`} aria-expanded={false}
               {...helpHandlers("Show Relations")} onClick={() => setRelationsOpen(true)}
-              className="order-first w-[20px] shrink-0 self-stretch border-t-0 border-b-0 border-r border-zinc-700 bg-[var(--peek-tint,#2d2a3b)] focus-visible:outline focus-visible:outline-violet-400" />
+              className="order-first w-[20px] shrink-0 self-stretch bg-[var(--peek-tint,#2d2a3b)] focus-visible:outline focus-visible:outline-violet-400" />
           )}
         </div>
       ) : (

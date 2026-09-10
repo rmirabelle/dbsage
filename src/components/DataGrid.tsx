@@ -182,11 +182,20 @@ interface Props {
    * header still highlights as filtered, but its menu shows the fixed value
    * instead of filter controls. */
   lockedFilterColumns?: string[];
+  /** Opens the Relations panel and selects the relation behind a column's
+   * has-related / no-related filter (see ColumnHeaderMenu.onOpenRelation). */
+  onOpenRelation?: (column: string, relation: { table: string; column: string }) => void;
   hideColumnTypes?: boolean;
   /** Tint the alternating row stripes with a hint of colour — green for
    * query results, violet for peek panels — so those grids read differently
    * from a table's rows at a glance. */
   stripeTint?: "green" | "violet";
+  /** Paint the space below the last row with the host's peek tint instead of
+   * the grid's own dark background, so a short grid blends into its peek. */
+  peekBackground?: boolean;
+  /** Draw a left border on the header-and-rows block only, not on the empty
+   * space below it (the host's peek strip draws none of its own). */
+  contentBorderLeft?: boolean;
   /** Suppress the native hover tooltip showing a cell's full value (used in peek
    * windows, where the value tooltip is noise). */
   hideValueTooltip?: boolean;
@@ -300,8 +309,11 @@ export function DataGrid({
   canDuplicateRows = false,
   peekableColumns,
   lockedFilterColumns,
+  onOpenRelation,
   hideColumnTypes = false,
   stripeTint,
+  peekBackground = false,
+  contentBorderLeft = false,
   hideValueTooltip = false,
   onCellContextMenu,
   onCellCopyMenuOpen,
@@ -1316,11 +1328,13 @@ export function DataGrid({
           ? "bg-[#22292d]"
           : stripeTint === "violet"
           ? "bg-[#272433]"
+          : peekBackground
+          ? "bg-[var(--peek-tint,#2d2a3b)]"
           : "bg-zinc-950"
       )}
       style={{ contain: "strict" }}
     >
-      <div style={{ width: totalWidth, minWidth: "100%" }}>
+      <div style={{ width: totalWidth, minWidth: "100%" }} className={clsx("border-zinc-700", peekBackground && "border-b", contentBorderLeft && "border-l")}>
         <HeaderRow
           hideColumnTypes={hideColumnTypes}
           lockedFilterColumns={lockedFilterColumns}
@@ -1357,8 +1371,11 @@ export function DataGrid({
         {rows.length === 0 ? (
           <div
             data-el="grid-empty"
-            className="sticky left-0 flex items-center justify-center text-zinc-600 text-xs italic"
-            style={{ height: 160 }}
+            className={clsx(
+              "sticky left-0 flex items-center px-3 text-rose-300 text-xs italic",
+              stripeTint === "green" ? "bg-[#22292d]" : stripeTint === "violet" ? "bg-[#272433]" : "bg-zinc-950"
+            )}
+            style={{ height: ROW_HEIGHT }}
           >
             No rows
           </div>
@@ -1406,6 +1423,8 @@ export function DataGrid({
                     : "bg-[#2b2838]"
                   : even
                   ? "bg-zinc-950"
+                  : peekBackground
+                  ? "bg-[#242732]"
                   : "bg-zinc-900/30";
               /* The pinned row-number gutter must be OPAQUE, or columns scrolled
                  underneath it show through. The odd-row stripe (bg-zinc-900/30)
@@ -1575,6 +1594,7 @@ export function DataGrid({
           onFilter={(filter) => onFilterChange(menu.column, filter)}
           onJsonShow={(path) => onJsonShow(menu.column, path)}
           locked={lockedFilterColumns?.includes(menu.column) ?? false}
+          onOpenRelation={onOpenRelation ? (relation) => onOpenRelation(menu.column, relation) : undefined}
           suggest={
             !canSuggestValues(
               columns.find((c) => c.name === menu.column)?.dataType ?? ""

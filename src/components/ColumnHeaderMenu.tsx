@@ -49,6 +49,9 @@ interface Props {
    * match) and can't be changed or cleared here; the menu says so instead of
    * showing the filter controls. Sort and JSON display still work. */
   locked?: boolean;
+  /** Opens the Relations panel and selects the relation behind a
+   * has-related / no-related filter. Absent = the message is plain text. */
+  onOpenRelation?: (relation: { table: string; column: string }) => void;
 }
 
 const MENU_WIDTH = 380;
@@ -72,6 +75,7 @@ export function ColumnHeaderMenu({
   onJsonShow,
   suggest,
   locked = false,
+  onOpenRelation,
 }: Props) {
   const isJson = columnType.trim().toLowerCase() === "json";
   const supportsTextPatterns = /^(?:char|varchar|tinytext|text|mediumtext|longtext|enum|set)\b/i.test(columnType.trim());
@@ -313,14 +317,31 @@ export function ColumnHeaderMenu({
       ) : (
       <div className="border-t border-zinc-800 px-3 py-2 space-y-1">
         {currentFilter?.relation && (
-          <div className="mb-1 flex items-center gap-2 rounded bg-violet-500/15 px-2 py-1.5 text-[11.5px] text-violet-200">
+          <div className="mb-2 flex items-center gap-2 rounded bg-violet-500/15 px-2 py-1.5 text-[11.5px] text-violet-200">
             <ShareNetwork size={14} className="shrink-0 text-violet-300" />
-            <span>
-              {currentFilter.op === "norelated" ? "No related rows in " : "Has related rows in "}
+            <span className="flex-1">
+              {currentFilter.op === "norelated" ? "MUST NOT have " : "MUST have "}
+              {onOpenRelation ? (
+                <button
+                  type="button"
+                  className="underline text-violet-300 hover:text-violet-100"
+                  onClick={() => { onOpenRelation(currentFilter.relation!); onClose(); }}
+                >
+                  related rows
+                </button>
+              ) : "related rows"}
+              {" in "}
               <span className="font-mono text-zinc-100">
                 {currentFilter.relation.table}
               </span>
             </span>
+            <button
+              type="button"
+              className="shrink-0 underline text-violet-300 hover:text-violet-100"
+              onClick={() => { onFilter(null); onClose(); }}
+            >
+              clear
+            </button>
           </div>
         )}
         {isJson && (

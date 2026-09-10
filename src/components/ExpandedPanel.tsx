@@ -8,6 +8,8 @@ import {
   CaretDown,
   Binoculars,
   BracketsCurly,
+  PencilSimple,
+  TreeStructure,
   MagnifyingGlass as Search,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
@@ -37,6 +39,14 @@ interface Props {
    * the host can persist it. */
   initialHeight?: number;
   onHeightChange?: (px: number) => void;
+  /** Search term to start with (a peek restoring its state after a reload)
+   * and where to report edits so the host can keep it. */
+  initialSearch?: string;
+  onSearchChange?: (search: string) => void;
+  /** Whether the JSON tree starts fully expanded, and where to report the
+   * Expand all / Collapse all buttons. */
+  initialExpandAll?: boolean;
+  onExpandAllChange?: (expandAll: boolean) => void;
 }
 
 export function ExpandedPanel({
@@ -51,7 +61,12 @@ export function ExpandedPanel({
   readOnly = false,
   initialHeight,
   onHeightChange,
+  initialSearch,
+  onSearchChange,
+  initialExpandAll,
+  onExpandAllChange,
 }: Props) {
+  const [expandAll, setExpandAll] = useState(initialExpandAll ?? false);
   const storedHeight = useUi((s) => s.expandedPanelHeight);
   const setStoredHeight = useUi((s) => s.setExpandedPanelHeight);
   /**
@@ -103,9 +118,14 @@ export function ExpandedPanel({
   );
 
   const [text, setText] = useState(initialText);
-  const [search, setSearch] = useState("");
-  const [appliedSearch, setAppliedSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch ?? "");
+  const [appliedSearch, setAppliedSearch] = useState(initialSearch ?? "");
   const searchPending = search !== appliedSearch;
+  useEffect(() => {
+    onSearchChange?.(search);
+    /* Report only on edits; the callback identity may change every render. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
   useEffect(() => {
     const timer = setTimeout(() => {
       setAppliedSearch(search);
@@ -124,16 +144,21 @@ export function ExpandedPanel({
   const backdropRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  /** JSON columns show the tree by default; the tree's Edit button swaps in
+   * the raw editor, and a successful Save swaps the tree back. */
+  const [jsonEditing, setJsonEditing] = useState(false);
+
   /** Reset the editor text whenever the inspected value changes. */
   useEffect(() => {
     setText(initialText);
+    setJsonEditing(false);
   }, [initialText]);
 
   /** Clear the search only on a real column change. Navigating to a new row in
    * the same column keeps the term applied. The transient null that row clicks
    * produce (active cell is cleared on mousedown, then re-set by the cell click)
    * is ignored, so clicking another row in the same column preserves the term. */
-  const lastColumnRef = useRef<string | null>(null);
+  const lastColumnRef = useRef<string | null>(column?.name ?? null);
   useEffect(() => {
     const name = column?.name ?? null;
     if (name === null) return;
@@ -149,15 +174,19 @@ export function ExpandedPanel({
    * changes, which would steal focus from the grid and break arrow-key row
    * navigation while the Inspector stays open. */
   useEffect(() => {
+    /* A peek's Inspector remounts for every parent row; when the user is
+       arrow-keying through a grid, leave focus there. */
+    if (document.activeElement?.closest('[data-el="data-grid"]')) return;
     searchInputRef.current?.focus();
   }, []);
 
   const isNull = value === null || value === undefined;
   const isJsonColumn = isJsonType(column);
-  /* Read-only JSON shows the tree only (no raw text pane). */
-  const treeOnly = readOnly && isJsonColumn;
-  const showRaw = !treeOnly;
   const canEdit = editable && column != null && onSave != null;
+  /* JSON shows either the tree or the raw editor, never both. */
+  const jsonEdit = isJsonColumn && canEdit && jsonEditing;
+  const showRaw = !isJsonColumn || jsonEdit;
+  const showTree = isJsonColumn && !jsonEdit;
   const dirty = canEdit && text !== initialText;
 
   /** Parsed view of the (live) text for the tree column — `undefined` when the
@@ -244,6 +273,7 @@ export function ExpandedPanel({
     try {
       await onSave(toSave);
       setSaved(true);
+      setJsonEditing(false);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       alert(`Update failed: ${String(e)}`);
@@ -316,31 +346,45 @@ export function ExpandedPanel({
         />
       )}
       <div className="dbs-toolbar h-7 shrink-0 px-3 flex items-center gap-3 border-b border-zinc-800/60 text-[11px] text-zinc-400">
-        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-300">
-          <Binoculars size={13} weight="fill" className="shrink-0" />
-          Inspector
-        </span>
+        <Binoculars size={13} weight="fill" className="shrink-0 text-emerald-300" aria-label="Inspector" />
         {column ? (
-          <>
-            <span className="text-zinc-600">·</span>
+          <span className="min-w-0 inline-flex items-center gap-1.5 truncate">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Column:</span>
             <span className="font-mono text-zinc-200 truncate">{column.name}</span>
-            <span className="text-zinc-600">·</span>
             <span className="font-mono text-zinc-500 truncate">
-              {column.dataType}
-              {isJson && " (pretty)"}
+              ({column.dataType}{isJson && showRaw && ", pretty"})
             </span>
-            {rowOrdinal != null && (
-              <>
-                <span className="text-zinc-600">·</span>
-                <span className="font-mono text-zinc-500">row {rowOrdinal}</span>
-              </>
-            )}
-          </>
+          </span>
         ) : (
           <span className="text-zinc-600">Click a cell to view its value</span>
         )}
+        {column && (
+          <button
+            data-el="expanded-copy-btn"
+            onClick={onCopy}
+            className="inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5 rounded text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+            aria-label={copied ? "Copied" : "Copy to clipboard"}
+            {...helpHandlers("Copy to clipboard")}
+          >
+            {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+          </button>
+        )}
 
         <div className="ml-auto flex items-center gap-1">
+          {column && rowOrdinal != null && (
+            <span className="mr-1 font-mono text-zinc-500">row {rowOrdinal}</span>
+          )}
+          {jsonEdit && (
+            <button
+              data-el="expanded-json-tree-btn"
+              onClick={() => setJsonEditing(false)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              {...helpHandlers("Back to the tree view (keeps unsaved edits)")}
+            >
+              <TreeStructure size={13} className="text-sky-400" />
+              <span>Tree</span>
+            </button>
+          )}
           {column && canFormatJson && (
             <button
               data-el="expanded-format-json-btn"
@@ -350,26 +394,6 @@ export function ExpandedPanel({
             >
               <BracketsCurly size={13} className="text-sky-400" />
               <span>Format JSON</span>
-            </button>
-          )}
-          {column && (
-            <button
-              data-el="expanded-copy-btn"
-              onClick={onCopy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-              {...helpHandlers("Copy to clipboard")}
-            >
-              {copied ? (
-                <>
-                  <Check size={13} className="text-emerald-400" />
-                  <span>Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy size={13} />
-                  <span>Copy</span>
-                </>
-              )}
             </button>
           )}
           <button
@@ -387,14 +411,7 @@ export function ExpandedPanel({
       <div className="flex-1 min-h-0 flex">
         {showRaw && (
           <div
-            className={clsx(
-              "relative flex-1 min-h-0 min-w-0",
-              /* Lighter gray marks an editable area (matches the edit-table form
-                 bg). Only the editable Table Inspector — not the read-only Query
-                 Inspector — gets it. */
-              !readOnly && "bg-[#2c303c]",
-              column && isJsonColumn && "border-r border-zinc-800"
-            )}
+            className="relative flex-1 min-h-0 min-w-0 bg-zinc-950"
           >
             <InspectorTextBackdrop
               backdropRef={backdropRef}
@@ -432,7 +449,7 @@ export function ExpandedPanel({
           </div>
         )}
 
-        {column && isJsonColumn && (
+        {column && showTree && (
           <div className="relative flex-1 min-h-0 min-w-0 bg-zinc-950">
             {treeData !== undefined ? (
               <JsonTreeView
@@ -440,10 +457,23 @@ export function ExpandedPanel({
                 data={treeData}
                 search={appliedSearch}
                 activeIndex={activeIndex}
+                onEdit={canEdit ? () => setJsonEditing(true) : undefined}
+                expandAll={expandAll}
+                onExpandAllChange={(v) => { setExpandAll(v); onExpandAllChange?.(v); }}
               />
             ) : (
-              <div className="px-3 py-2 text-[11px] text-zinc-600 font-mono">
-                {text.trim() ? "Not valid JSON" : ""}
+              <div className="px-3 py-2 flex items-center gap-2 text-[11px] text-zinc-600 font-mono">
+                <span>{text.trim() ? "Not valid JSON" : isNull ? "NULL" : ""}</span>
+                {canEdit && (
+                  <button
+                    data-el="json-tree-edit"
+                    onClick={() => setJsonEditing(true)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-orange-400 hover:bg-zinc-800 hover:text-orange-300"
+                    {...helpHandlers("Edit JSON")}
+                  >
+                    <PencilSimple size={13} /> Edit
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -473,7 +503,7 @@ export function ExpandedPanel({
                 gotoMatch(e.shiftKey ? -1 : 1);
               }
             }}
-            placeholder="Search value…"
+            placeholder={column ? `Search ${column.name}…` : "Search value…"}
             className={clsx(
               "w-full border rounded pl-7 pr-7 py-1 text-[11px] font-bold outline-none",
               search
