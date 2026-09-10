@@ -20,6 +20,7 @@ import {
   BracketsCurly,
   FileCsv,
   MicrosoftExcelLogo,
+  ArrowSquareOut,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type {
@@ -196,6 +197,9 @@ interface Props {
   /** Draw a left border on the header-and-rows block only, not on the empty
    * space below it (the host's peek strip draws none of its own). */
   contentBorderLeft?: boolean;
+  /** When the rows shown are a capped slice of a larger set, render one extra
+   * row after the last that invites the user to open the full table. */
+  truncatedNotice?: { total: number; onOpen: () => void };
   /** Suppress the native hover tooltip showing a cell's full value (used in peek
    * windows, where the value tooltip is noise). */
   hideValueTooltip?: boolean;
@@ -314,6 +318,7 @@ export function DataGrid({
   stripeTint,
   peekBackground = false,
   contentBorderLeft = false,
+  truncatedNotice,
   hideValueTooltip = false,
   onCellContextMenu,
   onCellCopyMenuOpen,
@@ -1571,6 +1576,22 @@ export function DataGrid({
               );
             })}
           </div>
+        )}
+        {truncatedNotice && rows.length > 0 && (
+          <button
+            type="button"
+            data-el="grid-truncated-row"
+            onClick={truncatedNotice.onOpen}
+            className={clsx(
+              "sticky left-0 flex w-full items-center gap-2 border-t border-zinc-700 px-3 text-left text-[12px] text-zinc-400 hover:text-zinc-100",
+              peekBackground ? "bg-[var(--peek-tint,#2d2a3b)] hover:bg-zinc-800/60" : "bg-zinc-950 hover:bg-zinc-900"
+            )}
+            style={{ height: ROW_HEIGHT }}
+            {...helpHandlers(`Showing the first ${rows.length.toLocaleString()} of ${truncatedNotice.total.toLocaleString()} rows`)}
+          >
+            <ArrowSquareOut size={15} className="shrink-0 text-zinc-300" />
+            Open as table to view all rows.
+          </button>
         )}
       </div>
 

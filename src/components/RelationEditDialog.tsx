@@ -2,8 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   CircleNotch,
+  Columns,
   FloppyDisk,
+  Tag,
+  ArrowRight,
   ShareNetwork,
+  Table,
   Trash,
   X,
 } from "@phosphor-icons/react";
@@ -49,14 +53,15 @@ export function RelationEditDialog({
   const saveRelation = useStore((s) => s.saveRelation);
   const deleteRelation = useStore((s) => s.deleteRelation);
 
+  /* Seed the kind from the clicked column right away (it needs no table
+     list), so the HAS toggle opens on the right side instead of flipping
+     once the tables load. */
   const [form, setForm] = useState(() =>
     relation
       ? formFromRelation(relation)
-      : {
-          ...BLANK_RELATION,
-          fromTable: from?.table ?? "",
-          fromColumn: from?.column ?? "",
-        }
+      : from?.column
+        ? withFromColumn({ ...BLANK_RELATION, fromTable: from.table }, from.column, [])
+        : { ...BLANK_RELATION, fromTable: from?.table ?? "" }
   );
   const [tables, setTables] = useState<string[]>([]);
   const [fromColumns, setFromColumns] = useState<string[]>([]);
@@ -125,7 +130,11 @@ export function RelationEditDialog({
   }, [toColumns, form.kind, form.fromTable]);
 
   const canSave =
-    !!form.fromTable && !!form.fromColumn && !!form.toTable && !!form.toColumn;
+    !!form.fromTable &&
+    !!form.fromColumn &&
+    !!form.toTable &&
+    !!form.toColumn &&
+    !!form.name.trim();
 
   /**
    * Delete the relation being edited. No confirmation — a relation is app-level
@@ -183,7 +192,7 @@ export function RelationEditDialog({
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
-        className="w-[560px] max-w-[92vw] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
+        className="w-[720px] max-w-[92vw] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
           <div className="flex items-center gap-2">
@@ -203,10 +212,16 @@ export function RelationEditDialog({
           </button>
         </div>
 
-        <div className="px-4 py-4">
-          <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-[12px] text-zinc-400">
-            <span className="text-right">From</span>
-            <div className="flex items-center gap-2">
+        <div>
+          {/* The body is a three-column table: the source (table, column) on
+              the left, the HAS toggle in the middle, the target (table,
+              column, label) on the right. Each column carries its own padding
+              so the middle column's dividers run header to footer. */}
+          <div className="grid grid-cols-[minmax(0,0.8fr)_auto_minmax(0,1fr)] items-stretch text-[12px] text-zinc-400">
+            <div className="flex flex-col">
+              <div className="border-b border-zinc-800 bg-zinc-950/40 px-4 py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-zinc-500">This Table</div>
+              <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-2 content-start p-4">
+              <Table size={16} weight="bold" className="justify-self-end text-emerald-400" aria-label="Table" />
               <SearchableSelect
                 dataEl="rel-dlg-from-table"
                 value={form.fromTable}
@@ -217,8 +232,9 @@ export function RelationEditDialog({
                     v === f.fromTable ? f : { ...BLANK_RELATION, fromTable: v }
                   )
                 }
-                className="flex-1"
+                className="min-w-0"
               />
+              <Columns size={16} weight="bold" className="justify-self-end text-violet-400" aria-label="Column" />
               <SearchableSelect
                 dataEl="rel-dlg-from-column"
                 value={form.fromColumn}
@@ -230,26 +246,64 @@ export function RelationEditDialog({
                     v === f.fromColumn ? f : withFromColumn(f, v, tables)
                   )
                 }
-                className="flex-1"
+                className="min-w-0"
               />
+              </div>
             </div>
 
-            <span className="text-right">Type</span>
-            <select
+            {/* Stacked two-row toggle between two column dividers. */}
+            <div className="flex flex-col border-x border-zinc-800">
+              <div className="flex items-center justify-center border-b border-zinc-800 bg-zinc-950/40 px-4 py-1 text-zinc-500"><ArrowRight size={14} weight="bold" aria-label="Type" /></div>
+              <div className="flex justify-center px-4 py-4">
+            <div
               data-el="rel-dlg-kind"
-              value={form.kind}
-              onChange={(e) => {
-                const kind = e.target.value as RelationKind;
-                setForm((f) => withToTable({ ...f, kind }, f.toTable));
-              }}
-              className={clsx(selectClass, "w-40")}
+              role="radiogroup"
+              className="flex w-24 flex-col self-start overflow-hidden rounded border border-zinc-700"
             >
-              <option value="has_one">has one</option>
-              <option value="has_many">has many</option>
-            </select>
+              {(
+                [
+                  ["has_one", "HAS ONE"],
+                  ["has_many", "HAS MANY"],
+                ] as [RelationKind, string][]
+              ).map(([kind, label], i) => {
+                const selected = form.kind === kind;
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    data-el={`rel-dlg-kind-${kind}`}
+                    onClick={() => {
+                      if (selected) return;
+                      setForm((f) => withToTable({ ...f, kind }, f.toTable));
+                    }}
+                    className={clsx(
+                      "px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.06em] whitespace-nowrap transition-colors",
+                      i > 0 && "border-t border-zinc-700",
+                      /* Same hues as the Relations panel badges: amber for
+                         has one, cyan for has many. */
+                      selected
+                        ? kind === "has_one"
+                          ? "bg-amber-400 text-black"
+                          : "bg-accent-500 text-[#042f2e]"
+                        : kind === "has_one"
+                          ? "bg-zinc-950 text-zinc-400 hover:bg-zinc-800 hover:text-amber-300"
+                          : "bg-zinc-950 text-zinc-400 hover:bg-zinc-800 hover:text-accent-300"
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+              </div>
+            </div>
 
-            <span className="text-right">To</span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col">
+              <div className="border-b border-zinc-800 bg-zinc-950/40 px-4 py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Related Table</div>
+              <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-2 content-start p-4">
+              <Table size={16} weight="bold" className="justify-self-end text-emerald-400" aria-label="Table" />
               <SearchableSelect
                 dataEl="rel-dlg-to-table"
                 value={form.toTable}
@@ -258,8 +312,9 @@ export function RelationEditDialog({
                 onChange={(v) =>
                   setForm((f) => (v === f.toTable ? f : withToTable(f, v)))
                 }
-                className="flex-1"
+                className="min-w-0"
               />
+              <Columns size={16} weight="bold" className="justify-self-end text-violet-400" aria-label="Column" />
               <SearchableSelect
                 dataEl="rel-dlg-to-column"
                 value={form.toColumn}
@@ -267,29 +322,29 @@ export function RelationEditDialog({
                 placeholder="column…"
                 disabled={!form.toTable}
                 onChange={(v) => setForm((f) => ({ ...f, toColumn: v }))}
-                className="flex-1"
+                className="min-w-0"
               />
+              <Tag size={16} weight="bold" className="justify-self-end text-amber-400" aria-label="Label" />
+              <input
+                data-el="rel-dlg-name"
+                value={form.name}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, name: e.target.value }))
+                }
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+                  e.preventDefault();
+                  void onSave();
+                }}
+                placeholder="Relation Label"
+                className={clsx(selectClass, "w-full min-w-0")}
+              />
+              </div>
             </div>
-
-            <span className="text-right">Label</span>
-            <input
-              data-el="rel-dlg-name"
-              value={form.name}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, name: e.target.value }))
-              }
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
-                e.preventDefault();
-                void onSave();
-              }}
-              placeholder="optional relation label"
-              className={clsx(selectClass, "w-full")}
-            />
           </div>
 
           {error && (
-            <div className="mt-3 rounded bg-rose-950/40 border border-rose-900/60 px-3 py-2 text-[11px] text-rose-300 break-words">
+            <div className="mx-4 mb-4 rounded bg-rose-950/40 border border-rose-900/60 px-3 py-2 text-[11px] text-rose-300 break-words">
               {error}
             </div>
           )}

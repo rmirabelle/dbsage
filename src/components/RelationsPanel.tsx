@@ -62,6 +62,7 @@ export function RelationsPanel({
   onDockChange,
   hideNewRelation = false,
   neutralBorder = false,
+  className,
   panelWidth,
   onWidthChange,
   hideFilterButtons = false,
@@ -96,6 +97,8 @@ export function RelationsPanel({
   onDockChange?: (dock: "bottom" | "right") => void;
   hideNewRelation?: boolean;
   neutralBorder?: boolean;
+  /** Extra classes on the panel root (e.g. padding in a peek). */
+  className?: string;
   panelWidth?: number;
   onWidthChange?: (width: number) => void;
   hideFilterButtons?: boolean;
@@ -214,7 +217,7 @@ export function RelationsPanel({
     <div
       data-el="relations-panel"
       style={{ width }}
-      className={clsx("relations-panel order-first relative shrink-0 flex flex-col border-r bg-[var(--peek-tint,#2d2a3b)] text-zinc-200", neutralBorder ? "border-zinc-700" : "border-violet-500/60")}
+      className={clsx("relations-panel order-first relative shrink-0 flex flex-col border-r bg-[var(--peek-tint,#2d2a3b)] text-zinc-200", neutralBorder ? "border-zinc-700" : "border-violet-500/60", className)}
     >
       <div
         role="separator"

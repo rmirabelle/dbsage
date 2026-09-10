@@ -80,6 +80,9 @@ export function DateTimePicker({
   mode,
   optionalTime = false,
   dateOnlyLabel = "Date only",
+  /** When false, every change applies at once and the Auto toggle is hidden
+   * (form fields, where "apply" has no separate meaning). */
+  autoToggle = true,
   onChange,
   onApply,
   onDone,
@@ -89,6 +92,7 @@ export function DateTimePicker({
   mode: DateMode;
   optionalTime?: boolean;
   dateOnlyLabel?: string;
+  autoToggle?: boolean;
   onChange: (v: string) => void;
   onApply: (value: string) => void;
   /** OK (auto mode) commits the value for good; the host may close itself. */
@@ -139,7 +143,9 @@ export function DateTimePicker({
     const measure = () => {
       const rect = anchor.getBoundingClientRect();
       const width = picker.getBoundingClientRect().width;
-      const inputLeft = anchor.querySelector("input")?.getBoundingClientRect().left ?? rect.left;
+      /* Align with the host's input, not with one of the picker's own fields. */
+      const hostInput = Array.from(anchor.querySelectorAll("input")).find((el) => !picker.contains(el));
+      const inputLeft = hostInput?.getBoundingClientRect().left ?? rect.left;
       const left = Math.max(8, Math.min(inputLeft, window.innerWidth - width - 8)) - rect.left;
       const maxHeight = Math.max(0, window.innerHeight - 16);
       const height = Math.min(picker.scrollHeight + 2, maxHeight);
@@ -380,7 +386,7 @@ export function DateTimePicker({
         >
           {outputMode === "date" ? "Today" : "Now"}
         </button>
-        <label className="flex items-center gap-1 px-1 text-[10px] text-zinc-500 hover:text-zinc-400"
+        {autoToggle && <label className="flex items-center gap-1 px-1 text-[10px] text-zinc-500 hover:text-zinc-400"
           {...helpHandlers("Automatically apply date and time changes while keeping the picker open")}>
           <span className="relative inline-flex h-3 w-3 shrink-0">
             <input type="checkbox" data-el="datetime-auto-apply" checked={autoApply}
@@ -390,7 +396,7 @@ export function DateTimePicker({
               className="pointer-events-none absolute left-px top-px hidden text-zinc-200 peer-checked:block" />
           </span>
           Auto
-        </label>
+        </label>}
         <button
           type="button"
           data-el="datetime-apply"

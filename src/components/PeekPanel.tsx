@@ -460,10 +460,69 @@ export function PeekPanel({
 
   const shown = data?.rows.length ?? 0;
   const capped = total != null && total > PEEK_LIMIT;
+  const openAsTable = () => void useStore.getState().openTable(profileId, profileName, database, target.table, {
+    filters: unmatched ? extraFilters : filters,
+    sort,
+    rows: data?.rows ?? [],
+    activeCell,
+    selectedRows,
+  }).catch((error) => notifyError(String(error)));
 
   return (
     <div ref={rootRef} data-el="peek-panel"
-      className="h-full w-full flex flex-col overflow-hidden bg-[var(--peek-tint,#2d2a3b)]">
+      className="h-full w-full flex overflow-hidden bg-[var(--peek-tint,#2d2a3b)]">
+      {/* The Relations panel (or its collapsed strip) sits left of BOTH the
+          title bar and the grid, so the title never covers it. */}
+      {data && (relationsVisible ? (
+        <RelationsPanel
+          className="pt-[6px]"
+          solo={relationsSolo}
+          onSoloChange={(solo) => {
+            setRelationsSolo(solo);
+            if (childPeekRef.current) changeChildren(setIntegratedPeekSolo(childPeekRef.current, solo));
+          }}
+          hideFilterButtons
+          profileId={profileId}
+          database={database}
+          table={target.table}
+          relations={relations}
+          row={relationsRow}
+          column={activeCell?.column ?? null}
+          onSelect={toggleChildPeek}
+          openRelationIds={childPeekAll?.peeks.map((p) => p.id) ?? []}
+          returnLabel={(t) => destination(t)?.label}
+          hideReturnRelations
+          activeRelationId={childPeekOpen ? childPeekAll?.activeId : undefined}
+          onNew={(column) =>
+            setRelDialog({
+              relation: null,
+              column: column ?? data?.columns[0]?.name ?? "",
+            })
+          }
+          onEdit={(relation, column) => setRelDialog({ relation, column })}
+          filters={extraFilters}
+          onRelationFilter={(t, op) =>
+            onFilterChange(
+              t.sourceColumn,
+              op
+                ? {
+                    column: t.sourceColumn,
+                    op,
+                    value: "",
+                    relation: { table: t.table, column: t.column },
+                  }
+                : null
+            )
+          }
+          onClose={() => setRelationsOpen(false)}
+        />
+      ) : (
+        <button type="button" data-el="relations-panel-collapsed"
+          aria-label={`Show ${target.table} Relations`} aria-expanded={false}
+          {...helpHandlers("Show Relations")} onClick={() => setRelationsOpen(true)}
+          className="w-[20px] shrink-0 self-stretch bg-[var(--peek-tint,#2d2a3b)] focus-visible:outline focus-visible:outline-violet-400" />
+      ))}
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col">
       <div
         data-el="peek-titlebar"
         className="dbs-toolbar shrink-0 h-10 pl-3 pr-2 flex items-center gap-2 select-none bg-[var(--peek-tint,#2d2a3b)] bg-none"
@@ -496,13 +555,7 @@ export function PeekPanel({
         <button
           type="button"
           data-el="peek-open-table-btn"
-          onClick={() => void useStore.getState().openTable(profileId, profileName, database, target.table, {
-            filters: unmatched ? extraFilters : filters,
-            sort,
-            rows: data?.rows ?? [],
-            activeCell,
-            selectedRows,
-          }).catch((error) => notifyError(String(error)))}
+          onClick={openAsTable}
           className="shrink-0 inline-flex items-center justify-center px-1.5 py-1 rounded text-zinc-300 bg-zinc-800 hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
           {...helpHandlers(`Open ${target.table} as a table with the same filter and selection`)}
           aria-label={`Open ${target.table} as a table`}
@@ -578,6 +631,7 @@ export function PeekPanel({
               hideColumnTypes
               peekBackground
               contentBorderLeft={relationsStrip}
+              truncatedNotice={capped && total != null ? { total, onOpen: openAsTable } : undefined}
               hiddenColumns={hiddenColumns}
               jsonDisplay={jsonDisplay}
               columnWidths={columnWidths}
@@ -641,54 +695,6 @@ export function PeekPanel({
               }} />}
             </div>}
           </div>
-          {relationsVisible ? (
-            <RelationsPanel
-              solo={relationsSolo}
-              onSoloChange={(solo) => {
-                setRelationsSolo(solo);
-                if (childPeekRef.current) changeChildren(setIntegratedPeekSolo(childPeekRef.current, solo));
-              }}
-              hideFilterButtons
-              profileId={profileId}
-              database={database}
-              table={target.table}
-              relations={relations}
-              row={relationsRow}
-              column={activeCell?.column ?? null}
-              onSelect={toggleChildPeek}
-              openRelationIds={childPeekAll?.peeks.map((p) => p.id) ?? []}
-              returnLabel={(t) => destination(t)?.label}
-              hideReturnRelations
-              activeRelationId={childPeekOpen ? childPeekAll?.activeId : undefined}
-              onNew={(column) =>
-                setRelDialog({
-                  relation: null,
-                  column: column ?? data.columns[0]?.name ?? "",
-                })
-              }
-              onEdit={(relation, column) => setRelDialog({ relation, column })}
-              filters={extraFilters}
-              onRelationFilter={(t, op) =>
-                onFilterChange(
-                  t.sourceColumn,
-                  op
-                    ? {
-                        column: t.sourceColumn,
-                        op,
-                        value: "",
-                        relation: { table: t.table, column: t.column },
-                      }
-                    : null
-                )
-              }
-              onClose={() => setRelationsOpen(false)}
-            />
-          ) : (
-            <button type="button" data-el="relations-panel-collapsed"
-              aria-label={`Show ${target.table} Relations`} aria-expanded={false}
-              {...helpHandlers("Show Relations")} onClick={() => setRelationsOpen(true)}
-              className="order-first w-[20px] shrink-0 self-stretch bg-[var(--peek-tint,#2d2a3b)] focus-visible:outline focus-visible:outline-violet-400" />
-          )}
         </div>
       ) : (
         <div className="flex-1" />
@@ -705,7 +711,7 @@ export function PeekPanel({
           onDeleted={() => setRelDialog(null)}
         />
       )}
-
+      </div>
     </div>
   );
 }

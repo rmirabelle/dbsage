@@ -1,9 +1,11 @@
 import { helpHandlers } from "../state/help";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import {
   RowsPlusBottom,
   CircleNotch as Loader2,
+  CalendarBlank,
   Key,
   X,
 } from "@phosphor-icons/react";
@@ -11,6 +13,7 @@ import clsx from "clsx";
 import { ipc } from "../ipc";
 import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import { Tooltip } from "./Tooltip";
+import { DateTimePicker, type DateMode } from "./DateTimePicker";
 import type { ColumnDef } from "../types";
 
 interface ColumnMeta {
@@ -281,31 +284,16 @@ export function InsertRowDialog({
           />
         );
       case "date":
+      case "datetime":
         return (
-          <input
-            type="date"
+          <DateField
+            mode={controlKind(m.def.columnType) as DateMode}
             value={value}
             disabled={busy}
-            onChange={(e) => setField(name, e.target.value)}
-            onKeyDown={onEnter}
-            style={{ colorScheme: "dark" }}
-            className={clsx(cls, value === "" && "dbs-date-empty")}
-          />
-        );
-      case "datetime":
-        /* MySQL DATETIME/TIMESTAMP are stored "YYYY-MM-DD HH:MM:SS"; the native
-           control wants a "T" separator. Keep the space form in state (what the
-           INSERT sends) and translate only for display. */
-        return (
-          <input
-            type="datetime-local"
-            step="1"
-            value={value ? value.replace(" ", "T") : ""}
-            disabled={busy}
-            onChange={(e) => setField(name, e.target.value.replace("T", " "))}
-            onKeyDown={onEnter}
-            style={{ colorScheme: "dark" }}
-            className={clsx(cls, value === "" && "dbs-date-empty")}
+            placeholder={placeholderFor(m)}
+            onChange={(v) => setField(name, v)}
+            onEnter={submit}
+            className={cls}
           />
         );
       default:
@@ -463,6 +451,136 @@ export function InsertRowDialog({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Free-text date/datetime input with a calendar button that opens the themed
+ * DateTimePicker. The picker is portaled to the body and anchored to a fixed
+ * zero-width box on the input's left edge, so the dialog's scroll container
+ * and the row's overflow clipping can't cut it off. State keeps MySQL's
+ * "YYYY-MM-DD[ HH:MM:SS]" form, which is what the picker writes and the INSERT
+ * sends.
+ */
+function DateField({
+  mode,
+  value,
+  disabled,
+  placeholder,
+  onChange,
+  onEnter,
+  className,
+}: {
+  mode: DateMode;
+  value: string;
+  disabled: boolean;
+  placeholder: string;
+  onChange: (v: string) => void;
+  onEnter: () => void;
+  className: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const fieldRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  /* A press anywhere outside the field and its popover closes the picker. */
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (fieldRef.current?.contains(t) || popoverRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [open]);
+
+  /* Track the input's screen rect while the picker is open so the popover
+     follows the dialog body when it scrolls or the window resizes. */
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const r = inputRef.current?.getBoundingClientRect();
+      if (r) setRect(r);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
+  return (
+    <div ref={fieldRef} className="relative flex-1 min-w-0 flex">
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && open) {
+            e.preventDefault();
+            e.stopPropagation();
+            setOpen(false);
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            onEnter();
+          }
+        }}
+        placeholder={placeholder}
+        className={clsx(className, "pr-7")}
+      />
+      <button
+        type="button"
+        data-el="insert-row-calendar"
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((o) => !o)}
+        className={clsx(
+          "absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 transition-colors disabled:opacity-50",
+          open ? "bg-accent-500/20 text-accent-300" : "text-zinc-500 hover:text-accent-300"
+        )}
+        aria-label="Pick a date"
+        {...helpHandlers(mode === "date" ? "Pick a date" : "Pick a date and time")}
+      >
+        <CalendarBlank size={15} />
+      </button>
+      {open &&
+        rect &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            style={{
+              position: "fixed",
+              top: rect.top,
+              left: rect.left,
+              width: 0,
+              height: rect.height,
+              zIndex: 60,
+            }}
+          >
+            <DateTimePicker
+              value={value}
+              mode={mode}
+              autoToggle={false}
+              onChange={onChange}
+              onApply={onChange}
+              onDone={() => setOpen(false)}
+              onClose={() => setOpen(false)}
+            />
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { pluralize, singularize } from "./inflector";
+import { classify, pluralize, singularize } from "./inflector";
 import type { Relation, RelationKind } from "../types";
 
 /**
@@ -49,7 +49,7 @@ export function withToTable(f: RelationForm, toTable: string): RelationForm {
     ...f,
     toTable,
     toColumn: "",
-    name: toTable ? (f.kind === "has_one" ? singularize(toTable) : toTable) : "",
+    name: toTable ? classify(toTable, f.kind === "has_many") : "",
   };
 }
 
