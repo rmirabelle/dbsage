@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GitDiff, X } from "@phosphor-icons/react";
 import { useStore } from "../state/store";
@@ -165,7 +166,7 @@ export function CompareDatabaseDialog({
           <button
             className="ml-auto rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             onClick={onClose}
-            title="Close"
+            {...helpHandlers("Close")}
           >
             <X size={16} />
           </button>
@@ -209,7 +210,7 @@ export function CompareDatabaseDialog({
                   className="shrink-0 rounded px-2 py-1 text-zinc-300 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-40"
                   onClick={() => setShownSelected(true)}
                   disabled={!shown.length}
-                  title="Check every table currently shown by the filter"
+                  {...helpHandlers("Check every table currently shown by the filter")}
                 >
                   Select shown
                 </button>
@@ -217,7 +218,7 @@ export function CompareDatabaseDialog({
                   className="shrink-0 rounded px-2 py-1 text-zinc-300 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-40"
                   onClick={() => setShownSelected(false)}
                   disabled={!shown.length}
-                  title="Uncheck every table currently shown by the filter"
+                  {...helpHandlers("Uncheck every table currently shown by the filter")}
                 >
                   Clear shown
                 </button>

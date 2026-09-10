@@ -126,6 +126,8 @@ pub struct RelationRef {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ColumnFilter {
+    #[serde(default)]
+    pub date_only: bool,
     pub column: String,
     pub op: FilterOp,
     pub value: String,
@@ -138,13 +140,105 @@ pub struct ColumnFilter {
     pub relation: Option<RelationRef>,
 }
 
-/// Auto-wrap `value` with `%` for "contains" semantics, unless the user has
-/// already supplied wildcards (`%` or `_`) — then pass through verbatim.
+#[cfg(test)]
+mod date_equality_tests {
+    use super::*;
+
+    fn clause(op: &str, value: &str, date_only: bool) -> AppResult<(String, Vec<String>)> {
+        let filter: ColumnFilter = serde_json::from_value(serde_json::json!({
+            "column": "created", "op": op, "value": value, "dateOnly": date_only
+        })).unwrap();
+        build_where(Some(&vec![filter]), &HashSet::from(["created"]), "db", "events")
+    }
+
+    #[test]
+    fn date_equality_covers_full_day_including_fractional_seconds() {
+        let (sql, bindings) = clause("equals", "2024-02-29", true).unwrap();
+        assert_eq!(sql, " WHERE `created` BETWEEN ? AND ?");
+        assert_eq!(bindings, ["2024-02-29 00:00:00", "2024-02-29 23:59:59.999999"]);
+    }
+
+    #[test]
+    fn explicit_time_and_comparisons_keep_existing_semantics() {
+        let (sql, bindings) = clause("equals", "2024-02-29 00:00:00", false).unwrap();
+        assert_eq!(sql, " WHERE `created` = ?");
+        assert_eq!(bindings, ["2024-02-29 00:00:00"]);
+        for (op, operator) in [("gt", ">"), ("gte", ">="), ("lt", "<"), ("lte", "<="), ("ne", "<>")] {
+            let (sql, bindings) = clause(op, "2024-02-29", false).unwrap();
+            assert_eq!(sql, format!(" WHERE `created` {operator} ?"));
+            assert_eq!(bindings, ["2024-02-29"]);
+        }
+    }
+
+    #[test]
+    fn invalid_whole_day_dates_are_rejected() {
+        assert!(clause("equals", "2023-02-29", true).is_err());
+    }
+}
+
+/// Build the LIKE pattern for a filter value.
+///
+/// `%` (any run of characters) and `_` (exactly one character) are wildcards.
+/// A value with none of them is wrapped as `%value%` for "contains" semantics;
+/// a value with at least one is used as typed so the user controls the anchors.
+/// `\%`, `\_` and `\\` are escapes for the literal characters and do not count
+/// as wildcards. A lone backslash is doubled so MySQL keeps it literal.
 fn prepare_like_value(value: &str) -> String {
-    if value.contains('%') || value.contains('_') {
-        value.to_string()
+    let mut out = String::with_capacity(value.len() + 2);
+    let mut has_wildcard = false;
+    let mut chars = value.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.peek() {
+                Some(&n) if n == '%' || n == '_' || n == '\\' => {
+                    out.push('\\');
+                    out.push(n);
+                    chars.next();
+                }
+                _ => out.push_str("\\\\"),
+            },
+            '%' | '_' => {
+                has_wildcard = true;
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    if has_wildcard {
+        out
     } else {
-        format!("%{value}%")
+        format!("%{out}%")
+    }
+}
+
+#[cfg(test)]
+mod like_tests {
+    use super::prepare_like_value;
+
+    #[test]
+    fn plain_value_is_wrapped() {
+        assert_eq!(prepare_like_value("abc"), "%abc%");
+    }
+
+    #[test]
+    fn explicit_wildcards_pass_through() {
+        assert_eq!(prepare_like_value("abc%"), "abc%");
+        assert_eq!(prepare_like_value("%abc"), "%abc");
+        assert_eq!(prepare_like_value("a_c"), "a_c");
+    }
+
+    #[test]
+    fn escaped_wildcards_are_literal_and_still_wrapped() {
+        assert_eq!(prepare_like_value(r"50\%"), r"%50\%%");
+        assert_eq!(prepare_like_value(r"first\_name"), r"%first\_name%");
+        assert_eq!(prepare_like_value(r"a\%b%"), r"a\%b%");
+    }
+
+    #[test]
+    fn lone_backslash_is_doubled() {
+        assert_eq!(prepare_like_value(r"C:\dir"), r"%C:\\dir%");
+        assert_eq!(prepare_like_value(r"end\"), r"%end\\%");
+        assert_eq!(prepare_like_value(r"a\\b"), r"%a\\b%");
     }
 }
 
@@ -317,6 +411,14 @@ fn build_where(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
+            if f.date_only && matches!(f.op, FilterOp::Equals) && json_path.is_none() {
+                let date = chrono::NaiveDate::parse_from_str(&f.value, "%Y-%m-%d")
+                    .map_err(|_| AppError::Other("invalid date-only filter value".into()))?;
+                where_clauses.push(format!("{ident} BETWEEN ? AND ?"));
+                bindings.push(format!("{date} 00:00:00"));
+                bindings.push(format!("{date} 23:59:59.999999"));
+                continue;
+            }
             match &f.op {
                 /* Comparison operators apply to the column directly (no JSON
                    path); IS [NOT] NULL take no bound value. */
@@ -700,6 +802,68 @@ pub async fn suggest_column_values(
         })
         .collect();
     Ok(SuggestResult { values, skipped: false })
+}
+
+/** Inspect a bounded sample, without DISTINCT or a random sort over the table. */
+#[tauri::command]
+pub async fn sample_json_properties(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    column: String,
+    array_property: Option<String>,
+    selector_property: Option<String>,
+) -> AppResult<Vec<String>> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let columns = fetch_columns(&pool, &database, &table).await?;
+    if !columns.iter().any(|c| c.name == column) {
+        return Err(AppError::Other(format!("unknown column: {column}")));
+    }
+    let primary: Vec<_> = columns.iter().filter(|c| c.key == "PRI").collect();
+    let order = if primary.len() == 1 {
+        format!(" ORDER BY {} DESC", quote_ident(&primary[0].name))
+    } else {
+        String::new()
+    };
+    let valid_json = "CASE WHEN JSON_VALID(sample_value) THEN sample_value ELSE NULL END";
+    let document = if array_property.is_some() {
+        let array = format!("JSON_EXTRACT({valid_json}, ?)");
+        let value = if selector_property.is_some() { array } else { format!("JSON_EXTRACT({array}, '$[0]')") };
+        format!("CASE WHEN JSON_TYPE(JSON_EXTRACT({valid_json}, ?)) = 'ARRAY' THEN {value} ELSE NULL END")
+    } else { valid_json.to_string() };
+    let selection = if selector_property.is_some() { document } else { format!("JSON_KEYS({document})") };
+    let sql = format!(
+        "SELECT CAST({selection} AS CHAR) \
+         FROM (SELECT {} AS sample_value FROM {}.{}{order} LIMIT 100) AS json_sample",
+        quote_ident(&column), quote_ident(&database), quote_ident(&table)
+    );
+    let mut query = sqlx::query(&sql);
+    if let Some(property) = array_property {
+        let path = if property.is_empty() { "$".to_string() }
+            else { format!("$.{}", serde_json::to_string(&property)?) };
+        query = query.bind(path.clone()).bind(path);
+    }
+    let rows = query.fetch_all(&pool).await?;
+    let mut keys = std::collections::BTreeSet::new();
+    for row in rows {
+        if let Some(json) = row.try_get::<Option<String>, _>(0)? {
+            if let Some(property) = &selector_property {
+                if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(&json) {
+                    for item in items.into_iter().take(1000) {
+                        match item.get(property) {
+                            Some(Value::String(value)) => { keys.insert(value.clone()); }
+                            Some(value @ (Value::Number(_) | Value::Bool(_))) => { keys.insert(value.to_string()); }
+                            _ => {}
+                        }
+                    }
+                }
+            } else if let Ok(properties) = serde_json::from_str::<Vec<String>>(&json) {
+                keys.extend(properties);
+            }
+        }
+    }
+    Ok(keys.into_iter().collect())
 }
 
 #[tauri::command]

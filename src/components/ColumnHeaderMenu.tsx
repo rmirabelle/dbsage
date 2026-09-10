@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -16,6 +17,7 @@ import { DateTimePicker, dateModeFor, type DateMode } from "./DateTimePicker";
 import { COMPARE_OPS } from "../types";
 import { validateJsonShow } from "../lib/jsonPath";
 import { JsonShowEditorDialog } from "./JsonShowEditorDialog";
+import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import type {
   ColumnFilter,
   FilterOp,
@@ -35,6 +37,7 @@ interface Props {
   currentJsonShow: string | null;
   previewRows?: Record<string, unknown>[];
   previewRowIndex?: number;
+  sampleJsonProperties?: (arrayProperty?: string, selectorProperty?: string) => Promise<string[]>;
   onClose: () => void;
   onSort: (direction: SortDirection | null) => void;
   onFilter: (filter: ColumnFilter | null) => void;
@@ -42,7 +45,7 @@ interface Props {
   /** Fetches distinct column values starting with `prefix` for the Equals
    * auto-suggest. Absent = no suggestions (result grids, unsupported types). */
   suggest?: (prefix: string) => Promise<SuggestResult>;
-  /** The filter on this column is fixed by the host (a peek window's row
+  /** The filter on this column is fixed by the host (a peek panel's row
    * match) and can't be changed or cleared here; the menu says so instead of
    * showing the filter controls. Sort and JSON display still work. */
   locked?: boolean;
@@ -62,14 +65,16 @@ export function ColumnHeaderMenu({
   currentJsonShow,
   previewRows = [],
   previewRowIndex = 0,
+  sampleJsonProperties,
   onClose,
   onSort,
-  onFilter,
+  onFilter: applyFilter,
   onJsonShow,
   suggest,
   locked = false,
 }: Props) {
   const isJson = columnType.trim().toLowerCase() === "json";
+  const supportsTextPatterns = /^(?:char|varchar|tinytext|text|mediumtext|longtext|enum|set)\b/i.test(columnType.trim());
   /* DATE / DATETIME / TIMESTAMP columns get a calendar picker on the Equals
      and comparison inputs. */
   const dateMode = dateModeFor(columnType);
@@ -101,6 +106,17 @@ export function ColumnHeaderMenu({
   const [showEditor, setShowEditor] = useState(false);
   const showError = validateJsonShow(showPath);
   const ref = useRef<HTMLDivElement>(null);
+  const { style: menuPosition } = useAnchoredPosition(anchor.x, anchor.y, 8, ref);
+
+  /** One applied filter per column, including while a picker keeps the menu
+   * open. Clear other groups' drafts so they cannot still look selected. */
+  const onFilter = (filter: ColumnFilter | null) => {
+    const op = filter?.op;
+    setEqValue(op === "equals" || op === "ne" ? filter!.value : "");
+    setLikeValue(op === "like" || op === "notlike" ? filter!.value : "");
+    setCompareValue(op && COMPARE_OP_SET.has(op) ? filter!.value : "");
+    applyFilter(filter);
+  };
 
   /** The displayed (extracted) property is independent of the filter property,
    *  and updates the column live as the user types. */
@@ -138,8 +154,6 @@ export function ColumnHeaderMenu({
     };
   }, [onClose, showEditor]);
 
-  const left = Math.max(8, Math.min(window.innerWidth - MENU_WIDTH - 8, anchor.x));
-  const top = Math.max(8, Math.min(window.innerHeight - 24, anchor.y));
 
   /* JSON columns keep the original EQUALS / Contains fields (always op
      "equals"/"like" with a path); non-JSON columns use the combined toggles. */
@@ -157,10 +171,12 @@ export function ColumnHeaderMenu({
   };
 
   /* Combined-toggle commits (non-JSON). An empty value clears the filter. */
-  const commitEquality = () => {
-    const v = eqValue.trim();
-    onFilter(v ? { column, op: eqOp, value: v } : null);
-    onClose();
+  const commitEquality = (close = true, value = eqValue) => {
+    const v = value.trim();
+    onFilter(v ? { column, op: eqOp, value: v,
+      ...(dateMode && eqOp === "equals" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? { dateOnly: true } : {}),
+    } : null);
+    if (close) onClose();
   };
   const commitLikeness = () => {
     const v = likeValue.trim();
@@ -171,10 +187,10 @@ export function ColumnHeaderMenu({
     onFilter({ column, op, value: "" });
     onClose();
   };
-  const commitCompare = () => {
-    const v = compareValue.trim();
+  const commitCompare = (close = true, value = compareValue) => {
+    const v = value.trim();
     onFilter(v ? { column, op: compareOp, value: v } : null);
-    onClose();
+    if (close) onClose();
   };
 
   if (showEditor) return <JsonShowEditorDialog
@@ -182,6 +198,7 @@ export function ColumnHeaderMenu({
     initialValue={showPath}
     rows={previewRows}
     initialRowIndex={previewRowIndex}
+    sampleProperties={sampleJsonProperties}
     onClose={() => setShowEditor(false)}
     onApply={(value) => { onShowChange(value); setShowEditor(false); onClose(); }}
   />;
@@ -190,7 +207,7 @@ export function ColumnHeaderMenu({
     <div
       ref={ref}
       data-el="column-header-menu"
-      style={{ top, left, width: MENU_WIDTH }}
+      style={{ ...menuPosition, width: MENU_WIDTH }}
       className="fixed z-[100] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[12px] text-zinc-200 select-none"
       onClick={(e) => e.stopPropagation()}
     >
@@ -266,7 +283,7 @@ export function ColumnHeaderMenu({
             <button
               type="button"
               data-el="json-show-expand"
-              title="Expand expression editor"
+              {...helpHandlers("Expand expression editor")}
               aria-label="Expand expression editor"
               onClick={() => setShowEditor(true)}
               className="ml-1 shrink-0 self-start rounded p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
@@ -285,7 +302,7 @@ export function ColumnHeaderMenu({
 
       {locked ? (
         <div className="border-t border-zinc-800 px-3 py-2.5 flex items-center gap-2 text-[11.5px] text-zinc-400">
-          <LockSimple size={14} className="shrink-0 text-amber-400" />
+          <LockSimple size={14} className="shrink-0 text-violet-400" />
           <span>
             Fixed by this peek:{" "}
             <span className="font-mono text-zinc-200">
@@ -333,7 +350,6 @@ export function ColumnHeaderMenu({
                 setEqValue("");
                 if (currentFilter?.op === "equals") {
                   onFilter(null);
-                  onClose();
                 }
               }}
             />
@@ -348,7 +364,6 @@ export function ColumnHeaderMenu({
                 setLikeValue("");
                 if (currentFilter?.op === "like") {
                   onFilter(null);
-                  onClose();
                 }
               }}
             />
@@ -379,6 +394,8 @@ export function ColumnHeaderMenu({
               placeholder="value"
               onChange={setEqValue}
               onSubmit={commitEquality}
+              onPickerApply={(value) => commitEquality(false, value)}
+              onPickerDone={(value) => commitEquality(true, value)}
               onPick={(v) => {
                 onFilter({ column, op: eqOp, value: v });
                 onClose();
@@ -389,11 +406,10 @@ export function ColumnHeaderMenu({
                 setEqValue("");
                 if (eqActive) {
                   onFilter(null);
-                  onClose();
                 }
               }}
             />
-            <ToggleField
+            {supportsTextPatterns && <ToggleField
               options={[
                 { op: "like", label: "Like" },
                 { op: "notlike", label: "Not Like" },
@@ -409,10 +425,9 @@ export function ColumnHeaderMenu({
                 setLikeValue("");
                 if (likeActive) {
                   onFilter(null);
-                  onClose();
                 }
               }}
-            />
+            />}
             <ToggleField
               options={COMPARE_OPS}
               op={compareOp}
@@ -422,12 +437,13 @@ export function ColumnHeaderMenu({
               placeholder="value"
               onChange={setCompareValue}
               onSubmit={commitCompare}
+              onPickerApply={(value) => commitCompare(false, value)}
+              onPickerDone={(value) => commitCompare(true, value)}
               dateMode={dateMode}
               onClear={() => {
                 setCompareValue("");
                 if (compareActive) {
                   onFilter(null);
-                  onClose();
                 }
               }}
             />
@@ -523,6 +539,8 @@ function ToggleField({
   placeholder,
   onChange,
   onSubmit,
+  onPickerApply,
+  onPickerDone,
   onClear,
   onPick,
   suggest,
@@ -536,16 +554,19 @@ function ToggleField({
   placeholder: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
+  onPickerApply?: (value: string) => void;
+  /** Picker OK: commit the value and let the menu close. */
+  onPickerDone?: (value: string) => void;
   onClear: () => void;
   /** Called with a chosen suggestion; the caller commits it as the filter. */
   onPick?: (v: string) => void;
   suggest?: (prefix: string) => Promise<SuggestResult>;
-  /** Temporal columns: show a calendar button that opens a date/time picker. */
+  /** Temporal columns open the picker from the input or calendar button. */
   dateMode?: DateMode | null;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  const sug = useSuggestions(suggest, value);
+  const sug = useSuggestions(dateMode ? undefined : suggest, value);
   const [pickerOpen, setPickerOpen] = useState(false);
   const togglePicker = () => {
     sug.dismiss();
@@ -593,7 +614,14 @@ function ToggleField({
             value={value}
             placeholder={placeholder}
             onChange={(e) => onChange(e.target.value)}
-            onFocus={() => sug.open()}
+            onFocus={() => { if (!dateMode) sug.open(); }}
+            onBlur={() => sug.dismiss()}
+            onClick={() => {
+              if (dateMode) {
+                sug.dismiss();
+                setPickerOpen(true);
+              }
+            }}
             onKeyDown={(e) => {
               if (sug.visible) {
                 if (e.key === "ArrowDown") {
@@ -644,7 +672,7 @@ function ToggleField({
                   : "text-zinc-500 hover:text-accent-300"
               )}
               aria-label="Pick a date"
-              title={dateMode === "date" ? "Pick a date" : "Pick a date and time"}
+              {...helpHandlers(dateMode === "date" ? "Pick a date" : "Pick a date and time")}
             >
               <CalendarBlank size={15} />
             </button>
@@ -676,15 +704,15 @@ function ToggleField({
         <DateTimePicker
           value={value}
           mode={dateMode}
+          optionalTime={op === "equals" || COMPARE_OP_SET.has(op)}
+          dateOnlyLabel={op === "equals" ? "Entire day" : "Midnight"}
           onChange={onChange}
-          onApply={() => {
-            setPickerOpen(false);
-            onSubmit();
-          }}
+          onApply={onPickerApply ?? onSubmit}
+          onDone={onPickerDone ?? onSubmit}
           onClose={() => setPickerOpen(false)}
         />
       )}
-      {sug.visible && !pickerOpen && (
+      {sug.visible && !dateMode && !pickerOpen && (
         <ul
           ref={listRef}
           data-el="column-filter-suggestions"
@@ -694,7 +722,7 @@ function ToggleField({
           {sug.values.map((v, i) => (
             <li
               key={v}
-              onMouseEnter={() => sug.highlight(i)}
+
               /* mousedown, not click, so the pick lands before the input
                  loses focus. */
               onMouseDown={(e) => {
@@ -707,7 +735,7 @@ function ToggleField({
                   ? "bg-accent-500/20 text-accent-200"
                   : "text-zinc-300 hover:bg-zinc-800"
               )}
-              title={v}
+              {...helpHandlers(v, { onMouseEnter: () => sug.highlight(i) })}
             >
               {v}
             </li>

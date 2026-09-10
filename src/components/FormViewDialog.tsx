@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -85,7 +86,7 @@ export function FormViewDialog({
               onClick={() => setRowIndex((current) => current - 1)}
               disabled={!canPrevious}
               aria-label="Previous record"
-              title="Previous record (Left arrow)"
+              {...helpHandlers("Previous record (Left arrow)")}
               className="inline-flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
             >
               <CaretLeft size={15} weight="bold" />
@@ -100,7 +101,7 @@ export function FormViewDialog({
               onClick={() => setRowIndex((current) => current + 1)}
               disabled={!canNext}
               aria-label="Next record"
-              title="Next record (Right arrow)"
+              {...helpHandlers("Next record (Right arrow)")}
               className="inline-flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
             >
               <CaretRight size={15} weight="bold" />
@@ -111,7 +112,7 @@ export function FormViewDialog({
           <button
             onClick={onClose}
             aria-label="Close Form View"
-            title="Close (Escape)"
+            {...helpHandlers("Close (Escape)")}
             className="inline-flex h-7 w-7 items-center justify-center rounded text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
           >
             <X size={18} />

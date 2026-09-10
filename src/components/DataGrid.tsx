@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ipc } from "../ipc";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import {
   ArrowUp,
   ArrowDown,
@@ -138,6 +137,8 @@ interface Props {
   readOnly?: boolean;
   /** Reports the currently selected row indices (ascending) on every change. */
   onSelectionChange?: (indices: number[]) => void;
+  /** Reports whether the selected cells span more than one source row. */
+  onCellSelectionSpansRowsChange?: (spansRows: boolean) => void;
   /** Row indices to select on mount — restores a persisted selection when the
    * grid is (re)mounted, e.g. carried into a torn-off window. Read once. */
   initialSelectedRows?: number[];
@@ -181,8 +182,9 @@ interface Props {
    * header still highlights as filtered, but its menu shows the fixed value
    * instead of filter controls. */
   lockedFilterColumns?: string[];
+  hideColumnTypes?: boolean;
   /** Tint the alternating row stripes with a hint of colour — green for
-   * query results, violet for peek windows — so those grids read differently
+   * query results, violet for peek panels — so those grids read differently
    * from a table's rows at a glance. */
   stripeTint?: "green" | "violet";
   /** Suppress the native hover tooltip showing a cell's full value (used in peek
@@ -203,8 +205,6 @@ interface Props {
 }
 
 const ROW_HEIGHT = 26;
-/** Peek windows shorter than this grow to it while a column menu is open. */
-const PEEK_MENU_MIN_HEIGHT = 520;
 const MIN_COL_WIDTH = 80;
 
 /** Column types whose content is short enough to size a column to: numbers,
@@ -287,6 +287,7 @@ export function DataGrid({
   clearActiveCellOnRowSelect = false,
   readOnly = false,
   onSelectionChange,
+  onCellSelectionSpansRowsChange,
   initialSelectedRows,
   columnWidths,
   onColumnWidthsChange,
@@ -299,6 +300,7 @@ export function DataGrid({
   canDuplicateRows = false,
   peekableColumns,
   lockedFilterColumns,
+  hideColumnTypes = false,
   stripeTint,
   hideValueTooltip = false,
   onCellContextMenu,
@@ -324,33 +326,6 @@ export function DataGrid({
     null
   );
 
-  /**
-   * A peek window sized down to a few rows leaves no room for the column
-   * menus (header sort/filter menu, show/hide columns list). While one is
-   * open in a too-short peek window, extend the window's bottom edge to a
-   * workable minimum height, then snap back to the previous size when the
-   * menu closes. Main/tab windows are never resized.
-   */
-  const columnMenuOpen = menu != null || columnsMenu != null;
-  useEffect(() => {
-    if (!columnMenuOpen) return;
-    const win = getCurrentWindow();
-    if (!win.label.startsWith("peek-")) return;
-    if (window.innerHeight >= PEEK_MENU_MIN_HEIGHT) return;
-    let cancelled = false;
-    let prev: { width: number; height: number } | null = null;
-    void (async () => {
-      const scale = await win.scaleFactor();
-      const size = (await win.innerSize()).toLogical(scale);
-      if (cancelled) return;
-      prev = { width: size.width, height: size.height };
-      await win.setSize(new LogicalSize(size.width, PEEK_MENU_MIN_HEIGHT));
-    })();
-    return () => {
-      cancelled = true;
-      if (prev) void win.setSize(new LogicalSize(prev.width, prev.height));
-    };
-  }, [columnMenuOpen]);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(
     () => new Set(initialSelectedRows ?? [])
   );
@@ -362,7 +337,7 @@ export function DataGrid({
     rowIndex: number;
     column: string;
   } | null>(null);
-  const draggingRef = useRef(false);
+  const draggingRef = useRef<{ anchor: number; deselectFrom: Set<number> | null } | null>(null);
   const [editing, setEditing] = useState<{ rowIndex: number; column: string } | null>(
     null
   );
@@ -371,6 +346,7 @@ export function DataGrid({
    * (gutter) — starting one clears the other. */
   const [cellSel, setCellSel] = useState<CellRange | null>(null);
   const cellDraggingRef = useRef(false);
+  const deselectClickRef = useRef<{ x: number; y: number; element: EventTarget; clear: () => void } | null>(null);
   /** A pending multi-cell edit session. "type" mirrors one live text into every
    * selected cell; "paste" stages one clipboard line per cell. Enter commits
    * (via onBatchEdit), Esc reverts — nothing touches the DB until commit. */
@@ -422,6 +398,13 @@ export function DataGrid({
       columns: visibleColumns.slice(columnLo, columnHi + 1).map((c) => c.name),
     };
   }, [cellSel, visibleColumns]);
+
+  const cellSelectionSpansRows = (resolvedCellSel?.rows.length ?? 0) > 1;
+  const onCellSelectionSpansRowsChangeRef = useRef(onCellSelectionSpansRowsChange);
+  onCellSelectionSpansRowsChangeRef.current = onCellSelectionSpansRowsChange;
+  useEffect(() => {
+    onCellSelectionSpansRowsChangeRef.current?.(cellSelectionSpansRows);
+  }, [cellSelectionSpansRows]);
 
   const displayRows = useMemo<DisplayRow[]>(() => {
     if (!draftBatch) {
@@ -536,6 +519,8 @@ export function DataGrid({
     setEditing(null);
     setCellSel(null);
     setBatch(null);
+    deselectClickRef.current = null;
+    draggingRef.current = null;
   }, [viewKey]);
 
   /* Draft rows survive hide/show-column changes so a required hidden column
@@ -552,8 +537,14 @@ export function DataGrid({
   }, [draftViewKey]);
 
   useEffect(() => {
-    const onUp = () => {
-      draggingRef.current = false;
+    const onUp = (event: MouseEvent) => {
+      const pending = deselectClickRef.current;
+      deselectClickRef.current = null;
+      if (pending && event.button === 0 && Math.hypot(event.clientX - pending.x, event.clientY - pending.y) < 4
+        && event.target instanceof Node && pending.element instanceof HTMLElement && pending.element.contains(event.target)) {
+        pending.clear();
+      }
+      draggingRef.current = null;
       cellDraggingRef.current = false;
     };
     window.addEventListener("mouseup", onUp);
@@ -581,6 +572,8 @@ export function DataGrid({
    * clicking a cell selects the cell, never the row. */
   const handleRowMouseDown = (index: number, e: React.MouseEvent) => {
     if (e.button !== 0) return;
+    e.preventDefault();
+    draggingRef.current = null;
     if (batch) cancelBatch();
     if (cellSel) {
       setCellSel(null);
@@ -605,6 +598,7 @@ export function DataGrid({
     /* A plain click on the row-number gutter toggles that row's selection, so
        clicking an already-selected row's number de-selects it. */
     if (selectedRows.has(index)) {
+      draggingRef.current = { anchor: index, deselectFrom: new Set(selectedRows) };
       setSelectedRows((prev) => {
         const next = new Set(prev);
         next.delete(index);
@@ -615,7 +609,7 @@ export function DataGrid({
     }
     setSelectedRows(new Set([index]));
     setAnchor(index);
-    draggingRef.current = true;
+    draggingRef.current = { anchor: index, deselectFrom: null };
   };
 
   const handleCellMouseDown = (
@@ -623,7 +617,19 @@ export function DataGrid({
     column: string,
     e: React.MouseEvent
   ) => {
+    deselectClickRef.current = null;
     if (e.button !== 0) return;
+    /** Decide on mouse-up so a drag starting in the active cell still selects
+     * a range. A double-click's second press always selects before editing. */
+    if (!batch && !editing && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && e.detail === 1
+      && selectedRows.size === 0 && activeCell?.rowIndex === rowIndex && activeCell.column === column
+      && (!cellSel || (cellSel.anchor.rowIndex === rowIndex && cellSel.focus.rowIndex === rowIndex
+        && cellSel.anchor.column === column && cellSel.focus.column === column))) {
+      deselectClickRef.current = {
+        x: e.clientX, y: e.clientY, element: e.currentTarget,
+        clear: () => { setCellSel(null); onActiveCellChange(null); },
+      };
+    }
     if (batch) cancelBatch();
     if (selectedRows.size) {
       setSelectedRows(new Set());
@@ -641,6 +647,7 @@ export function DataGrid({
 
   const handleCellMouseEnter = (rowIndex: number, column: string) => {
     if (!cellDraggingRef.current) return;
+    deselectClickRef.current = null;
     const focus = { rowIndex, column };
     setCellSel((current) =>
       current ? { anchor: current.anchor, focus } : null
@@ -649,8 +656,17 @@ export function DataGrid({
   };
 
   const handleRowMouseEnter = (index: number) => {
-    if (!draggingRef.current || anchor === null) return;
-    extendSelection(anchor, index);
+    const drag = draggingRef.current;
+    if (!drag) return;
+    if (drag.deselectFrom) {
+      const next = new Set(drag.deselectFrom);
+      const lo = Math.min(drag.anchor, index);
+      const hi = Math.max(drag.anchor, index);
+      for (let i = lo; i <= hi; i++) next.delete(i);
+      setSelectedRows(next);
+    } else {
+      extendSelection(drag.anchor, index);
+    }
   };
 
   /** The cell selection used by copy / paste / type-to-edit: the explicit
@@ -1125,6 +1141,23 @@ export function DataGrid({
     overscan: 12,
   });
 
+  useEffect(() => {
+    const grid = scrollRef.current;
+    if (!grid) return;
+    let frame = 0;
+    const reveal = (event: Event) => {
+      const index = (event as CustomEvent<number | undefined>).detail;
+      const displayIndex = displayRows.findIndex((entry) => entry.kind === "stored" && entry.sourceIndex === index);
+      if (displayIndex >= 0) rowVirtualizer.scrollToIndex(displayIndex, { align: "center" });
+      frame = requestAnimationFrame(() => {
+        const row = index == null ? null : grid.querySelector<HTMLElement>(`[data-row-index="${index}"]`);
+        (row ?? grid).animate([{ boxShadow: "inset 0 0 0 2px #a78bfa" }, { boxShadow: "inset 0 0 0 2px transparent" }], { duration: 1000 });
+      });
+    };
+    grid.addEventListener("dbsage:reveal-row", reveal);
+    return () => { grid.removeEventListener("dbsage:reveal-row", reveal); cancelAnimationFrame(frame); };
+  }, [displayRows, rowVirtualizer]);
+
   /* Scroll a column into view, accounting for the pinned 56px row-number
      gutter that would otherwise cover the left columns. */
   const scrollColumnIntoView = (colIndex: number) => {
@@ -1289,6 +1322,8 @@ export function DataGrid({
     >
       <div style={{ width: totalWidth, minWidth: "100%" }}>
         <HeaderRow
+          hideColumnTypes={hideColumnTypes}
+          lockedFilterColumns={lockedFilterColumns}
           columns={visibleColumns}
           widths={widths}
           onResizeColumn={(i, delta) =>
@@ -1386,6 +1421,7 @@ export function DataGrid({
                   key={vItem.key}
                   data-el="grid-row"
                   onMouseEnter={() => handleRowMouseEnter(sourceIndex)}
+                  data-row-index={sourceIndex}
                   className={clsx(
                     "absolute left-0 right-0 flex items-stretch border-b border-zinc-900 cursor-default",
                     isSelected ? "bg-emerald-900/60" : stripe,
@@ -1530,6 +1566,7 @@ export function DataGrid({
           currentFilter={filterByColumn.get(menu.column) ?? null}
           currentJsonShow={jsonDisplay[menu.column] ?? null}
           previewRows={rows}
+          sampleJsonProperties={suggestSource ? (arrayProperty, selectorProperty) => ipc.sampleJsonProperties({ ...suggestSource, column: menu.column, arrayProperty, selectorProperty }) : undefined}
           previewRowIndex={activeCell?.rowIndex ?? selectedRows.values().next().value ?? 0}
           onClose={() => setMenu(null)}
           onSort={(direction: SortDirection | null) =>
@@ -1978,6 +2015,8 @@ function RowContextMenu({
 }
 
 function HeaderRow({
+  hideColumnTypes,
+  lockedFilterColumns,
   columns,
   widths,
   onResizeColumn,
@@ -1991,6 +2030,8 @@ function HeaderRow({
   onColumnClick,
   onColumnsButtonClick,
 }: {
+  hideColumnTypes?: boolean;
+  lockedFilterColumns?: string[];
   columns: ColumnInfo[];
   widths: number[];
   onResizeColumn: (index: number, delta: number) => void;
@@ -2012,12 +2053,14 @@ function HeaderRow({
     hasHiddenColumns ||
     filterByColumn.size > 0 ||
     Object.keys(jsonDisplay).length > 0;
+  const hasUserFilters = hasHiddenColumns || Object.keys(jsonDisplay).length > 0
+    || [...filterByColumn.keys()].some((column) => !lockedFilterColumns?.includes(column));
   return (
     <div
       data-el="grid-header"
       className={clsx(
         "sticky top-0 z-20 flex items-stretch bg-zinc-900 border-b border-zinc-800 select-none",
-        anyFiltered && "border-t-2 border-t-amber-400"
+        anyFiltered && (hasUserFilters ? "border-t-2 border-t-amber-400" : "border-t-2 border-t-violet-400")
       )}
     >
       <div className="sticky left-0 z-30 w-14 shrink-0 border-r border-zinc-800 bg-zinc-900 flex items-center justify-center">
@@ -2031,11 +2074,9 @@ function HeaderRow({
             const rect = (cell ?? e.currentTarget).getBoundingClientRect();
             onColumnsButtonClick(rect);
           }}
-          title={
-            hasHiddenColumns
+          {...helpHandlers(hasHiddenColumns
               ? "Some columns are hidden — click to manage"
-              : "Show/hide columns"
-          }
+              : "Show/hide columns")}
           className={clsx(
             "p-1 rounded transition-colors",
             hasHiddenColumns
@@ -2051,6 +2092,7 @@ function HeaderRow({
         const isFiltered =
           filterByColumn.has(col.name) || !!jsonDisplay[col.name];
         const isPeekable = peekableColumns?.has(col.name) ?? false;
+        const isRelationFilter = filterByColumn.has(col.name) && lockedFilterColumns?.includes(col.name);
         const comment = col.comment?.trim();
         const cell = (
           <div
@@ -2060,7 +2102,7 @@ function HeaderRow({
             className={clsx(
               "relative shrink-0 px-3 py-1.5 border-r border-zinc-800 flex flex-col justify-center cursor-pointer",
               isFiltered
-                ? "bg-amber-400 hover:bg-amber-300"
+                ? isRelationFilter ? "bg-violet-400 hover:bg-violet-300" : "bg-amber-400 hover:bg-amber-300"
                 : "hover:bg-zinc-800/60",
               !isFiltered && isSorted && "bg-zinc-800/40"
             )}
@@ -2115,14 +2157,14 @@ function HeaderRow({
                 </span>
               )}
             </div>
-            <div
+            {!hideColumnTypes && <div
               className={clsx(
                 "text-[10px] truncate font-mono",
                 isFiltered ? "text-black/70" : "text-zinc-500"
               )}
             >
               {col.dataType}
-            </div>
+            </div>}
             <ResizeHandle
               onDelta={(delta) => onResizeColumn(i, delta)}
               onEnd={onResizeEnd}
@@ -2165,7 +2207,7 @@ function ResizeHandle({
   return (
     <div
       data-resize-handle
-      title="Drag to resize · double-click to fit the content"
+      {...helpHandlers("Drag to resize · double-click to fit the content")}
       onDoubleClick={(e) => {
         e.stopPropagation();
         onAutoFit();
@@ -2298,9 +2340,9 @@ function Cell({
       data-el="grid-cell"
       data-active-cell={isActive ? "true" : undefined}
       onMouseDown={onCellMouseDown}
-      onMouseEnter={() => {
+      onMouseEnter={(event) => {
         onCellMouseEnter();
-        hoverHelp?.onMouseEnter();
+        hoverHelp?.onMouseEnter(event);
       }}
       onMouseLeave={hoverHelp?.onMouseLeave}
       onClick={(e) => e.stopPropagation()}
@@ -2426,11 +2468,9 @@ function BatchCellEditor({
             ? "border-zinc-700 italic text-zinc-500"
             : "border-amber-400/60"
         )}
-        title={
-          column.nullable
+        {...helpHandlers(column.nullable
             ? `Enter = apply to ${count} cell${plural} · Esc = cancel · empty = NULL · Ctrl+Enter = empty string`
-            : `Enter = apply to ${count} cell${plural} · Esc = cancel`
-        }
+            : `Enter = apply to ${count} cell${plural} · Esc = cancel`)}
       />
     </div>
   );
@@ -2517,11 +2557,9 @@ function CellEditor({
             ? "border-zinc-700 italic text-zinc-500"
             : "border-accent-500/60"
         )}
-        title={
-          column.nullable
+        {...helpHandlers(column.nullable
             ? "Enter = save · Esc = cancel · empty = NULL · Ctrl+Enter = empty string"
-            : "Enter = save · Esc = cancel"
-        }
+            : "Enter = save · Esc = cancel")}
       />
     </div>
   );

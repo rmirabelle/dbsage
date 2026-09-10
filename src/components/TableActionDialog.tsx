@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useState } from "react";
 import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import {
@@ -286,11 +287,9 @@ export function TableActionDialog({
             data-el="table-action-confirm-btn"
             onClick={handleConfirm}
             disabled={busy || truncateBlocked}
-            title={
-              orphaning.length > 0
+            {...helpHandlers(orphaning.length > 0
                 ? "Rows in other tables would be orphaned"
-                : undefined
-            }
+                : undefined)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-semibold bg-rose-500 text-white hover:bg-rose-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {busy || (!isDelete && blockers === null) ? (

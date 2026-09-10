@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Play,
@@ -415,7 +416,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             data-el="query-stop-btn"
             onClick={() => stopQuery(tab.id)}
             disabled={tab.stopping}
-            title="Stop the running query"
+            {...helpHandlers("Stop the running query")}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-rose-500 text-rose-950 hover:bg-rose-400 disabled:opacity-60 disabled:hover:bg-rose-500 transition-colors"
           >
             {tab.stopping ? (
@@ -431,7 +432,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
               data-el="query-execute-btn"
               onClick={() => executeQuery(tab.id)}
               disabled={!canRun}
-              title="Execute (Ctrl+Enter)"
+              {...helpHandlers("Execute (Ctrl+Enter)")}
               className="inline-flex items-center gap-1.5 pl-2 pr-2 py-1 rounded-l font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
             >
               <Play size={16} weight="fill" />
@@ -441,7 +442,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
               data-el="query-execute-menu-btn"
               onClick={() => setExecMenuOpen((o) => !o)}
               disabled={!canRun}
-              title="More run options"
+              {...helpHandlers("More run options")}
               className="inline-flex items-center px-1 py-1 rounded-r border-l border-emerald-700/50 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
             >
               <CaretDown size={13} />
@@ -502,7 +503,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           <button
             data-el="saved-query-overwrite-btn"
             onClick={() => saveQuery(tab.id, tab.activeSavedQuery!)}
-            title={`Overwrite "${tab.activeSavedQuery}" with the current query`}
+            {...helpHandlers(`Overwrite "${tab.activeSavedQuery}" with the current query`)}
             className="inline-flex items-center justify-center p-1 rounded text-emerald-400 hover:text-emerald-300 hover:bg-zinc-800 transition-colors"
           >
             <FloppyDisk size={16} weight="fill" />
@@ -513,7 +514,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           <button
             data-el="analysis-toggle-btn"
             onClick={() => setShowAnalysis((v) => !v)}
-            title="Toggle the query analysis"
+            {...helpHandlers("Toggle the query analysis")}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 text-emerald-300 hover:bg-zinc-700"
           >
             <Gauge size={16} weight="fill" className="shrink-0" />
@@ -535,7 +536,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           <button
             data-el="query-insert-btn"
             onClick={() => setInsertMenuOpen((o) => !o)}
-            title="Insert a generated SQL snippet"
+            {...helpHandlers("Insert a generated SQL snippet")}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors"
           >
             <BracketsCurly size={16} className="text-sky-400" />
@@ -572,7 +573,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             data-el="query-format-btn"
             onClick={() => runFormat(formatStyle)}
             disabled={!tab.sql.trim()}
-            title={`Format (${formatStyle})`}
+            {...helpHandlers(`Format (${formatStyle})`)}
             className="inline-flex items-center gap-1.5 pl-2 pr-2 py-1 rounded-l font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:hover:bg-zinc-800 transition-colors"
           >
             <MagicWand size={16} />
@@ -582,7 +583,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             data-el="query-format-menu-btn"
             onClick={() => setFormatMenuOpen((o) => !o)}
             disabled={!tab.sql.trim()}
-            title="Choose formatting style"
+            {...helpHandlers("Choose formatting style")}
             className="inline-flex items-center px-1 py-1 rounded-r border-l border-zinc-900/50 bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:hover:bg-zinc-800 transition-colors"
           >
             <CaretDown size={13} />
@@ -626,7 +627,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
       <div
         data-el="query-splitter"
         onPointerDown={startEditorResize}
-        title="Drag to resize the editor"
+        {...helpHandlers("Drag to resize the editor")}
         className="group shrink-0 h-1.5 cursor-row-resize bg-zinc-800/60 hover:bg-accent-500/50 transition-colors"
       />
 
@@ -668,11 +669,9 @@ export function QueryView({ tab }: { tab: QueryTab }) {
                   key={i}
                   data-el="query-result-set-btn"
                   onClick={() => selectSet(i)}
-                  title={
-                    stmt
+                  {...helpHandlers(stmt
                       ? `${summary} — ${statementPreview(stmt)}`
-                      : `Statement ${i + 1}: ${summary}`
-                  }
+                      : `Statement ${i + 1}: ${summary}`)}
                   className={clsx(
                     "min-w-6 px-1.5 py-0.5 rounded text-[11px] font-semibold tabular-nums transition-colors",
                     i === clampedSetIndex
@@ -694,7 +693,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
               setFilters([]);
               setHiddenColumns([]);
             }}
-            title="Remove every filter and show all columns"
+            {...helpHandlers("Remove every filter and show all columns")}
             className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-amber-400 text-black hover:bg-amber-300 transition-colors"
           >
             <Funnel size={15} weight="fill" />
@@ -720,7 +719,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           data-el="expanded-toggle-btn"
           onClick={() => setExpanded(!expanded)}
           disabled={!hasResultSet}
-          title="Toggle the Inspector panel"
+          {...helpHandlers("Toggle the Inspector panel")}
           className={clsx(
             "inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800 bg-zinc-800 hover:bg-zinc-700",
             expanded ? "text-emerald-300" : "text-zinc-500 hover:text-zinc-400"
@@ -851,7 +850,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
                 <span className="text-zinc-700">·</span>
                 <span
                   className="text-amber-400 font-semibold"
-                  title={`Capped at ${activeSet.rows.length.toLocaleString()} rows — the query matched more. Raise "Max rows" (or pick "No limit") to fetch more.`}
+                  {...helpHandlers(`Capped at ${activeSet.rows.length.toLocaleString()} rows — the query matched more. Raise "Max rows" (or pick "No limit") to fetch more.`)}
                 >
                   capped
                 </span>
@@ -861,13 +860,13 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         )}
         {(tab.loading || result != null) && (
           <span className="ml-auto inline-flex items-center gap-3 tabular-nums">
-            <span title="Server-side execution time (statement run only)">
+            <span {...helpHandlers("Server-side execution time (statement run only)")}>
               <span className="text-zinc-500">Server</span>{" "}
               <span className="text-zinc-300">
                 {formatMs(tab.loading ? tab.liveServerMs : result?.elapsedMs ?? 0)}
               </span>
             </span>
-            <span title="Round-trip time (request, server, and transfer back)">
+            <span {...helpHandlers("Round-trip time (request, server, and transfer back)")}>
               <span className="text-zinc-500">Round trip</span>{" "}
               <span className="text-zinc-300">
                 {formatMs(

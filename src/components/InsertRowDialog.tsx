@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
@@ -409,7 +410,7 @@ export function InsertRowDialog({
                         {m.required && (
                           <span
                             className="text-rose-500 shrink-0 text-[16px] leading-none"
-                            title="required"
+                            {...helpHandlers("required")}
                           >
                             *
                           </span>

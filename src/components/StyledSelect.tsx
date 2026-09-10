@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { CaretDown } from "@phosphor-icons/react";
@@ -110,7 +111,7 @@ export function StyledSelect({
         type="button"
         data-el={dataEl}
         disabled={disabled}
-        title={title}
+        {...helpHandlers(title)}
         onClick={() => (open ? setOpen(false) : openMenu())}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {

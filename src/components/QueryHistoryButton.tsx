@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useState } from "react";
 import {
   ClockCounterClockwise,
@@ -30,7 +31,7 @@ export function QueryHistoryButton({
         data-el="query-history-btn"
         onClick={() => setOpen(true)}
         disabled={disabled}
-        title={`Query history (${items.length})`}
+        {...helpHandlers(`Query history (${items.length})`)}
         className="inline-flex items-center gap-1.5 h-7 px-2 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100"
       >
         <ClockCounterClockwise size={16} weight="bold" className="shrink-0 text-emerald-400" />
@@ -118,7 +119,7 @@ function QueryHistoryDialog({
               data-el="query-history-clear-btn"
               onClick={handleClear}
               disabled={items.length === 0}
-              title="Clear all history for this database"
+              {...helpHandlers("Clear all history for this database")}
               className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-rose-500 text-rose-950 hover:bg-rose-400 disabled:opacity-40 disabled:hover:bg-rose-500 transition-colors"
             >
               <Trash size={14} />
@@ -189,7 +190,7 @@ function HistoryRow({
       <button
         onClick={onApply}
         className="flex-1 min-w-0 text-left"
-        title="Load into editor"
+        {...helpHandlers("Load into editor")}
       >
         <pre className="text-[11.5px] font-mono text-zinc-200 whitespace-pre-wrap break-words line-clamp-3">
           {flattenSql(item.sql)}
@@ -200,7 +201,7 @@ function HistoryRow({
       </button>
       <button
         onClick={onDelete}
-        title="Delete this history entry"
+        {...helpHandlers("Delete this history entry")}
         aria-label="Delete history entry"
         className="shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition"
       >

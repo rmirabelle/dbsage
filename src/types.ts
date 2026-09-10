@@ -129,6 +129,16 @@ export interface StateCounts {
 
 export type ImportSummary = StateCounts;
 
+export interface StateImportSource { host: string; database: string }
+export interface StateImportMapping {
+  sourceHost: string;
+  sourceDatabase: string;
+  profileId: string;
+  database: string;
+  overwrite: boolean;
+}
+export interface StateMappingPreview { token: string; counts: StateCounts; notices: string[] }
+
 /** Which state categories an export or import should include. */
 export interface StateSelection {
   profiles: boolean;
@@ -152,6 +162,9 @@ export const STATE_CATEGORIES: { key: keyof StateSelection; label: string }[] = 
 /** Per-table column configuration, persisted backend-side and included in
  * state export/import. */
 export interface ColumnSetup {
+  peekAll?: IntegratedPeekState | null;
+  relationsOpen?: boolean;
+  inspectorHeight?: number;
   hiddenColumns: string[];
   filters: ColumnFilter[];
   jsonDisplay: Record<string, string>;
@@ -172,9 +185,15 @@ export interface PeekTarget {
   value: string | null;
 }
 
-/** Everything needed to (re)open a peek in its own window. Stashed as the
- * window's seed and registered so saved views can capture open peeks. */
+/** A relation peek's identity and saved panel configuration. Legacy window
+ * fields remain readable so older saved views can migrate to integrated tabs. */
 export interface PeekSeed {
+  /** Independent Solo preference for this peek's own relations. */
+  relationsSolo?: boolean;
+  childPeekAll?: IntegratedPeekState | null;
+  childPeekOpen?: boolean;
+  hostedPeeks?: (PeekSeed & { id: string; title: string })[];
+  activeHostedPeek?: string;
   profileId: string;
   profileName: string;
   database: string;
@@ -223,15 +242,19 @@ export type PeekViewState = Pick<
   | "columnWidths"
   | "jsonDisplay"
   | "relationsOpen"
+  | "relationsSolo"
   | "inspectorHeight"
   | "activeColumn"
   | "kind"
   | "compactHeight"
   | "fromView"
+  | "hostedPeeks"
+  | "activeHostedPeek"
+  | "childPeekAll"
+  | "childPeekOpen"
 >;
 
-/** A peek as reported by `list_open_peeks`: its seed plus current on-screen
- * geometry (CSS px), so a saved table view can restore it where it sat. */
+/** Legacy window descriptor retained only for importing older saved views. */
 export interface PeekDescriptor extends PeekSeed {
   /** The peek's window label (`peek-<n>`), for closing it by name. */
   label?: string;
@@ -241,15 +264,32 @@ export interface PeekDescriptor extends PeekSeed {
   height?: number;
 }
 
+/** The inline Peek ALL workspace belongs to its source Table View. */
+export interface IntegratedPeekState {
+  /** Hide the complete workspace while retaining its tabs and configuration. */
+  closed?: boolean;
+  dock?: "bottom" | "right";
+  width?: number;
+  relationsWidth?: number;
+  relationsCollapsed?: boolean;
+  hiddenPeeks?: NonNullable<PeekSeed["hostedPeeks"]>;
+  solo?: boolean;
+  height: number;
+  activeId: string;
+  peeks: NonNullable<PeekSeed["hostedPeeks"]>;
+}
+
 /** A full, reusable table-view snapshot: everything a named preset captures and
  * restores. Like {@link ColumnSetup} but also carries the sort. */
 export interface TableViewSetup {
+  peekAll?: IntegratedPeekState | null;
+  inspectorHeight?: number;
   hiddenColumns: string[];
   columnWidths: Record<string, number>;
   sort: SortSpec | null;
   filters: ColumnFilter[];
   jsonDisplay: Record<string, string>;
-  /** Peek windows that were open against this table when the view was saved. */
+  /** Legacy window layout, migrated to integrated panels when applying the view. */
   peeks?: PeekDescriptor[];
   /** Whether the Relations side panel was showing when the view was saved. */
   relationsOpen?: boolean;
@@ -353,6 +393,8 @@ export const COMPARE_OPS: { op: FilterOp; label: string }[] = [
 ];
 
 export interface ColumnFilter {
+  /** Date-only EQUALS matches the entire selected day. */
+  dateOnly?: boolean;
   column: string;
   op: FilterOp;
   value: string;
@@ -367,6 +409,8 @@ export interface ColumnFilter {
 }
 
 export interface RowsTab extends BaseTab {
+  peekAll?: IntegratedPeekState | null;
+  inspectorHeight?: number;
   kind: "rows";
   table: string;
   /** A nonce set fresh each time the table is opened (its tab id is otherwise
@@ -409,6 +453,21 @@ export interface RowsTab extends BaseTab {
   inspectorOpen?: boolean;
   /** Whether the Relations side panel is showing (same reasoning). */
   relationsOpen?: boolean;
+  /** A selection to restore when the next page arrives, matched by key
+   * against the rows it was made in (a peek opening as a full table). */
+  selectFrom?: RowsSelectFrom;
+}
+
+export interface RowsSelectFrom {
+  rows: RowRecord[];
+  activeCell: { rowIndex: number; column: string } | null;
+  selectedRows: number[];
+}
+
+/** The grid state a peek hands over when it opens as a full table tab. */
+export interface TableOpenFrom extends RowsSelectFrom {
+  filters: ColumnFilter[];
+  sort: SortSpec | null;
 }
 
 export interface Folder {

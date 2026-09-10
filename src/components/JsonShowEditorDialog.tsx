@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CaretLeft, CaretRight, X } from "@phosphor-icons/react";
 import { compactDisplay, extractJsonDisplay, extractJsonShowParts, validateJsonShow } from "../lib/jsonPath";
+import { matchingRootProperties, matchingSelectorValues, jsonPropertyCompletion, rootJsonProperties } from "../lib/jsonPropertySuggestions";
 
 interface Props {
   column: string;
   initialValue: string;
   rows: Record<string, unknown>[];
   initialRowIndex: number;
+  sampleProperties?: (arrayProperty?: string, selectorProperty?: string) => Promise<string[]>;
   onApply: (value: string) => void;
   onClose: () => void;
 }
@@ -26,10 +28,70 @@ const EXPRESSION_EXAMPLES = [
 ];
 
 /** Native modal supplies focus trapping and isolates the editor from the grid. */
-export function JsonShowEditorDialog({ column, initialValue, rows, initialRowIndex, onApply, onClose }: Props) {
+export function JsonShowEditorDialog({ column, initialValue, rows, initialRowIndex, sampleProperties, onApply, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const [draft, setDraft] = useState(initialValue);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const sampler = useRef(sampleProperties);
+  const arraySamples = useRef(new Map<string, Promise<string[]>>());
+  const [keys, setKeys] = useState(() => rootJsonProperties(rows, column));
+  const [sampleStatus, setSampleStatus] = useState(sampleProperties ? "Sampling properties…" : "Suggestions from up to 100 loaded rows.");
+  const [caret, setCaret] = useState(initialValue.length);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [choice, setChoice] = useState(0);
+  const [suggestions, setSuggestions] = useState<{ text: string; caret: number; values: string[] } | null>(null);
+  const options = suggestOpen && suggestions?.text === draft && suggestions.caret === caret ? suggestions.values : [];
+
+  useEffect(() => {
+    if (!sampler.current) return;
+    let cancelled = false;
+    void sampler.current().then((sample) => {
+      if (cancelled) return;
+      setKeys((local) => [...new Set([...local, ...sample])]);
+      setSampleStatus("Root properties from up to 100 sampled rows plus loaded rows; properties may vary by row.");
+    }).catch(() => {
+      if (!cancelled) setSampleStatus("Table sample unavailable; suggestions use loaded rows.");
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!suggestOpen) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const completion = jsonPropertyCompletion(draft, caret);
+      let properties = keys;
+      if (completion?.arrayProperty !== undefined) {
+        const property = completion.arrayProperty;
+        properties = rootJsonProperties(rows, column, property, completion.selectorProperty);
+        const cacheKey = JSON.stringify([property, completion.selectorProperty]);
+        if (sampler.current) {
+          let sample = arraySamples.current.get(cacheKey);
+          if (!sample) {
+            sample = sampler.current(property, completion.selectorProperty).catch(() => []);
+            arraySamples.current.set(cacheKey, sample);
+          }
+          properties = [...new Set([...properties, ...await sample])];
+        }
+      }
+      if (cancelled) return;
+      setSuggestions({ text: draft, caret, values: completion ? (completion.selectorProperty === undefined ? matchingRootProperties : matchingSelectorValues)(properties, completion.prefix) : [] });
+      setChoice(0);
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [draft, caret, keys, suggestOpen, rows, column]);
+
+  const acceptProperty = (property: string) => {
+    const completion = jsonPropertyCompletion(draft, caret);
+    if (!completion) return;
+    const next = draft.slice(0, completion.start) + property + draft.slice(completion.end);
+    const position = completion.start + property.length;
+    setDraft(next);
+    setCaret(position);
+    setSuggestOpen(false);
+    requestAnimationFrame(() => { inputRef.current?.focus(); inputRef.current?.setSelectionRange(position, position); setSuggestOpen(false); });
+  };
   const [rowIndex, setRowIndex] = useState(Math.max(0, Math.min(initialRowIndex, rows.length - 1)));
   const error = validateJsonShow(draft);
   const row = rows[rowIndex];
@@ -96,18 +158,48 @@ export function JsonShowEditorDialog({ column, initialValue, rows, initialRowInd
         </header>
         <div className="grid h-48 max-h-[28%] min-h-28 shrink-0 grid-cols-[3fr_2fr] grid-rows-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 pt-4 pb-2">
             <label htmlFor="json-show-expression" className="col-start-1 row-start-1 self-center text-xs font-semibold text-zinc-300">Expressions</label>
+            <div className="relative col-start-1 row-start-2 min-h-0 min-w-0">
             <textarea
+              ref={inputRef}
               id="json-show-expression"
               data-el="json-show-expression"
               autoFocus
               spellCheck={false}
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => { setDraft(event.target.value); setCaret(event.target.selectionStart); setSuggestOpen(true); }}
+              onSelect={(event) => { setCaret(event.currentTarget.selectionStart); if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) setSuggestOpen(false); }}
+              onFocus={() => setSuggestOpen(true)}
+              onBlur={() => setSuggestOpen(false)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === "Escape" && suggestOpen) { event.preventDefault(); event.stopPropagation(); setSuggestOpen(false); return; }
+                if (!options.length || event.ctrlKey || event.metaKey || event.altKey) return;
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault(); event.stopPropagation();
+                  setChoice((index) => (index + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length);
+                } else if (event.key === "Enter" || (event.key === "Tab" && !event.shiftKey)) {
+                  event.preventDefault(); event.stopPropagation(); acceptProperty(options[choice] ?? options[0]);
+                }
+              }}
+              aria-autocomplete="list"
+              aria-controls={options.length ? "json-property-suggestions" : undefined}
+              aria-activedescendant={options.length ? `json-property-${choice}` : undefined}
               aria-invalid={!!error}
               aria-describedby="json-show-expression-status json-show-expression-help"
               placeholder="first_name AS First Name"
               className="col-start-1 row-start-2 h-full min-h-0 w-full min-w-0 resize-none rounded border border-zinc-700 bg-zinc-950 p-3 font-mono text-[13px] leading-6 text-zinc-100 outline-none focus:border-accent-500"
             />
+            {options.length > 0 && <ul id="json-property-suggestions" role="listbox" aria-label="JSON suggestions"
+              className="absolute top-full left-0 right-0 z-20 max-h-48 overflow-auto rounded border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
+              {options.map((property, index) => <li key={property} id={`json-property-${index}`} role="option" aria-selected={choice === index}
+                ref={(element) => { if (choice === index) element?.scrollIntoView({ block: "nearest" }); }}
+                onMouseDown={(event) => { event.preventDefault(); acceptProperty(property); }}
+                onMouseEnter={() => setChoice(index)}
+                className={`cursor-pointer px-3 py-1 font-mono text-xs ${choice === index ? "bg-accent-500/20 text-accent-200" : "text-zinc-300"}`}>
+                {property}
+              </li>)}
+            </ul>}
+            </div>
             <div className="col-start-2 row-start-1 flex min-w-0 flex-wrap items-center justify-between gap-1 text-xs">
               <span className="font-semibold text-zinc-300">Preview</span>
               <div className="flex items-center gap-1">
@@ -130,6 +222,7 @@ export function JsonShowEditorDialog({ column, initialValue, rows, initialRowInd
         <div id="json-show-expression-help" className="min-h-0 flex-1 overflow-auto border-t border-zinc-800 px-4 py-3 text-xs leading-5 text-zinc-400">
           <h3 className="mb-1 font-semibold text-zinc-200">Expression guide</h3>
           <p className="mb-3">Separate expressions with commas. Use newlines to spread a long expression across several lines.</p>
+          <p className="mb-3">{sampleStatus} Use ↑/↓ to choose a suggestion, Enter or Tab to insert, and Escape to dismiss. In items[prop=value], property names come from the first array item; after =, suggestions come from that property's values across up to 1,000 items per sampled array.</p>
           <table className="w-full table-fixed text-left">
             <colgroup><col className="w-[18%]" /><col className="w-[32%]" /><col className="w-[50%]" /></colgroup>
             <thead>

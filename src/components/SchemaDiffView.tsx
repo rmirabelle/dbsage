@@ -316,7 +316,7 @@ export function DiffSection({
       <button
         className="sd-section-title"
         onClick={onToggle}
-        title={open ? "Collapse" : "Expand"}
+        {...helpHandlers(open ? "Collapse" : "Expand")}
       >
         {open ? (
           <CaretDown size={12} className="sd-fold" />

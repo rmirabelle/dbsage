@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useRef, useState } from "react";
 import {
   Export,
@@ -89,7 +90,7 @@ export function ExportButton({
         data-el="export-btn"
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
-        title="Export the query results"
+        {...helpHandlers("Export the query results")}
         className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800"
       >
         <Export size={17} className="text-emerald-300" />

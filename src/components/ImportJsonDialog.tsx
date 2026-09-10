@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useMemo, useState } from "react";
 import {
   BracketsCurly,
@@ -329,7 +330,7 @@ export function ImportJsonDialog({
           {step === "map" && (
             <label
               className="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer select-none"
-              title="Skip rows that fail to insert (e.g. duplicate keys) and import the rest, instead of aborting the whole import"
+              {...helpHandlers("Skip rows that fail to insert (e.g. duplicate keys) and import the rest, instead of aborting the whole import")}
             >
               <input
                 type="checkbox"
@@ -376,11 +377,9 @@ export function ImportJsonDialog({
               onClick={startImport}
               disabled={!canImport}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-semibold bg-sky-500 text-sky-950 hover:bg-sky-400 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
-              title={
-                missingRequired.length > 0
+              {...helpHandlers(missingRequired.length > 0
                   ? `Map required column(s): ${missingRequired.join(", ")}`
-                  : undefined
-              }
+                  : undefined)}
             >
               Import {preview ? preview.rowCount.toLocaleString() : ""} rows
             </button>
@@ -416,7 +415,7 @@ function FileStep({
           <BracketsCurly size={15} /> Choose JSON file…
         </button>
         {fileName && (
-          <span className="font-mono text-[12px] text-zinc-300 truncate" title={path ?? undefined}>
+          <span className="font-mono text-[12px] text-zinc-300 truncate" {...helpHandlers(path ?? undefined)}>
             {fileName}
           </span>
         )}
@@ -536,12 +535,12 @@ function MapStep({
                 {isPk && <Key size={12} weight="fill" className="text-emerald-400 shrink-0" />}
                 <span className="font-mono text-[12px] text-zinc-200 truncate">{m.def.name}</span>
                 {m.required && (
-                  <span className="text-rose-500 shrink-0 text-[15px] leading-none" title="required">
+                  <span className="text-rose-500 shrink-0 text-[15px] leading-none" {...helpHandlers("required")}>
                     *
                   </span>
                 )}
                 {m.isAuto && (
-                  <span className="text-[9px] font-semibold text-sky-300/80 shrink-0" title="auto-increment">
+                  <span className="text-[9px] font-semibold text-sky-300/80 shrink-0" {...helpHandlers("auto-increment")}>
                     AI
                   </span>
                 )}

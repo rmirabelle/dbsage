@@ -4,6 +4,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
+/** Nested panel updates can arrive together; serialize file read-modify-write operations. */
+static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /**
  * Per-table column setup (visibility, filters, JSON "Show" extraction), stored
  * opaquely as JSON so the format stays flexible. Keyed by connection HOST (not
@@ -54,6 +57,10 @@ fn is_empty_setup(setup: &Value) -> bool {
                 && empty_arr(o.get("filters"))
                 && empty_obj(o.get("jsonDisplay"))
                 && empty_obj(o.get("columnWidths"))
+                && o.get("sort").map_or(true, Value::is_null)
+                && o.get("peekAll").map_or(true, Value::is_null)
+                && !o.contains_key("relationsOpen")
+                && !o.contains_key("inspectorHeight")
         }
         None => true,
     }
@@ -63,7 +70,23 @@ pub fn get(app: &AppHandle, key: &str) -> AppResult<Option<Value>> {
     Ok(load_file(app)?.get(key).cloned())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::is_empty_setup;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_peek_state_without_table_filters() {
+        assert!(is_empty_setup(&json!({"filters": [], "hiddenColumns": []})));
+        assert!(!is_empty_setup(&json!({"peekAll": {"height": 240, "activeId": "r", "peeks": [{"id": "r"}]}})));
+        assert!(!is_empty_setup(&json!({"relationsOpen": false})));
+        assert!(!is_empty_setup(&json!({"peekAll": {"height": 240, "activeId": "", "peeks": []}})));
+        assert!(!is_empty_setup(&json!({"sort": {"column": "id", "direction": "desc"}})));
+    }
+}
+
 pub fn set(app: &AppHandle, key: &str, setup: Value) -> AppResult<()> {
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let mut file = load_file(app)?;
     if is_empty_setup(&setup) {
         file.remove(key);
@@ -80,6 +103,7 @@ pub fn export_all(app: &AppHandle) -> AppResult<ColumnSetupsFile> {
 /// Merge imported column setups into the store, upserting by key. Returns the
 /// number of setups processed.
 pub fn import_merge(app: &AppHandle, incoming: &ColumnSetupsFile) -> AppResult<usize> {
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let mut file = load_file(app)?;
     let mut count = 0;
     for (key, setup) in incoming {
@@ -97,6 +121,7 @@ pub fn migrate_to_host(
     app: &AppHandle,
     host_by_id: &std::collections::BTreeMap<String, String>,
 ) -> AppResult<()> {
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let file = load_file(app)?;
     let mut changed = false;
     let mut out = ColumnSetupsFile::new();

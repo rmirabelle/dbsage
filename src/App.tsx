@@ -18,7 +18,7 @@ import { CopyProgress } from "./components/CopyProgress";
 import { CopyTableMenu } from "./components/CopyTableMenu";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import type { PeekTarget, Tab } from "./types";
+import type { Tab } from "./types";
 import { checkForUpdate, getAppVersion, type UpdateInfo } from "./lib/updater";
 import { useUi } from "./state/ui";
 import { useStore } from "./state/store";
@@ -102,35 +102,6 @@ export default function App() {
     })();
     return () => {
       cancelled = true;
-    };
-  }, []);
-
-  /* A peek window's "Open Table" promotes its related table to a filtered tab
-     here in the main window (the peek itself stays open). */
-  useEffect(() => {
-    const un = listen<{
-      profileId: string;
-      profileName: string;
-      database: string;
-      target: PeekTarget;
-    }>("dbsage://open-table-as-tab", async (e) => {
-      const { profileId, profileName, database, target } = e.payload;
-      const { openTable, setRowsFilter } = useStore.getState();
-      const tabId = `rows::${profileId}::${database}::${target.table}`;
-      try {
-        await openTable(profileId, profileName, database, target.table);
-        await setRowsFilter(tabId, target.column, {
-          column: target.column,
-          op: "equals",
-          value: target.value ?? "",
-        });
-        await getCurrentWindow().setFocus();
-      } catch {
-        /* The table may have gone away; nothing to surface here. */
-      }
-    });
-    return () => {
-      un.then((f) => f());
     };
   }, []);
 

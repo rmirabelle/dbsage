@@ -36,17 +36,12 @@ pub struct AppState {
     /// close can abort the matching one. Sync Mutex — touched from window-event
     /// callbacks (non-async).
     pub samplers: Mutex<HashMap<String, tokio::task::AbortHandle>>,
-    /// Seed payloads for secondary windows (torn-off tabs, peeks), keyed by the
+    /// Seed payloads for secondary windows (torn-off tabs), keyed by the
     /// new window's label. The window reads (and removes) its seed on mount via
     /// `take_window_seed` — each window is a separate JS context, so this is how
-    /// the spawning window hands it the tab/peek to render.
+    /// the spawning window hands it the tab to render.
     pub window_seeds: Mutex<HashMap<String, serde_json::Value>>,
-    /// Live peek-window registry, keyed by window label → its seed descriptor.
-    /// Lets a saved table view capture every open peek (`list_open_peeks`). The
-    /// window's Destroyed event removes its entry.
-    pub peeks: Mutex<HashMap<String, serde_json::Value>>,
-    /// Monotonic counter for unique secondary-window labels (`tab-<n>`,
-    /// `peek-<n>`) within a session.
+    /// Monotonic counter for unique secondary-window labels within a session.
     pub window_counter: AtomicU64,
     /// Main window's tab-strip rectangle in screen CSS pixels, published by the
     /// main window so a dragging tab-window can hit-test it for re-docking.

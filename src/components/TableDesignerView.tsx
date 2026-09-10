@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useMemo, useState, useEffect, useRef } from "react";
 import {
   FloppyDisk,
@@ -313,7 +314,7 @@ export function TableDesignerView({ tab }: { tab: CreateTableTab }) {
             onClick={handleSave}
             disabled={!canSave || saving}
             className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
-            title="Save all table changes (columns and indexes)"
+            {...helpHandlers("Save all table changes (columns and indexes)")}
           >
             {saving ? (
               <CircleNotch size={17} className="animate-spin" />
@@ -586,11 +587,9 @@ function ColumnsEditor({
             if (activeColumn) onInsertColumn(activeColumn.id);
           }}
           disabled={!activeColumn}
-          title={
-            activeColumn
+          {...helpHandlers(activeColumn
               ? `Insert a column above ${activeColumn.name || "the selected column"}`
-              : "Select a column first, then insert above it"
-          }
+              : "Select a column first, then insert above it")}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors disabled:opacity-40 disabled:hover:bg-orange-400"
         >
           <RowsPlusTop size={15} weight="bold" /> Insert Column
@@ -707,11 +706,9 @@ function ColumnsEditor({
                       inputMode="numeric"
                       value={typeSupportsScale(col.type) ? col.decimals : ""}
                       disabled={!typeSupportsScale(col.type)}
-                      title={
-                        typeSupportsScale(col.type)
+                      {...helpHandlers(typeSupportsScale(col.type)
                           ? undefined
-                          : "Decimals apply only to DECIMAL, FLOAT and DOUBLE"
-                      }
+                          : "Decimals apply only to DECIMAL, FLOAT and DOUBLE")}
                       onChange={(e) =>
                         onPatchColumn(col.id, {
                           decimals: e.target.value.replace(/[^0-9]/g, ""),
@@ -777,7 +774,7 @@ function ColumnsEditor({
                         }}
                         className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-blue-300 hover:bg-zinc-800 cursor-grab active:cursor-grabbing touch-none select-none"
                         aria-label={`Drag ${col.name || "column"} to reorder`}
-                        title="Drag to reorder · Alt+Up/Down"
+                        {...helpHandlers("Drag to reorder · Alt+Up/Down")}
                       >
                         <DotsSixVertical size={16} weight="bold" />
                       </button>
@@ -786,7 +783,7 @@ function ColumnsEditor({
                         onClick={() => onRemoveColumn(col.id)}
                         className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-800"
                         aria-label="Remove column"
-                        title="Remove column"
+                        {...helpHandlers("Remove column")}
                       >
                         <Trash size={13} />
                       </button>
@@ -918,11 +915,9 @@ function IndexesEditor({
                         method: e.target.value as IndexMethod,
                       })
                     }
-                    title={
-                      directional
+                    {...helpHandlers(directional
                         ? undefined
-                        : "Method applies to NORMAL/UNIQUE indexes only"
-                    }
+                        : "Method applies to NORMAL/UNIQUE indexes only")}
                     className={clsx(
                       inputClass,
                       !directional && "opacity-40 cursor-not-allowed"
@@ -950,7 +945,7 @@ function IndexesEditor({
                       disabled={index === 0}
                       className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-500"
                       aria-label="Move index up"
-                      title="Move up"
+                      {...helpHandlers("Move up")}
                     >
                       <ArrowUp size={13} />
                     </button>
@@ -960,7 +955,7 @@ function IndexesEditor({
                       disabled={index === indexes.length - 1}
                       className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-500"
                       aria-label="Move index down"
-                      title="Move down"
+                      {...helpHandlers("Move down")}
                     >
                       <ArrowDown size={13} />
                     </button>
@@ -969,7 +964,7 @@ function IndexesEditor({
                       onClick={() => onRemoveIndex(idx.id)}
                       className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-800"
                       aria-label="Remove index"
-                      title="Remove index"
+                      {...helpHandlers("Remove index")}
                     >
                       <Trash size={13} />
                     </button>
@@ -1044,7 +1039,7 @@ function ColumnPicker({
             >
               <span
                 className="flex-1 truncate text-[12px] text-zinc-200"
-                title={ref.column}
+                {...helpHandlers(ref.column)}
               >
                 {ref.column}
               </span>
@@ -1053,7 +1048,7 @@ function ColumnPicker({
                   type="button"
                   onClick={() => toggleDir(ref.column)}
                   className="px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums bg-zinc-700 text-zinc-200 hover:bg-zinc-600"
-                  title="Toggle sort direction"
+                  {...helpHandlers("Toggle sort direction")}
                 >
                   {ref.direction}
                 </button>
@@ -1353,7 +1348,7 @@ function ForeignKeysEditor({
                       onClick={() => onRemove(fk.id)}
                       className="flex items-center justify-center h-7 w-6 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-800"
                       aria-label="Remove foreign key"
-                      title="Remove foreign key"
+                      {...helpHandlers("Remove foreign key")}
                     >
                       <Trash size={13} />
                     </button>
@@ -1397,7 +1392,7 @@ function NamePicker({
           className="flex items-center gap-1 rounded bg-zinc-800/70 pl-2 pr-1 py-0.5"
         >
           <span className="w-3 text-[10px] tabular-nums text-zinc-500">{i + 1}</span>
-          <span className="flex-1 truncate text-[12px] text-zinc-200" title={name}>
+          <span className="flex-1 truncate text-[12px] text-zinc-200" {...helpHandlers(name)}>
             {name}
           </span>
           <button
@@ -1679,7 +1674,7 @@ function SqlPane({
           onPointerDown={startResize}
           onDoubleClick={() => setHeight(200)}
           className="h-1 cursor-row-resize bg-zinc-800/60 hover:bg-accent-500/40 transition-colors"
-          title="Drag to resize · double-click to reset"
+          {...helpHandlers("Drag to resize · double-click to reset")}
         />
       )}
       <div className="h-8 px-3 flex items-center gap-2">

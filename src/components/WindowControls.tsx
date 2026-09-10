@@ -3,20 +3,15 @@ import clsx from "clsx";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ipc } from "../ipc";
 
-type Control = "min" | "max" | "close" | "closeAll";
+type Control = "min" | "max" | "close";
 
 /**
  * Windows-style minimize / maximize-restore / close buttons, driving the current
  * Tauri window. Shared by every window's titlebar so they look and behave
  * identically. Buttons sit flush in the titlebar; hover is state-driven so it can
  * be force-cleared (see the hover effect).
- *
- * `onCloseAll` (peek windows) appends a fourth button after Close — cascading
- * windows with an X — that closes every open peek at once. It lives here rather
- * than beside the button row so it shares the stuck-hover machinery (it becomes
- * the corner-flush button).
  */
-export function WindowControls({ onCloseAll }: { onCloseAll?: () => void }) {
+export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
   const [hovered, setHovered] = useState<Control | null>(null);
 
@@ -149,22 +144,6 @@ export function WindowControls({ onCloseAll }: { onCloseAll?: () => void }) {
       >
         <CloseIcon />
       </button>
-      {onCloseAll && (
-        <button
-          aria-label="Close all peek windows"
-          title="Close all peek windows"
-          onClick={onCloseAll}
-          onMouseEnter={() => enter("closeAll")}
-          onMouseMove={() => enter("closeAll")}
-          onMouseLeave={() => setHovered(null)}
-          className={clsx(
-            base,
-            hovered === "closeAll" ? "bg-red-600 text-white" : "text-red-300"
-          )}
-        >
-          <CloseAllIcon />
-        </button>
-      )}
     </div>
   );
 }
@@ -209,19 +188,6 @@ function CloseIcon() {
   return (
     <svg {...glyphProps}>
       <path d="M0.5 0.5l9 9M9.5 0.5l-9 9" />
-    </svg>
-  );
-}
-
-/** Two cascading windows, the front one bearing an X — "close all windows".
- * Rendered larger than the single-window glyphs: its detail is denser, so at
- * their 10px it reads as a smudge. */
-function CloseAllIcon() {
-  return (
-    <svg {...glyphProps} width={14} height={14}>
-      <rect x="0.5" y="2.5" width="7" height="7" />
-      <path d="M2.5 2.5v-2h7v7h-2" />
-      <path d="M2.5 4.5l3 3M5.5 4.5l-3 3" />
     </svg>
   );
 }

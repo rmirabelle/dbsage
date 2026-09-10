@@ -1,8 +1,10 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Eye, EyeSlash } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type { ColumnInfo } from "../types";
+import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 
 interface Props {
   anchor: { x: number; y: number };
@@ -37,11 +39,10 @@ export function ColumnsVisibilityMenu({
   const baseBtn = "px-1.5 rounded text-zinc-200 font-semibold hover:bg-zinc-800";
   const activeBtn = "px-1.5 rounded font-semibold bg-emerald-900/60 text-emerald-200";
   const ref = useRef<HTMLDivElement>(null);
+  const { style: menuPosition } = useAnchoredPosition(anchor.x, anchor.y, 8, ref);
   const hiddenSet = new Set(hidden);
 
-  /* Track the viewport height while open: a too-short peek window grows while
-     a column menu is open (see DataGrid), and the height cap below must follow
-     the new size or the extra room goes unused. */
+  /** Keep the menu's height cap within the available viewport when resized. */
   const [viewportHeight, setViewportHeight] = useState(window.innerHeight);
   useEffect(() => {
     const onResize = () => setViewportHeight(window.innerHeight);
@@ -83,18 +84,13 @@ export function ColumnsVisibilityMenu({
     0,
     Math.min(window.innerWidth - MENU_WIDTH - 8, anchor.x)
   );
-  /* Stay anchored under the button (like ColumnHeaderMenu) rather than reserving
-     the full menu height up front — in a short window (e.g. a peek) reserving
-     MENU_MAX_HEIGHT would push `top` to the corner and detach the menu. Instead
-     cap the height to whatever space is left below the anchor. */
-  const top = Math.max(8, Math.min(viewportHeight - 60, anchor.y));
-  const maxHeight = Math.min(MENU_MAX_HEIGHT, viewportHeight - top - 8);
+  const maxHeight = Math.max(0, Math.min(MENU_MAX_HEIGHT, viewportHeight - 16));
 
   return createPortal(
     <div
       ref={ref}
       data-el="columns-menu"
-      style={{ top, left, width: MENU_WIDTH, maxHeight }}
+      style={{ ...menuPosition, left, width: MENU_WIDTH, maxHeight }}
       className="fixed z-[100] flex flex-col rounded-b border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 text-[11px] text-zinc-200 select-none overflow-hidden"
       onClick={(e) => e.stopPropagation()}
     >
@@ -162,7 +158,7 @@ export function ColumnsVisibilityMenu({
                 "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800 text-left",
                 hide ? "text-zinc-500" : "text-zinc-100"
               )}
-              title={hide ? "Click to show" : "Click to hide"}
+              {...helpHandlers(hide ? "Click to show" : "Click to hide")}
             >
               {hide ? (
                 <EyeSlash size={14} className="shrink-0 text-zinc-500" />

@@ -278,6 +278,7 @@ function ImportBody({ onClose }: { onClose: () => void }) {
           <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-400" weight="fill" />
           <div>
             <div>Import complete.</div>
+            <div className="mt-1 text-[11px] text-zinc-400">Reopen table tabs to load the imported layouts.</div>
             <div className="mt-1 text-[11px] text-zinc-400">
               Merged {parts.join(", ")}.
             </div>
@@ -291,11 +292,11 @@ function ImportBody({ onClose }: { onClose: () => void }) {
   if (counts) {
     return (
       <>
-        <div className="px-4 py-4 space-y-3">
+        <fieldset disabled={busy} className="px-4 py-4 space-y-3 min-w-0">
           <p className="text-[11px] leading-relaxed text-zinc-400">
             Choose what to merge from{" "}
-            <span className="text-zinc-300">{fileName}</span>. Items with a
-            matching id are updated; everything else is added.
+            <span className="text-zinc-300">{fileName}</span>.
+            {" "}Items with a matching id are updated; everything else is added.
             {totalCount(counts) === 0 && (
               <span className="block mt-1 text-amber-400">
                 This file contains no importable settings.
@@ -309,7 +310,7 @@ function ImportBody({ onClose }: { onClose: () => void }) {
               setSelection((s) => ({ ...s, [key]: checked }))
             }
           />
-        </div>
+        </fieldset>
         <Footer error={error} onClose={onClose}>
           <button
             data-el="import-submit-btn"
@@ -394,7 +395,7 @@ function DialogShell({
         data-el="state-transfer-dialog"
         role="dialog"
         aria-modal="true"
-        className="w-[440px] rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/60"
+        className="w-[520px] max-w-[95vw] max-h-[90vh] overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/60"
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
           <h2 className="text-sm font-medium text-zinc-100">{title}</h2>

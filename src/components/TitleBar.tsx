@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DownloadSimple,
@@ -162,7 +163,7 @@ export function TitleBar({
             <button
               data-el="titlebar-update-btn"
               onClick={onAbout}
-              title="A new version is available"
+              {...helpHandlers("A new version is available")}
               className="ml-2 inline-flex items-center gap-1.5 h-6 px-2.5 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors"
             >
               <DownloadSimple size={14} weight="bold" />

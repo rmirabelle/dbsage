@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useState } from "react";
 import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import {
@@ -159,7 +160,7 @@ export function DropDatabaseDialog({
               <button
                 type="button"
                 onClick={copyName}
-                title="Copy database name"
+                {...helpHandlers("Copy database name")}
                 className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300 bg-zinc-800 hover:bg-zinc-700"
               >
                 {copied ? (

@@ -1,43 +1,42 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { helpHandlers } from "../state/help";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { findPeekLocation, type PeekLocation } from "../lib/peekNavigation";
+import { PeekNavigation, revealPeekRows } from "./PeekNavigation";
+import { toggleIntegratedPeek, setIntegratedPeekSolo } from "../lib/integratedPeek";
 import {
   ArrowSquareOut,
   Binoculars,
   CircleNotch,
   ShareNetwork,
-  SquaresFour,
-  Warning,
-  X,
+  Table,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
-import { emit, listen } from "@tauri-apps/api/event";
-import { PEEKS_CHANGED_EVENT } from "../lib/relatedExistence";
-import { findSameRow } from "../lib/sameRow";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
+import { TABLE_CHANGED_EVENT, invalidateRelatedExistence, type TableChanged } from "../lib/relatedExistence";
+import { editRows, type CellEdit } from "../lib/editRows";
+import { findSameRow, firstFilteredCell } from "../lib/sameRow";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
-import { useUi } from "../state/ui";
+import { notifyError } from "../state/notify";
 import { DataGrid } from "./DataGrid";
 import { ExpandedPanel } from "./ExpandedPanel";
 import { RelationEditDialog } from "./RelationEditDialog";
 import { RelationsPanel } from "./RelationsPanel";
-import { WindowControls } from "./WindowControls";
+import { IntegratedPeekPanel } from "./IntegratedPeekPanel";
 import {
   peekableColumnsFor,
-  cellToFilterValue,
-  type RelationTarget,
   type RowRelationTarget,
 } from "../lib/relations";
 import {
   deleteRowsWithCascade,
   previewCascadeTargets,
 } from "../lib/rowDelete";
-import { useBackdropDismiss } from "../lib/useBackdropDismiss";
 import type {
   CascadeTarget,
   ColumnFilter,
   PeekTarget,
   PeekViewState,
+  IntegratedPeekState,
   Relation,
   RowsResult,
   SortSpec,
@@ -46,31 +45,30 @@ import type {
 const EMPTY_RELATIONS: Relation[] = [];
 const PEEK_LIMIT = 1000;
 
-/**
- * The body of a peek: a read-only, filtered grid of rows in `target.table`
- * where `target.column = target.value`, plus the controls to peek further into
- * its own relations or promote it to a full tab. Fills its container — geometry
- * (position, size, resize) is the OS window's job now (see {@link PeekWindow}),
- * not an in-app overlay's.
- */
-/** Shortest window (CSS px) that can still show the Inspector under the
+/** Shortest panel (CSS px) that can still show the Inspector under the
  * titlebar with a usable slice of grid above it. Below this the Inspector
- * button is disabled and an open Inspector is hidden until the window grows. */
-const INSPECTOR_MIN_WINDOW_H = 220;
+ * button is disabled and an open Inspector is hidden until the panel grows. */
+const INSPECTOR_MIN_PANEL_H = 220;
 
 
 export function PeekPanel({
   profileId,
+  profileName = "",
   database,
   target,
+  parentTable,
+  parentSolo = false,
   initialView,
   onViewChange,
-  onOpenChildPeek,
-  onOpenAsTab,
+  active = true,
 }: {
   profileId: string;
+  profileName?: string;
   database: string;
   target: PeekTarget;
+  parentTable?: string;
+  parentSolo?: boolean;
+  active?: boolean;
   /** The grid state (hidden columns, sort, filters, widths, JSON display) and
    * Inspector visibility to start from — set when restoring a saved view or
    * re-seeding after a reload; a freshly-launched peek starts from defaults. */
@@ -78,23 +76,30 @@ export function PeekPanel({
   /** Report every change to that state so the host can persist it for
    * saved-view capture. */
   onViewChange?: (patch: PeekViewState) => void;
-  /** Peek into a relation found on this peek's own table (opens a new window). */
-  onOpenChildPeek: (
-    target: RelationTarget,
-    sourceColumn: string,
-    value: string | null,
-    kind: "has_one" | "has_many"
-  ) => void;
-  /** Promote this peek's table to a full, filtered tab in the main window. */
-  onOpenAsTab: () => void;
 }) {
-  const tabsZoom = useUi((s) => s.tabsZoom);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const peekRowsRef = useRef<HTMLDivElement>(null);
+  const ancestorLocations = useContext(PeekNavigation);
+  const [childPeekAll, setChildPeekAll] = useState(initialView?.childPeekAll ?? null);
+  const [relationsSolo, setRelationsSolo] = useState(initialView?.childPeekAll?.solo ?? initialView?.relationsSolo ?? parentSolo);
+  const childPeekRef = useRef(childPeekAll);
+  const [childPeekOpen, setChildPeekOpen] = useState(initialView?.childPeekOpen ?? Boolean(initialView?.childPeekAll));
+  const changeChildren = (next: IntegratedPeekState) => {
+    childPeekRef.current = next;
+    setChildPeekAll(next);
+    onViewChange?.({ childPeekAll: next });
+  };
+  const showChildren = (open: boolean) => {
+    setChildPeekOpen(open);
+    onViewChange?.({ childPeekOpen: open });
+  };
+  const [hostHeight, setHostHeight] = useState(window.innerHeight);
   const [sort, setSort] = useState<SortSpec | null>(initialView?.sort ?? null);
   const [extraFilters, setExtraFilters] = useState<ColumnFilter[]>(
     initialView?.filters ?? []
   );
   const [hiddenColumns, setHiddenColumns] = useState<string[]>(
-    initialView?.hiddenColumns ?? []
+    initialView?.hiddenColumns ?? [...new Set(["id", target.column])]
   );
   const [jsonDisplay, setJsonDisplay] = useState<Record<string, string>>(
     initialView?.jsonDisplay ?? {}
@@ -112,14 +117,16 @@ export function PeekPanel({
       hiddenColumns,
       jsonDisplay,
       columnWidths,
+      relationsSolo,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sort, extraFilters, hiddenColumns, jsonDisplay, columnWidths]);
+  }, [sort, extraFilters, hiddenColumns, jsonDisplay, columnWidths, relationsSolo]);
   const [activeCell, setActiveCell] = useState<{
     rowIndex: number;
     column: string;
   } | null>(null);
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
+  const [cellSelectionSpansRows, setCellSelectionSpansRows] = useState(false);
   /* The user's (or saved View's) choice for the Relations panel; undefined
      means untouched, and the panel then opens when the peeked table has
      relations defined from it (same default as a table tab). */
@@ -127,6 +134,10 @@ export function PeekPanel({
     initialView?.relationsOpen
   );
   const setRelationsOpen = (open: boolean) => {
+    if (open && childPeekRef.current?.closed) {
+      changeChildren({ ...childPeekRef.current, closed: false });
+      showChildren(childPeekRef.current.peeks.length > 0);
+    }
     setRelationsOpenPref(open);
     onViewChange?.({ relationsOpen: open });
   };
@@ -138,11 +149,22 @@ export function PeekPanel({
   }, [activeColumnName]);
 
   const [data, setData] = useState<RowsResult | null>(null);
+  const [loadedMatch, setLoadedMatch] = useState<string | null>(null);
+  const matchKey = JSON.stringify([profileId, database, target.table, target.column, target.value]);
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   /** Bumped after a delete so the rows and count re-fetch. */
   const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    const un = listen<TableChanged>(TABLE_CHANGED_EVENT, ({ payload: m }) => {
+      if (m.profileId === profileId && m.database === database && m.table === target.table) {
+        setReloadKey((k) => k + 1);
+      }
+    });
+    return () => { void un.then((f) => f()); };
+  }, [profileId, database, target.table]);
 
   const baseFilter: ColumnFilter = {
     column: target.column,
@@ -176,7 +198,7 @@ export function PeekPanel({
         filters,
       })
       .then((res) => {
-        if (!cancelled) setData(res);
+        if (!cancelled) { setData(res); setLoadedMatch(matchKey); }
       })
       .catch((e) => {
         if (!cancelled) setError(String(e));
@@ -222,8 +244,10 @@ export function PeekPanel({
   const relations =
     useStore((s) => s.relations[`${profileId}::${database}`]) ??
     EMPTY_RELATIONS;
+  const tableRelations = relations.filter((r) => r.fromTable === target.table);
+  const onlyReturnsToParent = tableRelations.length === 1 && tableRelations[0].toTable === parentTable;
   const relationsOpen =
-    relationsOpenPref ?? relations.some((r) => r.fromTable === target.table);
+    relationsOpenPref ?? (tableRelations.length > 0 && !onlyReturnsToParent);
   const peekableColumns = useMemo(
     () => peekableColumnsFor(relations, target.table),
     [relations, target.table]
@@ -239,13 +263,33 @@ export function PeekPanel({
   const activeRowOrdinal = activeCell ? activeCell.rowIndex + 1 : null;
   const activeRow =
     activeCell && data ? data.rows[activeCell.rowIndex] ?? null : null;
-  /** The row the Relations panel describes: the active cell's, else the first
-   * selected row (a row-header click clears the active cell). */
+  /** Relations require one unambiguous source row. */
+  const relationsSelectionBlocked = selectedRows.length > 1 || cellSelectionSpansRows;
   const relationsRow =
-    activeRow ??
-    (data && selectedRows.length ? data.rows[selectedRows[0]] ?? null : null);
+    loadedMatch === matchKey && !unmatched && !relationsSelectionBlocked
+      ? activeRow ?? (data && selectedRows.length ? data.rows[selectedRows[0]] ?? null : null)
+      : null;
 
-  /** The read-only Inspector panel for the selected cell. Starts closed on a
+  const currentLocation: PeekLocation = {
+    profileId, database, table: target.table, target, filters: extraFilters, row: relationsRow,
+    label: `Return to ${target.table} above`,
+    reveal: () => revealPeekRows(peekRowsRef.current, activeCell?.rowIndex ?? selectedRows[0]),
+  };
+  const destination = (t: RowRelationTarget) => findPeekLocation(ancestorLocations, profileId, database, t, t.relation.kind, target.table);
+  const toggleChildPeek = (t: RowRelationTarget) => {
+    const existing = destination(t);
+    if (existing) { existing.reveal(); return; }
+    const previous = childPeekRef.current ?? { solo: relationsSolo, height: (peekRowsRef.current?.offsetHeight ?? 320) / 2, activeId: "", peeks: [] };
+    const next = toggleIntegratedPeek(previous, {
+      id: t.relation.id, title: t.relation.name?.trim() || t.table,
+      profileId, profileName, database, sourceTable: target.table, sourceColumn: t.sourceColumn,
+      target: { table: t.table, column: t.column, value: t.value }, kind: t.relation.kind,
+    });
+    changeChildren(next);
+    showChildren(next.peeks.length > 0);
+  };
+
+  /** The Inspector panel for the selected cell. Starts closed on a
    * freshly-launched peek, but a saved view restores it open when it was showing
    * at save time. Every change reports up so the host persists it (via the peek
    * registry) for the next saved-view capture. */
@@ -257,62 +301,59 @@ export function PeekPanel({
     onViewChange?.({ inspectorOpen: open });
   };
   const [tooShortForInspector, setTooShortForInspector] = useState(
-    () => window.innerHeight < INSPECTOR_MIN_WINDOW_H
+    () => false
   );
   useEffect(() => {
-    const onResize = () =>
-      setTooShortForInspector(window.innerHeight < INSPECTOR_MIN_WINDOW_H);
+    const onResize = () => {
+      const height = rootRef.current?.offsetHeight ?? 0;
+      setHostHeight(height);
+      setTooShortForInspector(height < INSPECTOR_MIN_PANEL_H);
+    };
+    const observer = new ResizeObserver(onResize);
+    if (rootRef.current) observer.observe(rootRef.current);
+    onResize();
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    return () => { observer.disconnect(); window.removeEventListener("resize", onResize); };
   }, []);
   const showInspector = expanded && !tooShortForInspector;
   useEffect(() => {
-    if (!expanded) return;
+    if (!active || !expanded) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof Element && e.target.closest('[data-el="peek-panel"]') !== rootRef.current) return;
       if (e.key === "Escape") setExpanded(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [expanded]);
-
-  /* Selecting any cell identifies its whole row. Broadcast every relation
-     source value so nested peeks keep following even when the clicked cell
-     itself is not a relation source column. */
-  useEffect(() => {
-    for (const sourceColumn of peekableColumns) {
-      const value = activeRow ? cellToFilterValue(activeRow[sourceColumn]) : null;
-      emit("dbsage://peek-follow", {
-        profileId,
-        database,
-        sourceTable: target.table,
-        sourceColumn,
-        value,
-      });
-    }
-  }, [activeRow, peekableColumns, target.table, profileId, database]);
+  }, [expanded, active]);
 
   const [relDialog, setRelDialog] = useState<{
     relation: Relation | null;
     column: string;
   } | null>(null);
 
-  /** Number of open peek windows the close-all confirmation will close; null when
-   * the confirmation isn't showing. */
-  const [confirmCloseAll, setConfirmCloseAll] = useState<number | null>(null);
-  const closeConfirmBackdrop = useBackdropDismiss(
-    () => setConfirmCloseAll(null),
-    true
-  );
-  useEffect(() => {
-    if (confirmCloseAll == null) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setConfirmCloseAll(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [confirmCloseAll]);
-
   const hasPrimaryKey = data?.columns.some((c) => c.key === "PRI") ?? false;
+  const updateCells = async (edits: CellEdit[]) => {
+    if (!data || loading || loadedMatch !== matchKey || unmatched) {
+      throw new Error("Wait for the related rows to finish loading before editing.");
+    }
+    try {
+      await editRows(data.columns, data.rows, edits, (update) =>
+        ipc.updateCell({ profileId, database, table: target.table, ...update }));
+    } finally {
+      invalidateRelatedExistence(profileId, database, target.table);
+      setReloadKey((key) => key + 1);
+    }
+  };
+  const updateCell = (rowIndex: number, column: string, value: string | null) =>
+    updateCells([{ rowIndex, column, value }]);
+  const insertRows = async (rows: { column: string; value: string | null }[][]) => {
+    if (loading || loadedMatch !== matchKey || unmatched) {
+      throw new Error("Wait for the related rows to finish loading before inserting.");
+    }
+    await ipc.insertRows({ profileId, database, table: target.table, rows });
+    invalidateRelatedExistence(profileId, database, target.table);
+    setReloadKey((key) => key + 1);
+  };
   const rowSet = () =>
     data
       ? {
@@ -346,62 +387,26 @@ export function PeekPanel({
     }
   };
 
-  /** A NULL source value still opens the child (matching nothing yet); it
-   * follows later selections. */
-  const openChild = (t: RowRelationTarget) =>
-    onOpenChildPeek(t, t.sourceColumn, t.value, t.relation.kind);
-
-  /** Closing every peek at once is easy to hit by accident (it's the corner-flush
-   * button), so confirm first via a themed modal — and say how many it'll close.
-   * When this is the only open peek there's nothing to confirm: just close it
-   * like any normal window, skipping the dialog. (A failed enumeration counts as
-   * solo too — closing only this window is the safe, non-destructive default.) */
-  /* How many peeks are open app-wide: the "close all" titlebar button only
-     shows when this is not the only one. */
-  const [openPeekCount, setOpenPeekCount] = useState(1);
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = async () => {
-      try {
-        const n = (await ipc.listOpenPeeks()).length;
-        if (!cancelled) setOpenPeekCount(n);
-      } catch {
-        /* keep the last value */
-      }
-    };
-    void refresh();
-    const un = listen(PEEKS_CHANGED_EVENT, () => void refresh());
-    return () => {
-      cancelled = true;
-      un.then((f) => f());
-    };
-  }, []);
-
-  const requestCloseAll = async () => {
-    let count = 0;
-    try {
-      count = (await ipc.listOpenPeeks()).length;
-    } catch {
-      /* fall through to the solo path below */
-    }
-    if (count <= 1) {
-      getCurrentWindow().close();
-      return;
-    }
-    setConfirmCloseAll(count);
-  };
-
   /* Rows changed (re-fetch / sort / filter / the parent row moved on): keep the
      active cell when its column still exists and a row still sits at its
      index, so an open Inspector shows the new row's value at once instead of
      going blank until the cell is clicked again. Otherwise clear it. A fresh
-     object is set so effects keyed on the cell (peek-follow, pinned menu)
+     object is set so effects keyed on the cell (related panels, pinned menu)
      re-run for the new row. */
   const seenRowsRef = useRef(data?.rows);
+  const seenFiltersRef = useRef(JSON.stringify(extraFilters));
   useEffect(() => {
     const oldRows = seenRowsRef.current;
     seenRowsRef.current = data?.rows;
+    const nextFilters = JSON.stringify(extraFilters);
+    const filtered = seenFiltersRef.current !== nextFilters;
+    seenFiltersRef.current = nextFilters;
     setActiveCell((cell) => {
+      if (filtered && data) {
+        const idx = cell ? findSameRow(data.columns, oldRows, cell.rowIndex, data.rows) : -1;
+        if (cell && idx >= 0 && data.columns.some((c) => c.name === cell.column)) return { rowIndex: idx, column: cell.column };
+        return firstFilteredCell(data.columns, data.rows, hiddenColumns);
+      }
       if (!cell || !data) return null;
       if (!data.columns.some((c) => c.name === cell.column)) return null;
       /* Same row still present (by key, else by every cell): follow it.
@@ -414,39 +419,6 @@ export function PeekPanel({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.rows]);
-
-  /* A has-one peek shows one row: on first load, size the window to exactly
-     the titlebar + grid header + one row (+ scrollbar), and report that
-     height so arranging keeps it. A peek restored from a saved View keeps the
-     View's size instead. */
-  /* The Relations panel may open a moment after the rows (its relations load
-     separately), so the sizing re-runs while the window is still "fresh"
-     (first two seconds) and grows to fit the panel's content too. */
-  const mountedAtRef = useRef(Date.now());
-  const compactAppliedRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!data || initialView?.kind !== "has_one") return;
-    if (Date.now() - mountedAtRef.current > 2000) return;
-    const px = (sel: string, fallback: number) =>
-      document.querySelector(sel)?.getBoundingClientRect().height ?? fallback;
-    const titlebar = px('[data-el="peek-titlebar"]', 40);
-    const header = px('[data-el="grid-header"]', 34);
-    const gridNeed = header + 26 * tabsZoom + 16;
-    const panelNeed =
-      px('[data-el="relations-panel-header"]', 0) +
-      (document.querySelector('[data-el="relations-panel-body"]')?.scrollHeight ?? 0);
-    const height = Math.ceil(titlebar + Math.max(gridNeed, panelNeed));
-    if (compactAppliedRef.current === height) return;
-    compactAppliedRef.current = height;
-    onViewChange?.({ compactHeight: height });
-    if (initialView?.fromView) return;
-    const win = getCurrentWindow();
-    void (async () => {
-      const [size, scale] = await Promise.all([win.innerSize(), win.scaleFactor()]);
-      await win.setSize(new LogicalSize(size.width / scale, height));
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, relationsOpen, relations]);
 
   /* When rows arrive and nothing is selected, select the first row: the
      saved View's column if restoring, else the first column. This makes the
@@ -466,9 +438,9 @@ export function PeekPanel({
     const wanted = restoreColumnRef.current ?? lastColumnRef.current;
     restoreColumnRef.current = null;
     const column =
-      wanted && data.columns.some((c) => c.name === wanted)
+      wanted && !hiddenColumns.includes(wanted) && data.columns.some((c) => c.name === wanted)
         ? wanted
-        : data.columns[0]?.name;
+        : data.columns.find((c) => !hiddenColumns.includes(c.name))?.name;
     if (column) setActiveCell({ rowIndex: 0, column });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
@@ -477,26 +449,53 @@ export function PeekPanel({
   const capped = total != null && total > PEEK_LIMIT;
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden bg-zinc-950">
+    <div ref={rootRef} data-el="peek-panel"
+      className="h-full w-full flex flex-col overflow-hidden bg-[var(--peek-tint,#2d2a3b)]">
       <div
         data-el="peek-titlebar"
-        data-tauri-drag-region
-        className="dbs-toolbar shrink-0 h-10 pl-3 flex items-center gap-2 border-b border-zinc-800/60 select-none"
+        className="dbs-toolbar shrink-0 h-10 pl-3 pr-2 flex items-center gap-2 select-none bg-[var(--peek-tint,#2d2a3b)] bg-none"
       >
-        <ShareNetwork size={16} className="text-violet-400 shrink-0 pointer-events-none" />
+        <Table size={16} className="text-emerald-400 shrink-0 pointer-events-none" />
         <span className="min-w-0 shrink text-[13px] text-zinc-200 truncate pointer-events-none">
-          <span className="font-semibold text-zinc-100">{target.table}</span>
+          <span className="font-semibold text-zinc-100 mr-3">{target.table}</span>
           <span className="text-zinc-500"> where </span>
-          <span className="font-mono text-zinc-300">{target.column}</span>
+          <span className="font-mono text-zinc-500">{target.column}</span>
           <span className="text-zinc-500"> = </span>
           {unmatched ? (
             <span className="italic text-zinc-500">no row selected</span>
           ) : (
-            <span className="font-mono text-accent-300">
+            <span className="font-mono text-zinc-500">
               {JSON.stringify(target.value)}
             </span>
           )}
         </span>
+
+        <span className="flex-1 pointer-events-none" />
+
+        <span className="text-[11px] text-zinc-500 shrink-0 pointer-events-none mr-3">
+          {total == null
+            ? `${shown} shown`
+            : capped
+            ? `${shown} of ${total.toLocaleString()} (first ${PEEK_LIMIT})`
+            : `${total.toLocaleString()} row${total === 1 ? "" : "s"}`}
+        </span>
+
+        <button
+          type="button"
+          data-el="peek-open-table-btn"
+          onClick={() => void useStore.getState().openTable(profileId, profileName, database, target.table, {
+            filters: unmatched ? extraFilters : filters,
+            sort,
+            rows: data?.rows ?? [],
+            activeCell,
+            selectedRows,
+          }).catch((error) => notifyError(String(error)))}
+          className="shrink-0 inline-flex items-center justify-center px-1.5 py-1 rounded text-zinc-300 bg-zinc-800 hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
+          {...helpHandlers(`Open ${target.table} as a table with the same filter and selection`)}
+          aria-label={`Open ${target.table} as a table`}
+        >
+          <ArrowSquareOut size={15} />
+        </button>
 
         <button
           data-el="peek-relations-btn"
@@ -508,8 +507,9 @@ export function PeekPanel({
               ? "bg-violet-600 text-white hover:bg-violet-500"
               : "bg-zinc-800 text-violet-300 hover:bg-zinc-700 hover:text-violet-200"
           )}
-          title="Toggle the Relations panel"
-          aria-label="Toggle the Relations panel"
+          {...helpHandlers("Show or collapse the Relations list; open peek tabs remain visible")}
+          aria-label="Toggle the Relations list"
+          aria-pressed={relationsOpen}
         >
           <ShareNetwork size={15} />
           Relations
@@ -525,48 +525,15 @@ export function PeekPanel({
               ? "bg-zinc-700 text-emerald-300"
               : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
           )}
-          title={
-            tooShortForInspector
-              ? "The window is too short for the Inspector"
-              : "Toggle the Inspector panel"
-          }
+          {...helpHandlers(tooShortForInspector
+              ? "The panel is too short for the Inspector"
+              : "Toggle the Inspector panel")}
           aria-label="Toggle the Inspector panel"
         >
           <Binoculars size={15} />
           Inspector
         </button>
 
-        <span className="text-[11px] text-zinc-500 shrink-0 pointer-events-none">
-          {total == null
-            ? `${shown} shown`
-            : capped
-            ? `${shown} of ${total.toLocaleString()} (first ${PEEK_LIMIT})`
-            : `${total.toLocaleString()} row${total === 1 ? "" : "s"}`}
-        </span>
-
-        {/* Empty middle: still part of the drag region. */}
-        <span className="flex-1 pointer-events-none" />
-
-        <button
-          data-el="peek-arrange-btn"
-          onClick={() => ipc.arrangePeeks().catch(() => {})}
-          className="shrink-0 inline-flex items-center justify-center p-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 transition-colors"
-          title="Arrange all peek windows in columns beside the main window"
-          aria-label="Arrange all peek windows in columns beside the main window"
-        >
-          <SquaresFour size={15} />
-        </button>
-
-        <button
-          data-el="peek-open-tab-btn"
-          onClick={onOpenAsTab}
-          className="shrink-0 inline-flex items-center justify-center p-1 rounded bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
-          title="Open this related table as a full, filtered tab"
-          aria-label="Open this related table as a full, filtered tab"
-        >
-          <ArrowSquareOut size={15} />
-        </button>
-        <WindowControls onCloseAll={openPeekCount > 1 ? requestCloseAll : undefined} />
       </div>
 
       {error && (
@@ -580,35 +547,34 @@ export function PeekPanel({
           <CircleNotch size={16} className="animate-spin" /> Loading related rows…
         </div>
       ) : data ? (
-        /* The grid zooms with the shared tabs zoom (same scale as the main
-           window's table views); the titlebar above is window chrome and stays
-           fixed, mirroring the main window's layout. */
         <div
-          className="flex-1 min-h-0 flex flex-col"
-          style={tabsZoom !== 1 ? { zoom: tabsZoom } : undefined}
+          className="flex-1 min-h-0 flex"
         >
-          <div className="flex-1 min-h-0 flex">
           <div className="relative flex-1 min-w-0 min-h-0 flex flex-col">
+            <div ref={peekRowsRef} className="flex-1 min-h-0 flex flex-col">
             <DataGrid
-              readOnly
+              key={matchKey}
+              readOnly={loading || loadedMatch !== matchKey || unmatched}
               hideValueTooltip
-              stripeTint="violet"
               columns={data.columns}
               rows={data.rows}
               offset={data.offset}
               sort={sort}
               filters={filters}
               lockedFilterColumns={[target.column]}
+              hideColumnTypes
               hiddenColumns={hiddenColumns}
               jsonDisplay={jsonDisplay}
               columnWidths={columnWidths}
               suggestSource={{ profileId, database, table: target.table }}
+              copyTarget={{ database, table: target.table }}
               resultCopy
               peekableColumns={peekableColumns}
               activeCell={activeCell}
               clearActiveCellOnRowSelect
               onActiveCellChange={setActiveCell}
               onSelectionChange={setSelectedRows}
+              onCellSelectionSpansRowsChange={setCellSelectionSpansRows}
               onColumnWidthsChange={setColumnWidths}
               onSortChange={setSort}
               onFilterChange={onFilterChange}
@@ -621,20 +587,56 @@ export function PeekPanel({
                   return next;
                 })
               }
-              onCellEdit={async () => {}}
+              onCellEdit={updateCell}
+              onBatchEdit={updateCells}
+              onInsertRows={insertRows}
+              canDuplicateRows={hasPrimaryKey}
               onDeleteRows={hasPrimaryKey ? deleteRows : undefined}
               onCascadePreview={hasPrimaryKey ? previewCascade : undefined}
             />
+            </div>
+            {showInspector && (
+              <ExpandedPanel
+                key={matchKey}
+                editable={hasPrimaryKey && !loading && loadedMatch === matchKey && !unmatched}
+                onSave={activeCell ? (value) => updateCell(activeCell.rowIndex, activeCell.column, value) : undefined}
+                column={activeColumn}
+                value={activeValue}
+                rowOrdinal={activeRowOrdinal}
+                onClose={() => setExpanded(false)}
+                initialHeight={initialView?.inspectorHeight}
+                heightLimit={Math.max(80, hostHeight - 140)}
+                onHeightChange={(px) => onViewChange?.({ inspectorHeight: px })}
+              />
+            )}
+            {childPeekOpen && childPeekAll && !childPeekAll.closed && <IntegratedPeekPanel table={target.table} state={childPeekAll}
+              selectionBlocked={relationsSelectionBlocked}
+              parentLocation={currentLocation}
+              row={relationsRow} rowsRef={peekRowsRef} active={active}
+              onClose={() => showChildren(false)}
+              onChange={(update) => {
+                if (childPeekRef.current) changeChildren(update(childPeekRef.current));
+              }} />}
           </div>
-          {relationsOpen && (
+          {childPeekAll?.closed ? null : relationsOpen ? (
             <RelationsPanel
+              solo={relationsSolo}
+              onSoloChange={(solo) => {
+                setRelationsSolo(solo);
+                if (childPeekRef.current) changeChildren(setIntegratedPeekSolo(childPeekRef.current, solo));
+              }}
+              hideFilterButtons
               profileId={profileId}
               database={database}
               table={target.table}
               relations={relations}
               row={relationsRow}
               column={activeCell?.column ?? null}
-              onOpen={openChild}
+              onSelect={toggleChildPeek}
+              openRelationIds={childPeekAll?.peeks.map((p) => p.id) ?? []}
+              returnLabel={(t) => destination(t)?.label}
+              hideReturnRelations
+              activeRelationId={childPeekOpen ? childPeekAll?.activeId : undefined}
               onNew={(column) =>
                 setRelDialog({
                   relation: null,
@@ -658,26 +660,18 @@ export function PeekPanel({
               }
               onClose={() => setRelationsOpen(false)}
             />
-          )}
-          </div>
-          {showInspector && (
-            <ExpandedPanel
-              readOnly
-              editable={false}
-              column={activeColumn}
-              value={activeValue}
-              rowOrdinal={activeRowOrdinal}
-              onClose={() => setExpanded(false)}
-              initialHeight={initialView?.inspectorHeight}
-              onHeightChange={(px) => onViewChange?.({ inspectorHeight: px })}
-            />
+          ) : (
+            <button type="button" data-el="relations-panel-collapsed"
+              aria-label={`Show ${target.table} Relations`} aria-expanded={false}
+              {...helpHandlers("Show Relations")} onClick={() => setRelationsOpen(true)}
+              className="order-first w-[20px] shrink-0 self-stretch border-t-0 border-b-0 border-r border-zinc-700 bg-[var(--peek-tint,#2d2a3b)] focus-visible:outline focus-visible:outline-violet-400" />
           )}
         </div>
       ) : (
         <div className="flex-1" />
       )}
 
-      {relDialog && (
+      {active && relDialog && (
         <RelationEditDialog
           profileId={profileId}
           database={database}
@@ -689,73 +683,6 @@ export function PeekPanel({
         />
       )}
 
-      {confirmCloseAll != null &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-            {...closeConfirmBackdrop}
-          >
-            <div
-              data-el="close-all-peeks-dialog"
-              role="dialog"
-              aria-modal="true"
-              onClick={(e) => e.stopPropagation()}
-              className="w-[400px] max-w-[90vw] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
-            >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-                <div className="flex items-center gap-2">
-                  <Warning size={18} weight="fill" className="text-amber-400" />
-                  <h2 className="text-sm font-semibold text-zinc-100">
-                    Close peek windows
-                  </h2>
-                </div>
-                <button
-                  onClick={() => setConfirmCloseAll(null)}
-                  className="text-zinc-500 hover:text-zinc-200"
-                  aria-label="Close"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="px-4 py-4 text-[12px] leading-relaxed text-zinc-300">
-                There are{" "}
-                <span className="font-semibold text-zinc-100">
-                  {confirmCloseAll} open peek windows
-                </span>
-                . Close just this one, or all of them?
-              </div>
-              <div className="flex justify-end gap-2 border-t border-zinc-800 px-4 py-3">
-                <button
-                  onClick={() => setConfirmCloseAll(null)}
-                  className="mr-auto px-3 py-1.5 rounded text-[12px] text-zinc-200 bg-zinc-800 hover:bg-zinc-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  data-el="close-this-peek-btn"
-                  onClick={() => {
-                    setConfirmCloseAll(null);
-                    getCurrentWindow().close();
-                  }}
-                  className="px-3 py-1.5 rounded text-[12px] font-semibold bg-zinc-700 text-zinc-100 hover:bg-zinc-600 transition-colors"
-                >
-                  Close this
-                </button>
-                <button
-                  data-el="close-all-peeks-confirm-btn"
-                  onClick={() => {
-                    setConfirmCloseAll(null);
-                    ipc.closeAllPeeks().catch(() => {});
-                  }}
-                  className="px-3 py-1.5 rounded text-[12px] font-semibold bg-rose-500 text-white hover:bg-rose-400 transition-colors"
-                >
-                  Close all
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
     </div>
   );
 }

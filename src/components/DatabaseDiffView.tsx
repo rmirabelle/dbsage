@@ -234,7 +234,7 @@ export function DatabaseDiffView({ tab }: { tab: DatabaseDiffTab }) {
             {diff.identicalTables.length > 0 && (
               <div
                 className="sd-note sd-note-muted"
-                title={diff.identicalTables.join(", ")}
+                {...helpHandlers(diff.identicalTables.join(", "))}
               >
                 <CheckCircle size={14} />
                 {diff.identicalTables.length} identical table

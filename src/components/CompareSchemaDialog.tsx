@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect } from "react";
 import { GitDiff, X } from "@phosphor-icons/react";
 import { useStore } from "../state/store";
@@ -87,7 +88,7 @@ export function CompareSchemaDialog({
           <button
             className="ml-auto rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             onClick={onClose}
-            title="Close"
+            {...helpHandlers("Close")}
           >
             <X size={16} />
           </button>

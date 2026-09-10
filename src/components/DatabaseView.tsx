@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowUp,
+  DownloadSimple,
+  UploadSimple,
   Folder as FolderIcon,
   FolderPlus,
   CircleNotch as Loader2,
@@ -26,6 +28,7 @@ import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
 import { CompareSchemaDialog } from "./CompareSchemaDialog";
 import { ImportJsonDialog } from "./ImportJsonDialog";
+import { DatabaseSettingsDialog, exportDatabaseSettings } from "./DatabaseSettingsDialog";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { ViewsIcon } from "./TableViewPresetMenu";
 import { Tooltip } from "./Tooltip";
@@ -48,6 +51,8 @@ interface ContextMenuState {
 }
 
 export function DatabaseView({ tab }: Props) {
+  const [settingsImportOpen, setSettingsImportOpen] = useState(false);
+  const [exportingSettings, setExportingSettings] = useState(false);
   const setDatabaseFilter = useStore((s) => s.setDatabaseFilter);
   const refreshTab = useStore((s) => s.refreshTab);
   const refreshTableData = useStore((s) => s.refreshTableData);
@@ -622,6 +627,23 @@ export function DatabaseView({ tab }: Props) {
               <RefreshCw size={17} />
             )}
           </button>
+          <button type="button" data-el="database-export-settings" disabled={exportingSettings}
+            onClick={async () => {
+              setExportingSettings(true);
+              try { await exportDatabaseSettings(tab); } catch (e) { notifyError(String(e)); }
+              finally { setExportingSettings(false); }
+            }}
+            {...helpHandlers(`Export all settings for ${tab.database}`)}
+            aria-label="Export database settings"
+            className="inline-flex items-center justify-center rounded bg-zinc-700 p-1 text-zinc-200 hover:bg-zinc-600 hover:text-white disabled:opacity-40">
+            <UploadSimple size={17} />
+          </button>
+          <button type="button" data-el="database-import-settings" onClick={() => setSettingsImportOpen(true)}
+            {...helpHandlers(`Import database settings into ${tab.database}`)}
+            aria-label="Import database settings"
+            className="inline-flex items-center justify-center rounded bg-zinc-700 p-1 text-zinc-200 hover:bg-zinc-600 hover:text-white">
+            <DownloadSimple size={17} />
+          </button>
         </div>
 
         {currentFolder && (
@@ -904,6 +926,8 @@ export function DatabaseView({ tab }: Props) {
             }}
           />
         )}
+
+        {settingsImportOpen && <DatabaseSettingsDialog tab={tab} onClose={() => setSettingsImportOpen(false)} />}
 
         {compareTable && (
           <CompareSchemaDialog

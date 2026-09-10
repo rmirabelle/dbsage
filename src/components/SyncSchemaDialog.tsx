@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useMemo, useState } from "react";
 import { Warning, X } from "@phosphor-icons/react";
 import { useStore } from "../state/store";
@@ -49,7 +50,7 @@ function SyncShell({
           <button
             className="ml-auto rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             onClick={onClose}
-            title="Close"
+            {...helpHandlers("Close")}
           >
             <X size={16} />
           </button>
@@ -203,7 +204,7 @@ export function SyncSchemaDialog({
                 <span
                   className="min-w-0 truncate text-[11.5px] text-zinc-500"
                   style={{ fontFamily: "var(--font-mono)" }}
-                  title={it.detail}
+                  {...helpHandlers(it.detail)}
                 >
                   {it.detail}
                 </span>

@@ -59,7 +59,6 @@ export const HELP_SCREENSHOTS = {
   "relations-overview": { physicalWidth: 1440, physicalHeight: 850, framing: "main pane" },
   "relation-editor": { physicalWidth: 960, physicalHeight: 720, framing: "dialog crop" },
   "relation-cell-menu": { physicalWidth: 1000, physicalHeight: 700, framing: "grid and menu" },
-  "peek-window": { physicalWidth: 1200, physicalHeight: 760, framing: "window crop" },
   "tabs-windows": { physicalWidth: 1440, physicalHeight: 850, framing: "app chrome" },
   "settings-transfer": { physicalWidth: 1000, physicalHeight: 720, framing: "dialog crop" },
   "main-first_run": { physicalWidth: 1332, physicalHeight: 790, framing: "annotated main window" },
@@ -109,7 +108,6 @@ export const HELP_SCREENSHOTS = {
   "relation-edit": { physicalWidth: 726, physicalHeight: 362, framing: "Edit Relation dialog" },
   "relations-copy": { physicalWidth: 625, physicalHeight: 344, framing: "Copy Relations dialog" },
   "relations-menu": { physicalWidth: 1145, physicalHeight: 571, framing: "annotated cell Relations menu" },
-  "relations-peek": { physicalWidth: 1678, physicalHeight: 582, framing: "annotated table with two peek windows" },
 } as const;
 
 export type HelpScreenshotId = keyof typeof HELP_SCREENSHOTS;
@@ -726,6 +724,7 @@ export const HELP_GROUPS: HelpGroup[] = [
                 items: [
                   "The active sort direction appears as an arrow in the column header.",
                   "Text filters support EQUALS, NOT EQUAL, LIKE, and NOT LIKE; comparable values also support greater-than and less-than operators.",
+                  "LIKE and NOT LIKE match anywhere in the value by default. Type % (any characters) or _ (one character) to place the wildcards yourself, for example report% for values that start with report. Use \\% or \\_ to match a literal percent sign or underscore.",
                   "A filtered header and the grid's top edge turn amber so an active filter cannot be mistaken for missing data.",
                   "Drag a header edge to resize its column. Clear Filters removes filters and restores hidden columns.",
                 ],
@@ -759,7 +758,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               ),
               {
                 type: "paragraph",
-                text: "Views remember column visibility and widths, sort direction, filters, and JSON display choices for the table. Any peek windows open on the table are saved too, with their positions, sizes, and their own complete grid setup. The active View appears in the toolbar, and the badge shows how many named Views are saved.",
+                text: "Views remember column visibility and widths, sort direction, filters, and JSON display choices for the table. Integrated peek tabs and nested panels are saved too, with their sizes and complete grid setups. The active View appears in the toolbar, and the badge shows how many named Views are saved.",
               },
             ],
           },
@@ -908,6 +907,7 @@ export const HELP_GROUPS: HelpGroup[] = [
                 items: [
                   "Choose the expand button beside SHOW to open Edit JSON display. Drag its header to move it, or drag its resize corner for more space.",
                   "Type or paste into Expressions. Separate display expressions with commas; newlines can spread a long expression across several lines without starting a new expression.",
+                  "Property suggestions appear after a short typing pause. Use Up/Down to choose, Enter or Tab to insert, or Escape to dismiss. At the root, suggestions show document keys. Inside items[prop=value] or [prop=value], they show keys from the first item of the corresponding sampled arrays. Each array is sampled once per editor session from up to 100 table rows, merged with up to 100 loaded rows; result grids use loaded rows only. Sampling uses the highest primary-key values when there is a single-column primary key, which need not be the most recently edited rows. Suggestions are hints, not a complete JSON schema; deeper nested array paths are not suggested yet.",
                   "Check Preview against the current row. Use its previous and next buttons to try other loaded rows. With no loaded rows, you can still write and apply valid expressions.",
                   "Use the Expression guide below the panels for examples and notes. Validation appears below Expressions; correct any syntax error before applying.",
                   "Choose Apply to update the column and close both the editor and the column menu, revealing the result. Cancel or Escape discards changes made in the editor and returns to the column menu.",
@@ -1263,7 +1263,15 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               {
                 type: "paragraph",
-                text: "Peek windows are unique to DB Sage. A peek shows the rows related to the selected cell in a separate window, so you can follow data across tables without leaving the table you are working in.",
+                text: "A peek shows related rows in the table's integrated workspace, so you can follow data across tables without leaving the table you are working in.",
+              },
+              {
+                type: "paragraph",
+                text: "Use the Table View's Relations button to show or hide the peek workspace. Choose Bottom or Right beside Dock at the bottom of the master Relations list to place the list and peek host together below or beside the table. Bottom docking starts at half the rows height; Right docking starts at half the table area width. Drag the workspace's top edge when below, or its left edge when beside the table, to resize it. Double-click that edge to split the space evenly. Each position remembers its own size, and docking is saved with table state and Views. Showing Relations automatically hides the parent table's Inspector; you can reopen it with the Inspector button. Select parent rows to update related data. Tab titles dim when there are no related records, and HAS MANY tabs show positive row counts. Hiding the workspace preserves its active tab and peek settings.",
+              },
+              {
+                type: "paragraph",
+                text: "Click a relation name to open just that relation's peek tab. Clicking other relation names adds their tabs; clicking an open relation name again closes its tab. Click a tab header to switch tabs without closing it. The same behavior applies inside peeks: child tabs open underneath that peek's rows and Inspector, initially using half the available rows height. Closing the last child tab collapses its panel. Relations that reverse a table relationship along the current peek path and point to the same ancestor row or record set are hidden from the peek's Relations list. Relations from different source tables open their own peeks even when they target the same records. Another row in the same table can still open a new peek. Each child follows its immediate parent's selected row. Drag each group's top edge to adjust its height. Open nested peek tabs and their settings are saved with the enclosing workspace.",
               },
               {
                 type: "steps",
@@ -1277,13 +1285,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               shot(
                 "relations-menu",
                 "Table View annotated with the purple relation icon on a column header and the Relations panel open beside the grid for the selected row",
-                "A purple icon and purple header text mark a column that has a relation. The Relations button in the toolbar opens the Relations panel, which follows the selected row; choose a relation there to open a peek window. The pencil beside each relation edits it, and New Relation starts a new one.",
-                "wide"
-              ),
-              shot(
-                "relations-peek",
-                "Orders table beside two peek windows, one showing the HAS ONE customer and one showing the HAS MANY order items for the selected row",
-                "A peek is a separate window filtered to the matching target rows, with the filter shown in its title bar. Open peeks follow the selection: click another parent row and each peek updates to that row's related data.",
+                "A purple icon and purple header text mark a column that has a relation. The Relations button in the toolbar opens the Relations panel, which follows the selected row; choose a relation there to open an integrated peek tab. The pencil beside each relation edits it, and New Relation starts a new one.",
                 "wide"
               ),
             ],
@@ -1293,20 +1295,19 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               {
                 type: "paragraph",
-                text: "A peek is a real window. Move it and resize it freely, and keep as many open as you need beside the parent table.",
+                text: "Peeks stay inside the integrated host. Switch between relation tabs, resize the host, or dock it below or beside the parent table.",
               },
               {
                 type: "bullets",
                 items: [
                   "Sort and filter columns in a peek the same way as in Table View, and use Inspector for large values.",
-                  "The green open-in-tab button in the peek title bar expands the peek into a full, filtered table tab, where you can edit the related rows.",
                   "Relations nest. If the peeked table has its own relations, open the Relations panel in the peek and choose one to open a child peek from it.",
                 ],
               },
               {
                 type: "note",
                 title: "Peek layouts are saved with Views",
-                text: "When you save a Table View, the open peek windows are saved with it: their positions and sizes, plus each peek's own column visibility, column widths, sort, filters, JSON display choices, and whether its Inspector was open. Opening the View later restores the whole layout exactly as you left it.",
+                text: "When you save a Table View, its integrated peek layout is saved with it: docking, panel sizes, open tabs and nested panels, plus each peek's column visibility, widths, sort, filters, JSON display choices, and Inspector state. Older Views that stored separate peek windows are restored as integrated tabs.",
                 tone: "tip",
               },
               {
@@ -1408,6 +1409,22 @@ export const HELP_GROUPS: HelpGroup[] = [
               {
                 type: "paragraph",
                 text: "Import merges only the checked categories. Items with matching internal IDs are updated and new items are added; categories you clear remain unchanged. Review the counts, choose Import, and wait for the completion summary before closing the dialog.",
+              },
+            ],
+          },
+          {
+            title: "Import layouts into another database",
+            blocks: [
+              {
+                type: "steps",
+                items: [
+                  "Open the source database and choose Export settings in its toolbar. The file contains that database's column setups, relations, table folders, saved views, and saved queries. Connection passwords and other databases are excluded. File > Export Settings remains the full-application backup tool.",
+                  "Open the destination database, choose Import settings in its toolbar, and select the exported file. The source and destination database names do not need to match. There are no categories or database mappings to select.",
+                  "Choose Import to apply the settings directly. Check compatibility is optional; it shows counts and skipped items without applying anything. Compatibility is checked during import even if you do not request the preview.",
+                  "Matching settings are replaced. The destination folder list is replaced completely, including removal of folders absent from the import. Missing tables, columns, and unavailable relation peeks are skipped and listed in the completion details. Tables and columns are matched by exact name.",
+                  "Open destination table tabs reload automatically with their integrated peeks. Nested peeks use your destination connection and follow its selected rows. Database tables and data are unchanged.",
+                  "Saved query text is copied unchanged. If it explicitly names the source database, edit those names before running the query against another database.",
+                ],
               },
             ],
           },

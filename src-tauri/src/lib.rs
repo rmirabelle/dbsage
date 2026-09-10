@@ -88,7 +88,7 @@ fn show_all_windows(app: &AppHandle) {
 }
 
 /// Minimize (or restore) every secondary window to follow the main window, so
-/// peeks and torn-off tabs don't linger on screen when the app is minimized.
+/// torn-off tabs don't linger on screen when the app is minimized.
 fn sync_minimize_secondary(app: &AppHandle, minimized: bool) {
     for (label, win) in app.webview_windows() {
         if label == "main" || label == "splash" {
@@ -165,7 +165,7 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 let handle = app.handle().clone();
                 /* Mirror the main window's minimize/restore onto every secondary
-                 * window (peeks, torn-off tabs, monitor, admin), so they don't get
+                 * window (torn-off tabs, monitor, admin), so they don't get
                  * left floating when the app is sent to the taskbar. Minimize has
                  * no dedicated event, so we read the state on resize and act only on
                  * a transition. */
@@ -213,6 +213,7 @@ pub fn run() {
             query::fetch_rows,
             query::count_rows,
             query::suggest_column_values,
+            query::sample_json_properties,
             query::execute_query,
             query::analyze_query,
             query::cancel_query,
@@ -286,6 +287,9 @@ pub fn run() {
             state_io::export_state,
             state_io::import_state,
             state_io::preview_state,
+            state_io::mapping::state_import_sources,
+            state_io::mapping::preview_state_mapping,
+            state_io::mapping::import_database_settings,
             export::export_query,
             updater::check_for_update,
             updater::download_and_run_installer,
@@ -301,13 +305,7 @@ pub fn run() {
             admin::save_my_ini,
             windows::read_window_seed,
             windows::open_tab_window,
-            windows::open_peek_window,
-            windows::list_open_peeks,
-            windows::set_peek_state,
             windows::open_help_window,
-            windows::close_all_peeks,
-            windows::close_peeks,
-            windows::arrange_peeks,
             windows::set_tabstrip_rect,
             windows::get_tabstrip_rect,
             windows::mouse_left_button_down,

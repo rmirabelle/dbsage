@@ -34,13 +34,33 @@ Set-Location src-tauri
 cargo check
 ```
 
-- Run all commands inside the configured workspace sandbox.
-- Never request elevated or outside-sandbox execution for development, builds,
-  tests, Vite, Tauri, Cargo, or npm commands.
+- The user explicitly authorized local builds and publishing outside Codex's
+  sandbox on September 7, 2026. Run development, build, test, npm, Cargo, Tauri,
+  and publish commands through approved outside-sandbox execution under the
+  user's normal Windows account. This supersedes the earlier sandbox-only rule.
+- For publishing, use the approved entry point directly, without wrapping it
+  in a different compound command:
+  `& 'C:\Users\rmira\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell\pwsh.exe' -NoProfile -File 'D:\Code\DBSage\publish.ps1'`.
+  Use `sandbox_permissions: "require_escalated"` and the scoped saved approval
+  for that executable/script. Outside-sandbox execution does not require
+  Windows administrator elevation or `Start-Process -Verb RunAs`.
+- Keep the preferred `elevated` implementation for commands that still run in
+  the sandbox. Do not switch to the `unelevated` fallback to troubleshoot builds.
+- Do not ask for a Codex restart as routine troubleshooting. Diagnose the
+  actual failure and use supported repair/reload controls where available.
+  A restart request requires concrete evidence that the affected running
+  process cannot adopt the repair, and an explanation of that limitation.
+  Preserve progress and consult `docs/windows-build-runtime.md` first.
 - After stopping `npm run tauri dev`, run `./kill-dev.ps1`. It tree-kills
   `dbsage.exe` and frees Vite port `14210`.
 - Use `npm run tauri dev` for normal UI iteration so frontend and backend changes
   are exercised together.
+- For Windows `spawn EPERM` failures, read `docs/windows-build-runtime.md` and
+  check the recorded execution identity first. A build accidentally running as
+  `CodexSandboxOffline` or `CodexSandboxOnline` must be relaunched through the
+  approved outside-sandbox entry point; do not restart the sandbox diagnostic
+  loop. The publisher runs `node scripts/check-build-runtime.mjs` in its own
+  execution context. Use the project npm Tauri CLI, not the global Cargo CLI.
 
 ## What this app does
 
@@ -136,6 +156,9 @@ administration.
 - The updater depends on `releases/latest`; do not leave the intended current
   release as a draft.
 - Do not run the publish workflow unless the user explicitly asks to publish.
+- Run source checks, then the publish workflow once; it already builds both
+  installers. Do not run a separate full Tauri build first just to rebuild the
+  same source again during publishing.
 
 ## Installer
 

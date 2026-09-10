@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -389,7 +390,7 @@ export function MonitoringView({ profileId }: { profileId: string }) {
           data-el="monitoring-pause-btn"
           onClick={() => setPaused((p) => !p)}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors"
-          title={paused ? "Resume live polling" : "Pause live polling"}
+          {...helpHandlers(paused ? "Resume live polling" : "Pause live polling")}
         >
           {paused ? <Play size={15} weight="fill" /> : <Pause size={15} weight="fill" />}
           {paused ? "Resume" : "Pause"}
@@ -398,7 +399,7 @@ export function MonitoringView({ profileId }: { profileId: string }) {
           data-el="monitoring-refresh-btn"
           onClick={() => setRefreshTick((t) => t + 1)}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors"
-          title="Refresh now"
+          {...helpHandlers("Refresh now")}
         >
           <RefreshCw size={14} />
           Refresh
@@ -628,7 +629,7 @@ export function MonitoringView({ profileId }: { profileId: string }) {
                       {p.info?.trim() ? (
                         <button
                           onClick={() => setInspecting(p)}
-                          title="Click to view the full statement"
+                          {...helpHandlers("Click to view the full statement")}
                           className={clsx(
                             "block w-full truncate text-left font-mono cursor-pointer",
                             tone
@@ -648,7 +649,7 @@ export function MonitoringView({ profileId }: { profileId: string }) {
                         onClick={() => onKill(p)}
                         disabled={killing.has(p.id)}
                         className="inline-flex items-center justify-center p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-800 disabled:opacity-40"
-                        title="Kill this connection"
+                        {...helpHandlers("Kill this connection")}
                         aria-label={`Kill connection ${p.id}`}
                       >
                         {killing.has(p.id) ? (

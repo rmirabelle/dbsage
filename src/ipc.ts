@@ -28,7 +28,6 @@ import type {
   RowsResult,
   SuggestResult,
   CollationInfo,
-  PeekViewState,
   SavedQuery,
   ServerResources,
   ServerStatus,
@@ -36,6 +35,9 @@ import type {
   SortSpec,
   StateCounts,
   StateSelection,
+  StateImportSource,
+  StateImportMapping,
+  StateMappingPreview,
   TableInfo,
   TableSchemaEntry,
   TableSchemaMeta,
@@ -94,6 +96,9 @@ export const ipc = {
     table: string;
     filters: ColumnFilter[];
   }) => invoke<number>("count_rows", args),
+
+  sampleJsonProperties: (args: { profileId: string; database: string; table: string; column: string; arrayProperty?: string; selectorProperty?: string }) =>
+    invoke<string[]>("sample_json_properties", args),
 
   suggestColumnValues: (args: {
     profileId: string;
@@ -417,19 +422,6 @@ export const ipc = {
     height: number
   ) =>
     invoke<void>("open_tab_window", { seed, title, x, y, width, height }),
-  openPeekWindow: (
-    seed: unknown,
-    x: number,
-    y: number,
-    width: number,
-    height: number
-  ) => invoke<void>("open_peek_window", { seed, x, y, width, height }),
-  listOpenPeeks: <T>() => invoke<T[]>("list_open_peeks"),
-  setPeekState: (label: string, patch: PeekViewState) =>
-    invoke<void>("set_peek_state", { label, patch }),
-  closeAllPeeks: () => invoke<void>("close_all_peeks"),
-  closePeeks: (labels: string[]) => invoke<void>("close_peeks", { labels }),
-  arrangePeeks: () => invoke<void>("arrange_peeks"),
   setTabstripRect: (rect: unknown | null) =>
     invoke<void>("set_tabstrip_rect", { rect }),
   getTabstripRect: <T>() => invoke<T | null>("get_tabstrip_rect"),
@@ -470,12 +462,18 @@ export const ipc = {
     setup: ColumnSetup
   ) => invoke<void>("save_column_setup", { profileId, database, table, setup }),
 
-  exportState: (path: string, passphrase: string, selection: StateSelection) =>
-    invoke<void>("export_state", { path, passphrase, selection }),
+  exportState: (path: string, passphrase: string, selection: StateSelection, databaseScope?: { profileId: string; database: string }) =>
+    invoke<void>("export_state", { path, passphrase, selection, databaseScope }),
+  importDatabaseSettings: (path: string, passphrase: string, profileId: string, database: string, previewOnly: boolean) =>
+    invoke<StateMappingPreview>("import_database_settings", { path, passphrase, profileId, database, previewOnly }),
   previewState: (path: string, passphrase: string) =>
     invoke<StateCounts>("preview_state", { path, passphrase }),
-  importState: (path: string, passphrase: string, selection: StateSelection) =>
-    invoke<ImportSummary>("import_state", { path, passphrase, selection }),
+  stateImportSources: (path: string, passphrase: string) =>
+    invoke<StateImportSource[]>("state_import_sources", { path, passphrase }),
+  previewStateMapping: (path: string, passphrase: string, selection: StateSelection, mapping: StateImportMapping) =>
+    invoke<StateMappingPreview>("preview_state_mapping", { path, passphrase, selection, mapping }),
+  importState: (path: string, passphrase: string, selection: StateSelection, mapping?: StateImportMapping, previewToken?: string) =>
+    invoke<ImportSummary>("import_state", { path, passphrase, selection, mapping, previewToken }),
 
   exportQuery: (args: {
     path: string;

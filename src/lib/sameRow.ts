@@ -20,3 +20,9 @@ export function findSameRow(
   const want = keyOf(row);
   return newRows.findIndex((r) => keyOf(r) === want);
 }
+
+/** Preserve a surviving cell; otherwise start filtered results at the first visible cell. */
+export function firstFilteredCell(columns: ColumnInfo[], rows: RowRecord[], hiddenColumns: string[]) {
+  const column = columns.find((c) => !hiddenColumns.includes(c.name))?.name;
+  return rows.length && column ? { rowIndex: 0, column } : null;
+}

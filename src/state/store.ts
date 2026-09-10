@@ -17,6 +17,8 @@ import { analyzeQueryBundle } from "../lib/queryAnalysis";
 import { splitSqlStatements, returnsResultSet } from "../lib/splitSql";
 import { deleteRowsWithCascade, toIpcString } from "../lib/rowDelete";
 import { invalidateRelatedExistence } from "../lib/relatedExistence";
+import { restoreIntegratedPeek, restorePresetPeeks } from "../lib/integratedPeek";
+import { findSameRow } from "../lib/sameRow";
 import type {
   CascadeTarget,
   ColumnFilter,
@@ -25,7 +27,7 @@ import type {
   DatabaseDiffTab,
   DatabaseTab,
   Folder,
-  PeekDescriptor,
+  IntegratedPeekState,
   ProfileView,
   QueryResult,
   QueryTab,
@@ -37,6 +39,7 @@ import type {
   SchemaDiffSide,
   SchemaDiffTab,
   SortSpec,
+  TableOpenFrom,
   Tab,
   TableSchema,
   TableInfo,
@@ -84,18 +87,43 @@ export function isQueryTabDirty(tab: QueryTab): boolean {
 
 /** Persist a rows tab's column setup (visibility, filters, JSON "Show", widths)
  * to the backend store so reopening the table restores it. Best-effort. */
+const pendingColumnSetups = new Map<string, () => Promise<void>>();
+let savingColumnSetup: Promise<void> | null = null;
+
+function drainColumnSetups(): Promise<void> {
+  if (savingColumnSetup) return savingColumnSetup;
+  if (!pendingColumnSetups.size) return Promise.resolve();
+  savingColumnSetup = (async () => {
+    try {
+      while (pendingColumnSetups.size) {
+        const [key, saveSetup] = pendingColumnSetups.entries().next().value!;
+        pendingColumnSetups.delete(key);
+        await saveSetup().catch(() => { /* Persistence remains best-effort. */ });
+      }
+    } finally { savingColumnSetup = null; }
+  })();
+  return savingColumnSetup;
+}
+
+/** Finish queued automatic saves before exporting or replacing database settings. */
+export async function flushColumnSetups() {
+  while (savingColumnSetup || pendingColumnSetups.size) await drainColumnSetups();
+}
+
+/** Coalesce rapid resize/view updates and keep older snapshots from overwriting newer ones. */
 function persistColumnSetup(tab: RowsTab) {
-  ipc
+  pendingColumnSetups.set(tab.id, () => ipc
     .saveColumnSetup(tab.profileId, tab.database, tab.table, {
       hiddenColumns: tab.hiddenColumns,
       filters: tab.filters,
       jsonDisplay: tab.jsonDisplay,
       columnWidths: tab.columnWidths,
       sort: tab.sort,
-    })
-    .catch(() => {
-      /* persistence is best-effort */
-    });
+      peekAll: tab.peekAll ?? null,
+      relationsOpen: tab.relationsOpen,
+      inspectorHeight: tab.inspectorHeight,
+    }));
+  void drainColumnSetups();
 }
 
 interface TreeDbState {
@@ -132,9 +160,6 @@ interface Store {
   dockTab: (tab: Tab) => void;
   /** Tab awaiting an unsaved-changes confirmation before it closes; null when none. */
   pendingCloseTabId: string | null;
-  /** Peek windows launched from the pending-close rows tab (labels), so the
-   * close confirmation can offer to close them too. Empty when none. */
-  pendingClosePeekLabels: string[];
   /** In-progress SQL-script export with row data; null when none is running. */
   sqlExport: {
     table: string;
@@ -250,7 +275,10 @@ interface Store {
    * the batch). */
   cancelTableCopy: () => void;
 
-  openTable: (profileId: string, profileName: string, database: string, table: string) => Promise<void>;
+  /** `from` (a peek opening as a table) replaces the tab's filters and sort
+   * and re-selects the same rows once they load. */
+  openTable: (profileId: string, profileName: string, database: string, table: string,
+    from?: TableOpenFrom) => Promise<void>;
   /** Forget the remembered table for a database so the DB view stops
    * auto-reselecting it (called when the user clears the table selection). */
   forgetLastOpenedTable: (profileId: string, database: string) => void;
@@ -458,6 +486,8 @@ interface Store {
    * component state) so a torn-off window inherits the docked state. */
   setTabInspectorOpen: (tabId: string, open: boolean) => void;
   setTabRelationsOpen: (tabId: string, open: boolean) => void;
+  setRowsPeekAll: (tabId: string, peekAll: IntegratedPeekState | null) => void;
+  setRowsInspectorHeight: (tabId: string, height: number) => void;
   /** Persist manual column-width overrides (px, keyed by column name). */
   setColumnWidths: (tabId: string, widths: Record<string, number>) => void;
   /** Save the rows tab's current view (columns, widths, sort, filters, show) as
@@ -537,32 +567,6 @@ const emptyTreeDbState = (): TreeDbState => ({
   expandedFolders: new Set(),
 });
 
-/** The peek windows launched from `tab`'s table — the whole tree, not just
- * direct peeks: a child peek's sourceTable is its parent peek's table, so the
- * reachable tables are walked transitively (the target table of any collected
- * peek becomes a valid source for the next). */
-export function peeksReachableFrom(
-  open: PeekDescriptor[],
-  tab: { profileId: string; database: string; table: string }
-): PeekDescriptor[] {
-  const sameDb = open.filter(
-    (p) => p.profileId === tab.profileId && p.database === tab.database
-  );
-  const reachable = new Set<string>([tab.table]);
-  const collected = new Set<PeekDescriptor>();
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const p of sameDb) {
-      if (collected.has(p) || !reachable.has(p.sourceTable)) continue;
-      collected.add(p);
-      reachable.add(p.target.table);
-      changed = true;
-    }
-  }
-  return [...collected];
-}
-
 export const useStore = create<Store>((set, get) => ({
   profiles: [],
   loadingProfiles: false,
@@ -573,7 +577,6 @@ export const useStore = create<Store>((set, get) => ({
   activeTabId: null,
   tabDropActive: false,
   pendingCloseTabId: null,
-  pendingClosePeekLabels: [],
   sqlExport: null,
   copyProgress: null,
   backupProgress: null,
@@ -1064,7 +1067,7 @@ export const useStore = create<Store>((set, get) => ({
     ipc.cancelTableCopy().catch(() => {});
   },
 
-  openTable: async (profileId, profileName, database, table) => {
+  openTable: async (profileId, profileName, database, table, from) => {
     const tabId = `rows::${profileId}::${database}::${table}`;
     set((s) => ({
       lastOpenedTables: {
@@ -1072,9 +1075,23 @@ export const useStore = create<Store>((set, get) => ({
         [`${profileId}::${database}`]: table,
       },
     }));
+    const selectFrom = from && { rows: from.rows, activeCell: from.activeCell, selectedRows: from.selectedRows };
     const existing = get().tabs.find((t) => t.id === tabId);
     if (existing) {
-      set({ activeTabId: tabId });
+      if (!from) {
+        set({ activeTabId: tabId });
+        return;
+      }
+      /* Drop the rows so the grid remounts with the restored selection. */
+      set((s) => ({
+        activeTabId: tabId,
+        tabs: s.tabs.map((t) =>
+          t.id === tabId && t.kind === "rows"
+            ? { ...t, filters: from.filters, sort: from.sort, page: 1, exactTotal: null, data: null, selectFrom }
+            : t
+        ),
+      }));
+      await loadTabPage(tabId, 1, set, get);
       return;
     }
 
@@ -1098,11 +1115,15 @@ export const useStore = create<Store>((set, get) => ({
       exactTotal: null,
       loading: true,
       error: null,
-      sort: saved?.sort ?? null,
-      filters: saved?.filters ?? [],
+      sort: from ? from.sort : saved?.sort ?? null,
+      filters: from ? from.filters : saved?.filters ?? [],
+      selectFrom,
       hiddenColumns: saved?.hiddenColumns ?? [],
       jsonDisplay: saved?.jsonDisplay ?? {},
       columnWidths: saved?.columnWidths ?? {},
+      peekAll: restoreIntegratedPeek(saved?.peekAll, profileId, profileName, database),
+      relationsOpen: saved?.relationsOpen,
+      inspectorHeight: saved?.inspectorHeight,
       presets,
       activePreset: null,
       activeCell: null,
@@ -1232,34 +1253,14 @@ export const useStore = create<Store>((set, get) => ({
       ((tab.kind === "create-table" && isDesignerTabDirty(tab)) ||
         (tab.kind === "query" && isQueryTabDirty(tab)));
     if (dirty) {
-      set({ pendingCloseTabId: tabId, pendingClosePeekLabels: [] });
-      return;
-    }
-    /* A rows tab with peek windows launched from it: offer to close them too. */
-    if (tab?.kind === "rows") {
-      void (async () => {
-        let labels: string[] = [];
-        try {
-          const open = await ipc.listOpenPeeks<PeekDescriptor>();
-          labels = peeksReachableFrom(open, tab)
-            .map((p) => p.label)
-            .filter((l): l is string => !!l);
-        } catch {
-          /* ignore — close the tab as usual */
-        }
-        if (labels.length > 0) {
-          set({ pendingCloseTabId: tabId, pendingClosePeekLabels: labels });
-          return;
-        }
-        get().closeTab(tabId);
-      })();
+      set({ pendingCloseTabId: tabId });
       return;
     }
     get().closeTab(tabId);
   },
 
   setPendingCloseTabId: (tabId) =>
-    set({ pendingCloseTabId: tabId, pendingClosePeekLabels: [] }),
+    set({ pendingCloseTabId: tabId }),
 
   saveDesignerTab: async (tabId) => {
     const tab = get().tabs.find((t) => t.id === tabId);
@@ -2533,6 +2534,20 @@ export const useStore = create<Store>((set, get) => ({
         t.id === tabId && t.kind === "rows" ? { ...t, relationsOpen: open } : t
       ),
     }));
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (tab?.kind === "rows") persistColumnSetup(tab);
+  },
+
+  setRowsPeekAll: (tabId, peekAll) => {
+    set((s) => ({ tabs: s.tabs.map((t) => t.id === tabId && t.kind === "rows" ? { ...t, peekAll } : t) }));
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (tab?.kind === "rows") persistColumnSetup(tab);
+  },
+
+  setRowsInspectorHeight: (tabId, inspectorHeight) => {
+    set((s) => ({ tabs: s.tabs.map((t) => t.id === tabId && t.kind === "rows" ? { ...t, inspectorHeight } : t) }));
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (tab?.kind === "rows") persistColumnSetup(tab);
   },
 
   setJsonDisplay: (tabId, column, path) => {
@@ -2564,32 +2579,18 @@ export const useStore = create<Store>((set, get) => ({
     if (!tab || tab.kind !== "rows") return;
     const trimmed = name.trim();
     if (!trimmed) return;
-    /* Capture the peek windows currently open against this table, so the view
-       restores them too. Best-effort — a peek-listing hiccup must not block the
-       save. */
-    let peeks: PeekDescriptor[] = [];
-    try {
-      const open = await ipc.listOpenPeeks<PeekDescriptor>();
-      peeks = peeksReachableFrom(open, tab);
-    } catch {
-      /* ignore — save the rest of the view */
-    }
     const preset: TableViewPreset = {
       name: trimmed,
       setup: {
+        peekAll: tab.peekAll ?? null,
+        inspectorHeight: tab.inspectorHeight,
         hiddenColumns: tab.hiddenColumns,
         columnWidths: tab.columnWidths,
         sort: tab.sort,
         filters: tab.filters,
         jsonDisplay: tab.jsonDisplay,
-        /* The effective state: untouched, the panel is open when the table
-           has relations defined from it (see RowsTabBody). */
-        relationsOpen:
-          tab.relationsOpen ??
-          (get().relations[`${tab.profileId}::${tab.database}`] ?? []).some(
-            (r) => r.fromTable === tab.table
-          ),
-        ...(peeks.length > 0 && { peeks }),
+        /** Relations controls the entire integrated workspace. */
+        relationsOpen: tab.relationsOpen ?? Boolean(tab.peekAll),
       },
     };
     try {
@@ -2615,6 +2616,9 @@ export const useStore = create<Store>((set, get) => ({
     if (!tab || tab.kind !== "rows") return;
     const preset = tab.presets.find((p) => p.name === name);
     if (!preset) return;
+    await get().loadRelations(tab.profileId, tab.database);
+    const peekAll = restorePresetPeeks(preset.setup, tab.table,
+      get().relations[`${tab.profileId}::${tab.database}`] ?? [], tab.profileId, tab.profileName, tab.database);
     const { hiddenColumns, columnWidths, sort, filters, jsonDisplay } =
       preset.setup;
     set((s) => ({
@@ -2628,7 +2632,11 @@ export const useStore = create<Store>((set, get) => ({
               filters,
               jsonDisplay,
               /* Views saved before the Relations panel existed leave it as is. */
-              relationsOpen: preset.setup.relationsOpen ?? t.relationsOpen,
+              relationsOpen: preset.setup.relationsOpen ?? (peekAll ? true : t.relationsOpen),
+              peekAll,
+              inspectorOpen: peekAll ? true : t.inspectorOpen,
+              presets: t.presets.map((p) => p.name === name ? { ...p, setup: { ...p.setup, peekAll, peeks: undefined } } : p),
+              inspectorHeight: preset.setup.inspectorHeight ?? t.inspectorHeight,
               activePreset: name,
             }
           : t
@@ -2640,34 +2648,6 @@ export const useStore = create<Store>((set, get) => ({
     if (t && t.kind === "rows") persistColumnSetup(t);
     await loadTabPage(tabId, 1, set, get);
 
-    /* A saved view owns the peek workspace: close any peeks currently on screen
-       first, then reopen exactly the set the view captured. */
-    await ipc.closeAllPeeks().catch(() => {});
-    for (const p of preset.setup.peeks ?? []) {
-      const seed = {
-        profileId: p.profileId,
-        profileName: p.profileName,
-        database: p.database,
-        target: p.target,
-        sourceTable: p.sourceTable,
-        sourceColumn: p.sourceColumn,
-        hiddenColumns: p.hiddenColumns,
-        inspectorOpen: p.inspectorOpen,
-        sort: p.sort,
-        filters: p.filters,
-        columnWidths: p.columnWidths,
-        jsonDisplay: p.jsonDisplay,
-        relationsOpen: p.relationsOpen,
-        inspectorHeight: p.inspectorHeight,
-        activeColumn: p.activeColumn,
-        kind: p.kind,
-        compactHeight: p.compactHeight,
-        fromView: true,
-      };
-      ipc
-        .openPeekWindow(seed, p.x ?? 120, p.y ?? 120, p.width ?? 900, p.height ?? 440)
-        .catch(() => {});
-    }
   },
 
   deleteTablePreset: async (tabId, name) => {
@@ -2965,7 +2945,7 @@ async function loadTabPage(tabId: string, page: number, set: SetFn, get: GetFn) 
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "rows"
-          ? {
+          ? applySelectFrom({
               ...t,
               loading: false,
               error: null,
@@ -2973,7 +2953,7 @@ async function loadTabPage(tabId: string, page: number, set: SetFn, get: GetFn) 
                 ...result,
                 total: result.total ?? t.data?.total ?? null,
               },
-            }
+            })
           : t
       ),
     }));
@@ -2987,6 +2967,21 @@ async function loadTabPage(tabId: string, page: number, set: SetFn, get: GetFn) 
       ),
     }));
   }
+}
+
+/** Re-select the rows a pending `selectFrom` names, now that rows are loaded. */
+function applySelectFrom(t: RowsTab): RowsTab {
+  const from = t.selectFrom;
+  if (!from || !t.data) return t;
+  const { columns, rows } = t.data;
+  const at = (i: number) => findSameRow(columns, from.rows, i, rows);
+  const cellIdx = from.activeCell ? at(from.activeCell.rowIndex) : -1;
+  return {
+    ...t,
+    selectFrom: undefined,
+    activeCell: from.activeCell && cellIdx >= 0 ? { rowIndex: cellIdx, column: from.activeCell.column } : null,
+    selectedRows: from.selectedRows.map(at).filter((i) => i >= 0),
+  };
 }
 
 async function loadDatabaseTab(tabId: string, set: SetFn, get: GetFn) {

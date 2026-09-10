@@ -17,6 +17,12 @@ param()
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
+$executionIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+Write-Host "==> Release execution account: $executionIdentity" -ForegroundColor Cyan
+if ($executionIdentity -match '\\CodexSandbox(?:Offline|Online)$') {
+  throw "Publishing requires the user-approved outside-sandbox launch. Run this script through Codex's approved local publish command; see AGENTS.md."
+}
+
 $cargoToml = Get-Content "src-tauri/Cargo.toml" -Raw
 $match = [regex]::Match($cargoToml, '(?m)^version\s*=\s*"([^"]+)"')
 if (-not $match.Success) {
@@ -26,8 +32,10 @@ $version = $match.Groups[1].Value
 $tag = "v$version"
 
 Write-Host "==> Building release $tag ..." -ForegroundColor Cyan
-cargo tauri build
-if ($LASTEXITCODE -ne 0) { throw "cargo tauri build failed" }
+node scripts/check-build-runtime.mjs
+if ($LASTEXITCODE -ne 0) { throw "Build runtime check failed; see docs/windows-build-runtime.md" }
+npm run tauri build
+if ($LASTEXITCODE -ne 0) { throw "npm run tauri build failed" }
 
 # Locate the bundle artifacts by version. productName may contain spaces, so
 # match on the version suffix rather than the product-name prefix.
@@ -36,6 +44,7 @@ $msiDir = "src-tauri/target/release/bundle/msi"
 $exeSrc = Get-ChildItem $nsisDir -Filter "*_${version}_x64-setup.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $exeSrc) { throw "expected NSIS installer not found in $nsisDir for version $version" }
 $msiSrc = Get-ChildItem $msiDir -Filter "*_${version}_x64_en-US.msi" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $msiSrc) { throw "expected MSI installer not found in $msiDir for version $version" }
 
 # Publish under clean, space-free asset names regardless of productName.
 $assetBase = "DBSage_$version"
@@ -46,13 +55,8 @@ New-Item -ItemType Directory -Force -Path "dist" | Out-Null
 Get-ChildItem "dist" -Include *.exe, *.msi -File -ErrorAction SilentlyContinue | Remove-Item -Force
 Copy-Item $exeSrc.FullName "dist/$exeName" -Force
 
-$assets = @("dist/$exeName")
-if ($msiSrc) {
-  Copy-Item $msiSrc.FullName "dist/$msiName" -Force
-  $assets += "dist/$msiName"
-} else {
-  Write-Host "    (no MSI artifact found - publishing NSIS installer only)" -ForegroundColor Yellow
-}
+Copy-Item $msiSrc.FullName "dist/$msiName" -Force
+$assets = @("dist/$exeName", "dist/$msiName")
 
 # gh writes progress/info to stderr; under EAP=Stop in Windows PowerShell 5.1
 # that surfaces as a terminating NativeCommandError, so relax it for the gh calls

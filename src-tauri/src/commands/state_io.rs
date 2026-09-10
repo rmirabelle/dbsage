@@ -13,6 +13,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
+pub mod mapping;
+use mapping::ImportMapping;
+
 const BUNDLE_FORMAT: &str = "dbsage-state";
 const BUNDLE_VERSION: u32 = 1;
 
@@ -29,6 +32,8 @@ struct StateBundle {
     format: String,
     version: u32,
     exported_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    database_scope: Option<mapping::ImportSource>,
     #[serde(default)]
     profiles: Vec<PortableProfile>,
     #[serde(default)]
@@ -110,6 +115,7 @@ pub async fn export_state(
     path: String,
     passphrase: String,
     selection: CategorySelection,
+    database_scope: Option<DatabaseScope>,
 ) -> AppResult<()> {
     /* Connections carry passwords, so they may only be exported encrypted.
        Everything else is non-sensitive and a passphrase is optional. */
@@ -131,11 +137,12 @@ pub async fn export_state(
         Vec::new()
     };
 
-    let bundle = StateBundle {
+    let mut bundle = StateBundle {
         app: APP_TAG.to_string(),
         format: BUNDLE_FORMAT.to_string(),
         version: BUNDLE_VERSION,
         exported_at: Utc::now(),
+        database_scope: None,
         profiles,
         relations: if selection.relations {
             relations::export_all(&app)?
@@ -163,6 +170,11 @@ pub async fn export_state(
             Default::default()
         },
     };
+
+    if let Some(scope) = database_scope {
+        let profile = profiles::get(&app, &scope.profile_id)?;
+        mapping::scope_bundle(&mut bundle, &profile.host, &scope.database);
+    }
 
     /* With a passphrase, encrypt; without one (non-sensitive data only), write
        the self-describing bundle as plaintext JSON. */
@@ -234,11 +246,26 @@ pub async fn preview_state(
 #[tauri::command]
 pub async fn import_state(
     app: AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
     path: String,
     passphrase: String,
     selection: CategorySelection,
+    mapping: Option<ImportMapping>,
+    preview_token: Option<String>,
 ) -> AppResult<StateCounts> {
-    let bundle = decode_bundle(&path, &passphrase)?;
+    let mut bundle = decode_bundle(&path, &passphrase)?;
+    if let Some(mapping) = mapping {
+        let (prepared, preview) = mapping::prepare(&app, &state, bundle, &selection, &mapping).await?;
+        if preview_token.as_deref() != Some(preview.token.as_str()) {
+            return Err(AppError::Other("Settings or schema changed. Preview the import again before applying.".into()));
+        }
+        bundle = prepared;
+    }
+
+    merge_bundle(&app, bundle, selection)
+}
+
+fn merge_bundle(app: &AppHandle, bundle: StateBundle, selection: CategorySelection) -> AppResult<StateCounts> {
 
     let profiles = if selection.profiles {
         let mut bare = Vec::with_capacity(bundle.profiles.len());
@@ -281,4 +308,11 @@ pub async fn import_state(
             0
         },
     })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseScope {
+    profile_id: String,
+    database: String,
 }

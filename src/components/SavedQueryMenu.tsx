@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CaretDown, Check, Code, FloppyDisk, Plus, X } from "@phosphor-icons/react";
 import clsx from "clsx";
@@ -91,7 +92,7 @@ export function SavedQueryMenu({
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
         className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-zinc-800 text-emerald-300 hover:bg-zinc-700"
-        title={activeName ? `Loaded query: ${activeName}` : "Saved queries"}
+        {...helpHandlers(activeName ? `Loaded query: ${activeName}` : "Saved queries")}
       >
         {activeName ? (
           <Code size={16} weight="bold" className="shrink-0" />
@@ -129,7 +130,7 @@ export function SavedQueryMenu({
                       setOpen(false);
                     }}
                     className="flex-1 min-w-0 flex items-center gap-2 py-1.5 text-left"
-                    title={`Load "${q.name}"`}
+                    {...helpHandlers(`Load "${q.name}"`)}
                   >
                     <Code size={14} weight="bold" className="text-emerald-400 shrink-0" />
                     <span className={clsx("truncate", active && "font-semibold text-zinc-100")}>
@@ -143,7 +144,7 @@ export function SavedQueryMenu({
                         setOpen(false);
                       }}
                       className="shrink-0 p-1 rounded text-amber-300 hover:text-black hover:bg-amber-400 transition"
-                      title={`Save the editor's SQL over "${q.name}"`}
+                      {...helpHandlers(`Save the editor's SQL over "${q.name}"`)}
                       aria-label={`Save changes to ${q.name}`}
                     >
                       <FloppyDisk size={14} weight="fill" />
@@ -155,7 +156,7 @@ export function SavedQueryMenu({
                       setPendingDelete(q.name);
                     }}
                     className="shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition"
-                    title={`Delete "${q.name}"`}
+                    {...helpHandlers(`Delete "${q.name}"`)}
                     aria-label={`Delete ${q.name}`}
                   >
                     <X size={13} />
@@ -186,7 +187,7 @@ export function SavedQueryMenu({
               <button
                 onClick={submitSave}
                 disabled={!trimmed}
-                title={overwrites ? "Overwrite existing query" : "Save query"}
+                {...helpHandlers(overwrites ? "Overwrite existing query" : "Save query")}
                 className="shrink-0 inline-flex items-center justify-center h-7 w-7 rounded bg-accent-500 text-[#042f2e] hover:bg-accent-400 disabled:bg-zinc-800 disabled:text-zinc-500 transition-colors"
               >
                 {overwrites ? <Check size={15} /> : <Plus size={15} />}

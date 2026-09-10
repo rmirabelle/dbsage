@@ -35,21 +35,31 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const { width, height } = el.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const measure = () => {
+      const { width, height } = el.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
 
-    /* Flip above / left of the anchor when overflowing, then clamp so the
-       popup never sits off-screen even if it's taller/wider than the gap. */
-    let left = x;
-    if (left + width > vw - margin) left = x - width;
-    left = Math.max(margin, Math.min(left, vw - margin - width));
+      /* Flip above / left of the anchor when overflowing, then clamp so the
+         popup never sits off-screen even if it's taller/wider than the gap. */
+      let left = x;
+      if (left + width > vw - margin) left = x - width;
+      left = Math.max(margin, Math.min(left, vw - margin - width));
 
-    let top = y;
-    if (top + height > vh - margin) top = y - height;
-    top = Math.max(margin, Math.min(top, vh - margin - height));
+      let top = y;
+      if (top + height > vh - margin) top = y - height;
+      top = Math.max(margin, Math.min(top, vh - margin - height));
 
-    setPos({ top, left });
+      setPos((previous) => previous.top === top && previous.left === left ? previous : { top, left });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
   }, [x, y, margin, revision]);
 
   return { ref, style: pos };

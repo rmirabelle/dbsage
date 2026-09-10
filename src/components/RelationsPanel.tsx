@@ -6,24 +6,25 @@ import {
   PencilSimple,
   Plus,
   Prohibit,
-  AppWindow,
+  AlignBottom,
+  AlignRight,
+  Eye,
+  CaretDoubleLeft,
   X,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
 import { rowRelationTargets, type RowRelationTarget } from "../lib/relations";
+import { toggleRelationFilter } from "../lib/relationFilterToggle";
 import {
   relKey,
   checkRelatedExistence,
   TABLE_CHANGED_EVENT,
-  PEEKS_CHANGED_EVENT,
   type TableChanged,
 } from "../lib/relatedExistence";
-import { ipc } from "../ipc";
 import type {
   ColumnFilter,
   FilterOp,
-  PeekDescriptor,
   Relation,
   RowRecord,
 } from "../types";
@@ -44,11 +45,26 @@ export function RelationsPanel({
   row,
   column,
   filters,
-  onOpen,
   onNew,
   onEdit,
   onRelationFilter,
+  onFilterEnabled,
   onClose,
+  onCollapse,
+  onSelect,
+  returnLabel,
+  hideReturnRelations = false,
+  activeRelationId,
+  openRelationIds,
+  solo = false,
+  onSoloChange,
+  dock = "bottom",
+  onDockChange,
+  hideNewRelation = false,
+  neutralBorder = false,
+  panelWidth,
+  onWidthChange,
+  hideFilterButtons = false,
 }: {
   profileId: string;
   database: string;
@@ -61,19 +77,34 @@ export function RelationsPanel({
   column: string | null;
   /** The grid's current filters, to show which relation filter is active. */
   filters: ColumnFilter[];
-  onOpen: (target: RowRelationTarget) => void;
   onNew: (column: string | null) => void;
   onEdit: (relation: Relation, column: string) => void;
   /** Filter the grid to rows that have (`hasrelated`) or lack (`norelated`)
    * related rows through this relation; null clears that filter. */
   onRelationFilter: (target: RowRelationTarget, op: FilterOp | null) => void;
+  onFilterEnabled?: (target: RowRelationTarget) => void;
   onClose: () => void;
+  onCollapse?: () => void;
+  onSelect?: (target: RowRelationTarget) => void;
+  returnLabel?: (target: RowRelationTarget) => string | undefined;
+  hideReturnRelations?: boolean;
+  activeRelationId?: string;
+  openRelationIds?: string[];
+  solo?: boolean;
+  onSoloChange?: (solo: boolean) => void;
+  dock?: "bottom" | "right";
+  onDockChange?: (dock: "bottom" | "right") => void;
+  hideNewRelation?: boolean;
+  neutralBorder?: boolean;
+  panelWidth?: number;
+  onWidthChange?: (width: number) => void;
+  hideFilterButtons?: boolean;
 }) {
   /* Without a row the relations still list (their filters work row-free);
      every value is then null, so peeking is disabled. */
   const targets = useMemo(
-    () => rowRelationTargets(relations, table, column ?? "", row ?? {}),
-    [relations, table, column, row]
+    () => rowRelationTargets(relations, table, column ?? "", row ?? {}, !onSelect),
+    [relations, table, column, row, !!onSelect]
   );
   const activeFilterOp = (m: RowRelationTarget): FilterOp | null => {
     const f = filters.find(
@@ -97,10 +128,13 @@ export function RelationsPanel({
      resizes the table view's panel too. */
   const storedWidth = useUi((s) => s.relationsPanelWidth);
   const setStoredWidth = useUi((s) => s.setRelationsPanelWidth);
-  const [width, setDisplayWidth] = useState(storedWidth);
+  const [localWidth, setDisplayWidth] = useState(storedWidth);
+  const width = panelWidth ?? localWidth;
   const setWidth = (px: number) => {
-    setDisplayWidth(Math.max(200, Math.min(800, Math.round(px))));
-    setStoredWidth(px);
+    const next = Math.max(200, Math.min(800, Math.round(px)));
+    setDisplayWidth(next);
+    setStoredWidth(next);
+    onWidthChange?.(next);
   };
 
   /** Drag the panel's right edge to resize; the width persists across
@@ -172,55 +206,15 @@ export function RelationsPanel({
 
   /* While a row's checks run, list its targets disabled instead of flashing
      the previous row's entries or an empty panel. */
-  const items = pending ? targets.map((m) => ({ ...m, exists: false })) : checked;
+  const items = (pending ? targets.map((m) => ({ ...m, exists: false })) : checked)
+    .filter((m) => !hideReturnRelations || !returnLabel?.(m));
 
-  /* Which relations already have a peek window open (keyed by the peek's
-     identity, value aside), so the peek button can toggle it and show state.
-     Refreshed whenever Rust reports a peek opened or closed. */
-  const peekKey = (t: {
-    table: string;
-    column: string;
-    sourceTable: string;
-    sourceColumn: string;
-  }) => `${t.table}::${t.column}::${t.sourceTable}::${t.sourceColumn}`;
-  const [openPeeks, setOpenPeeks] = useState<Map<string, string>>(new Map());
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = async () => {
-      try {
-        const open = await ipc.listOpenPeeks<PeekDescriptor>();
-        if (cancelled) return;
-        const next = new Map<string, string>();
-        for (const p of open) {
-          if (p.profileId !== profileId || p.database !== database || !p.label) continue;
-          next.set(
-            peekKey({
-              table: p.target.table,
-              column: p.target.column,
-              sourceTable: p.sourceTable,
-              sourceColumn: p.sourceColumn,
-            }),
-            p.label
-          );
-        }
-        setOpenPeeks(next);
-      } catch {
-        /* keep the last known state */
-      }
-    };
-    void refresh();
-    const un = listen(PEEKS_CHANGED_EVENT, () => void refresh());
-    return () => {
-      cancelled = true;
-      un.then((f) => f());
-    };
-  }, [profileId, database]);
-
+  const LabelTag = onSelect ? "button" : "div";
   return (
     <div
       data-el="relations-panel"
       style={{ width }}
-      className="relations-panel order-first relative shrink-0 flex flex-col border-r border-violet-500/60 bg-[#2d2a3b] text-zinc-200"
+      className={clsx("relations-panel order-first relative shrink-0 flex flex-col border-r bg-[var(--peek-tint,#2d2a3b)] text-zinc-200", neutralBorder ? "border-zinc-700" : "border-violet-500/60")}
     >
       <div
         role="separator"
@@ -228,25 +222,27 @@ export function RelationsPanel({
         onPointerDown={onResizeStart}
         onDoubleClick={() => setWidth(RELATIONS_PANEL_DEFAULT)}
         className="absolute top-0 bottom-0 right-0 w-1.5 translate-x-1/2 z-10 cursor-ew-resize bg-transparent hover:bg-violet-500/50 transition-colors"
-        title="Drag to resize · double-click to reset"
+
         {...helpHandlers("Drag to resize the Relations panel. Double-click to reset its width.")}
       />
       <div
         data-el="relations-panel-header"
-        className="flex shrink-0 items-center gap-2 bg-violet-600 px-3 py-1.5 text-[13px] font-semibold text-violet-50"
+        hidden
+        style={{ display: "none" }}
+        className="dbs-toolbar bg-[var(--peek-tint,#2d2a3b)] bg-none flex shrink-0 items-center gap-2 border-b border-zinc-800/60 px-3 py-1.5 text-[13px] font-semibold text-zinc-200"
       >
-        <span className="flex-1">Relations</span>
+        <span className="flex-1 min-w-0 truncate" {...helpHandlers(`${table} Relations`)}>{table} Relations</span>
         <button
           onClick={onClose}
-          className="inline-flex items-center justify-center rounded p-0.5 text-violet-200 transition-colors hover:bg-violet-500 hover:text-white"
+          className="inline-flex items-center justify-center rounded p-0.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
           aria-label="Close the Relations panel"
-          title="Close"
+
           {...helpHandlers("Close the Relations panel")}
         >
           <X size={15} />
         </button>
       </div>
-      <div data-el="relations-panel-body" className="min-h-0 flex-1 overflow-y-auto pt-[10px]">
+      <div data-el="relations-panel-body" className="min-h-0 flex-1 overflow-y-auto">
         {items.length === 0 ? null : (
           items.map((m) => {
             const label = m.relation.name?.trim() || m.table;
@@ -255,18 +251,10 @@ export function RelationsPanel({
                buttons stay at full strength. */
             const hasRows = !pending && m.value != null && m.exists;
             const current = activeFilterOp(m);
-            const openLabel = openPeeks.get(
-              peekKey({
-                table: m.table,
-                column: m.column,
-                sourceTable: table,
-                sourceColumn: m.sourceColumn,
-              })
-            );
             return (
               <div
                 key={m.relation.id}
-                className="border-b border-zinc-800/60 text-[12px]"
+                className={clsx("border-b border-zinc-800/60 text-[12px]", (openRelationIds ? openRelationIds.includes(m.relation.id) : activeRelationId === m.relation.id) && "bg-violet-500/15")}
               >
                 <div className="flex items-center gap-2 py-1 pl-2 pr-1.5">
                 <button
@@ -278,6 +266,13 @@ export function RelationsPanel({
                 >
                   <PencilSimple size={14} />
                 </button>
+                <LabelTag
+                  {...helpHandlers(returnLabel?.(m) ?? (openRelationIds ? `${openRelationIds.includes(m.relation.id) ? "Close" : "Open"} ${label} peek tab` : undefined))}
+                  onClick={onSelect ? () => onSelect(m) : undefined}
+                  aria-label={returnLabel?.(m) ?? (onSelect ? `${openRelationIds ? openRelationIds.includes(m.relation.id) ? "Close" : "Open" : "Select"} ${label} peek tab` : undefined)}
+                  aria-pressed={onSelect ? openRelationIds ? openRelationIds.includes(m.relation.id) : activeRelationId === m.relation.id : undefined}
+                  className={clsx("flex min-w-0 flex-1 items-center gap-2 text-left rounded", onSelect && "cursor-pointer hover:bg-violet-500/10 focus-visible:outline focus-visible:outline-violet-300")}
+                >
                 <span
                   className={clsx(
                     "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
@@ -306,9 +301,11 @@ export function RelationsPanel({
                 >
                   {label}
                 </span>
+                {returnLabel?.(m) && <span aria-hidden="true" className="text-violet-300 pr-1">↩</span>}
+                </LabelTag>
                 {/* One two-sided control: WITH on the left, WITHOUT on the
                     right; the active side is amber, click again to clear. */}
-                <div
+                {!hideFilterButtons && <div
                   data-el="relation-filter-toggle"
                   className="inline-flex shrink-0 overflow-hidden rounded"
                 >
@@ -332,8 +329,15 @@ export function RelationsPanel({
                     return (
                       <button
                         key={f.op}
+                        type="button"
                         data-el={`relation-filter-${f.op}`}
-                        onClick={() => onRelationFilter(m, active ? null : f.op)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          toggleRelationFilter(current, f.op,
+                            (op) => onRelationFilter(m, op),
+                            () => onFilterEnabled?.(m));
+                        }}
                         aria-pressed={active}
                         aria-label={f.title}
                         className={clsx(
@@ -353,53 +357,52 @@ export function RelationsPanel({
                       </button>
                     );
                   })}
-                </div>
-                <button
-                  data-el="relation-peek-btn"
-                  onClick={() => {
-                    if (openLabel) ipc.closePeeks([openLabel]).catch(() => {});
-                    else onOpen(m);
-                  }}
-                  className={clsx(
-                    "shrink-0 inline-flex items-center justify-center rounded p-1 transition-colors",
-                    openLabel
-                      ? "bg-violet-600 text-white hover:bg-violet-500"
-                      : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
-                  )}
-                  aria-label={openLabel ? `Close the ${m.table} peek` : `Peek ${m.table}`}
-                  aria-pressed={!!openLabel}
-                  {...helpHandlers(
-                    openLabel
-                      ? `Close the open ${m.table} peek window`
-                      : hasRows
-                      ? `Open a peek window showing the ${m.table} rows where ${m.column} = ${m.value}`
-                      : `Open a peek window on ${m.table}; it fills in once a selected row has related rows`
-                  )}
-                >
-                  <AppWindow size={14} weight="bold" />
-                </button>
+                </div>}
                 </div>
               </div>
             );
           })
         )}
-        <div className="px-3 py-2">
-          <button
+      {(!hideNewRelation || onSoloChange || onDockChange || onCollapse) && <div role="group" aria-label="Relations tools" className="bg-[var(--peek-tint,#2d2a3b)] border-t border-zinc-800/60 px-2 py-1 flex flex-wrap items-center gap-1">
+          {onCollapse && <button type="button" data-el="relation-panel-collapse"
+            onClick={onCollapse} aria-label="Collapse master Relations panel"
+            {...helpHandlers("Collapse the master Relations panel and keep peek tabs open")}
+            className="inline-flex items-center justify-center rounded bg-zinc-800 p-1 text-zinc-300 hover:bg-zinc-700">
+            <CaretDoubleLeft size={14} weight="bold" />
+          </button>}
+          {onDockChange && <div role="group" aria-label="Relations docking position" className="inline-flex overflow-hidden rounded">
+            {(["bottom", "right"] as const).map((position) => <button type="button" key={position}
+              aria-label={`Dock ${position}`}
+              aria-pressed={dock === position} onClick={() => onDockChange(position)}
+              {...helpHandlers(`Dock the Relations list and peek tabs to the ${position} of the table`)}
+              className={clsx("inline-flex items-center justify-center border-0 shadow-none p-1", dock === position ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700")}>
+              {position === "bottom" ? <AlignBottom size={14} /> : <AlignRight size={14} />}
+            </button>)}
+          </div>}
+          {onSoloChange && <button type="button" data-el="relation-panel-solo"
+            aria-label="Solo mode"
+            aria-pressed={solo} onClick={() => onSoloChange(!solo)}
+            {...helpHandlers("Solo mode: keep only one relation tab open at a time")}
+            className={clsx("inline-flex items-center justify-center rounded border-0 shadow-none p-1 transition-colors",
+              solo ? "bg-violet-600 text-white hover:bg-violet-500" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700")}>
+            <Eye size={14} weight="bold" />
+          </button>}
+          {!hideNewRelation && <button
+            type="button"
             data-el="relation-panel-new"
             onClick={() => onNew(column)}
-            className="inline-flex items-center gap-1.5 rounded bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-violet-500"
+            className="inline-flex items-center justify-center rounded bg-zinc-800 p-1 text-violet-300 hover:bg-zinc-700"
             aria-label="New Relation"
-            title={column ? `New relation from ${column}` : "New relation"}
+
             {...helpHandlers(
               column
                 ? `Define a new relation from ${column} to a column in another table`
                 : "Define a new relation from this table to another table"
             )}
           >
-            <Plus size={13} weight="bold" />
-            New Relation
-          </button>
-        </div>
+            <Plus size={14} weight="bold" />
+          </button>}
+        </div>}
       </div>
     </div>
   );

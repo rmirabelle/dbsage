@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useState } from "react";
 import { X, Gauge, CheckCircle, Lightbulb, TreeStructure } from "@phosphor-icons/react";
 import clsx from "clsx";
@@ -71,7 +72,7 @@ export function QueryAnalysisPanel({
         data-el="analysis-resize-handle"
         onPointerDown={startResize}
         className="absolute left-0 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent-500/40 transition-colors"
-        title="Drag to resize"
+        {...helpHandlers("Drag to resize")}
       />
 
       <div className="shrink-0 flex items-center gap-2 px-3 h-10 border-b border-zinc-800 dbs-toolbar">

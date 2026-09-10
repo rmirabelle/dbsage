@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Trash,
@@ -294,7 +295,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           data-el="add-relationship-btn"
           onClick={openAdd}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-violet-500 text-white hover:bg-violet-400 transition-colors"
-          title="Add a relation"
+          {...helpHandlers("Add a relation")}
         >
           <span className="relative -top-px text-[19px] leading-none">+</span> Relation
         </button>
@@ -308,7 +309,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           onClick={() => setCopyOpen(true)}
           disabled={relations.length === 0}
           className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Copy these relations to another database"
+          {...helpHandlers("Copy these relations to another database")}
         >
           <Copy size={14} /> Copy All
         </button>
@@ -317,7 +318,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           onClick={() => setClearOpen(true)}
           disabled={relations.length === 0}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Delete all relations for this database"
+          {...helpHandlers("Delete all relations for this database")}
         >
           <Trash size={14} /> Clear All
         </button>
@@ -326,7 +327,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           onClick={onRefresh}
           disabled={refreshing}
           className="inline-flex items-center justify-center p-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50"
-          title="Refresh relations"
+          {...helpHandlers("Refresh relations")}
           aria-label="Refresh relations"
         >
           <ArrowsClockwise size={15} className={refreshing ? "animate-spin" : undefined} />
@@ -336,7 +337,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           onClick={onExport}
           disabled={exporting || importing}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Export relations to a file"
+          {...helpHandlers("Export relations to a file")}
         >
           {exporting ? (
             <Loader2 size={14} className="animate-spin" />
@@ -350,7 +351,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
           onClick={onChooseImport}
           disabled={exporting || importing}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Import relations from a file"
+          {...helpHandlers("Import relations from a file")}
         >
           <UploadSimple size={14} /> Import
         </button>

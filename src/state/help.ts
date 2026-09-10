@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { MouseEventHandler } from "react";
 
 interface HelpState {
   /** Help text for the currently-hovered item, shown in the app help strip. */
@@ -22,7 +23,16 @@ export const useHelp = create<HelpState>((set) => ({
  * Spread onto any element that should explain itself, in place of a `title`.
  * A plain helper (not a hook), so it's safe inside render loops.
  */
-export const helpHandlers = (text: string) => ({
-  onMouseEnter: () => useHelp.getState().setHelp(text),
-  onMouseLeave: () => useHelp.getState().setHelp(null),
+export const helpHandlers = (text: string | null | undefined, handlers?: {
+  onMouseEnter?: MouseEventHandler<HTMLElement>;
+  onMouseLeave?: MouseEventHandler<HTMLElement>;
+}) => ({
+  onMouseEnter: ((event) => {
+    handlers?.onMouseEnter?.(event);
+    useHelp.getState().setHelp(text || null);
+  }) as MouseEventHandler<HTMLElement>,
+  onMouseLeave: ((event) => {
+    handlers?.onMouseLeave?.(event);
+    useHelp.getState().setHelp(null);
+  }) as MouseEventHandler<HTMLElement>,
 });

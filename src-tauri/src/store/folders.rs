@@ -228,6 +228,51 @@ pub fn import_merge(app: &AppHandle, incoming: &FoldersFile) -> AppResult<usize>
     Ok(count)
 }
 
+fn replace_database_in_file(file: &mut FoldersFile, host: &str, database: &str, folders: Vec<Folder>) {
+    if folders.is_empty() {
+        if let Some(databases) = file.get_mut(host) {
+            databases.remove(database);
+            if databases.is_empty() { file.remove(host); }
+        }
+    } else {
+        file.entry(host.to_string()).or_default().insert(database.to_string(), folders);
+    }
+}
+
+/** A database settings import replaces the destination folder list, including an empty list. */
+pub fn replace_database(app: &AppHandle, host: &str, database: &str, folders: Vec<Folder>) -> AppResult<usize> {
+    let count = folders.len();
+    let mut file = load_file(app)?;
+    replace_database_in_file(&mut file, host, database, folders);
+    save_file(app, &file)?;
+    Ok(count)
+}
+
+#[cfg(test)]
+mod replacement_tests {
+    use super::*;
+
+    fn folder(id: &str, name: &str) -> Folder {
+        Folder { id: id.into(), name: name.into(), tables: vec!["orders".into()], created_at: Utc::now(), updated_at: Utc::now() }
+    }
+
+    #[test]
+    fn replaces_case_variants_and_removes_extra_folders_only_in_destination() {
+        let mut file = FoldersFile::new();
+        replace_database_in_file(&mut file, "host", "dest", vec![folder("old", "answers"), folder("extra", "Old")]);
+        replace_database_in_file(&mut file, "host", "other", vec![folder("other", "Other")]);
+        replace_database_in_file(&mut file, "elsewhere", "dest", vec![folder("remote", "Remote")]);
+        replace_database_in_file(&mut file, "host", "dest", vec![folder("new", "Answers")]);
+        assert_eq!(file["host"]["dest"].len(), 1);
+        assert_eq!(file["host"]["dest"][0].name, "Answers");
+        assert_eq!(file["host"]["other"][0].name, "Other");
+        assert_eq!(file["elsewhere"]["dest"][0].name, "Remote");
+        replace_database_in_file(&mut file, "host", "dest", vec![]);
+        assert!(!file["host"].contains_key("dest"));
+        assert!(file["host"].contains_key("other"));
+    }
+}
+
 /// Re-key the store from random profile id to connection host, merging when two
 /// connections share a host. Idempotent: keys that aren't a known profile id
 /// (already a host, or orphaned) are left untouched, so re-running is a no-op.

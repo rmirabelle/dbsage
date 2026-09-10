@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useRef } from "react";
 import { useUi } from "../state/ui";
 
@@ -30,7 +31,7 @@ export function Splitter() {
       }}
       onDoubleClick={() => setSidebarWidth(256)}
       className="w-1 shrink-0 cursor-col-resize bg-zinc-800/60 hover:bg-accent-500/40 transition-colors relative group"
-      title="Drag to resize · double-click to reset"
+      {...helpHandlers("Drag to resize · double-click to reset")}
     >
       <div className="absolute inset-y-0 -left-1 -right-1" />
     </div>

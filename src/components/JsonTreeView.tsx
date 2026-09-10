@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { CaretRight, CaretDown, ArrowsOutSimple, ArrowsInSimple } from "@phosphor-icons/react";
@@ -48,8 +49,8 @@ export const JsonTreeView = memo(function JsonTreeView({ data, search, activeInd
 
   return <div className="h-full flex flex-col">
     <div className="shrink-0 h-7 px-2 flex items-center justify-end gap-0.5 border-b border-zinc-800/40 text-zinc-400">
-      <button data-el="json-tree-expand-all" onClick={() => setCollapsed(new Set())} title="Expand all" className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-zinc-800 hover:text-zinc-100"><ArrowsOutSimple size={13} /></button>
-      <button data-el="json-tree-collapse-all" onClick={() => setCollapsed(new Set(rows.filter((row) => row.container).map((row) => row.path)))} title="Collapse all" className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-zinc-800 hover:text-zinc-100"><ArrowsInSimple size={13} /></button>
+      <button data-el="json-tree-expand-all" onClick={() => setCollapsed(new Set())} {...helpHandlers("Expand all")} className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-zinc-800 hover:text-zinc-100"><ArrowsOutSimple size={13} /></button>
+      <button data-el="json-tree-collapse-all" onClick={() => setCollapsed(new Set(rows.filter((row) => row.container).map((row) => row.path)))} {...helpHandlers("Collapse all")} className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-zinc-800 hover:text-zinc-100"><ArrowsInSimple size={13} /></button>
     </div>
     <div ref={scrollRef} data-el="json-tree" className="relative flex-1 min-h-0 overflow-auto px-3 text-[12px] font-mono leading-5">
       <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>

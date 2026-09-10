@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
@@ -455,7 +456,7 @@ function FileStep({
         {fileName && (
           <span
             className="font-mono text-[12px] text-zinc-300 truncate"
-            title={path ?? undefined}
+            {...helpHandlers(path ?? undefined)}
           >
             {fileName}
           </span>

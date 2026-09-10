@@ -1,3 +1,4 @@
+import { helpHandlers } from "../state/help";
 import { useEffect, useState } from "react";
 import {
   Table as Table2,
@@ -276,7 +277,7 @@ function TornTabTitleBar({ tab }: { tab: Tab | null }) {
                 })
                 .catch(() => {});
             }}
-            title="Reattach to the main window"
+            {...helpHandlers("Reattach to the main window")}
             aria-label="Reattach to the main window"
             className="mr-1 p-1 rounded text-zinc-400 hover:text-accent-300 hover:bg-zinc-800 transition-colors"
           >

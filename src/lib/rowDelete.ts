@@ -29,7 +29,7 @@ interface RowSet {
  * anchored on a PK column (one-to-one). A has_one hanging off an FK column
  * is many-to-one (a shared parent) and is never offered for cascade. Only
  * targets that actually hold matching rows are returned. Shared by the main
- * table view and peek windows so both offer the same cascade. */
+ * table view and peek panels so both offer the same cascade. */
 export async function previewCascadeTargets(
   set: RowSet,
   relations: Relation[],
