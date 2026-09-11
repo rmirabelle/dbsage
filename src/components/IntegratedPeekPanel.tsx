@@ -12,12 +12,16 @@ import type { IntegratedPeekState, PeekViewState, RowRecord } from "../types";
 import { PeekTab } from "./PeekTab";
 import { PeekPanel } from "./PeekPanel";
 import { PeekDepth, peekDepthColor, peekDepthTint } from "./PeekDepth";
+import { PeekReload } from "./PeekReload";
 
 /** Inspector chrome (28 + 36), one 20px text line, 16px padding, and border. */
 export const SINGLE_ROW_INSPECTOR_HEIGHT = 101;
 
-export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel, onClose, onChange, active = true, parentLocation, dock = "bottom", selectionBlocked = false, parentTitle }: {
+export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel, onClose, onChange, active = true, parentLocation, dock = "bottom", selectionBlocked = false, parentTitle, reload = 0 }: {
   selectionBlocked?: boolean;
+  /** Refresh clicks in this panel's Relations panel; reloads its peeks and
+   * every peek nested under them (see PeekReload). */
+  reload?: number;
   /** The breadcrumb from the root table down to the hosting peek (`table ›
    * relation › …`) when this panel is nested under a peek; its tabs are then
    * shorter and their help text shows the full trail. */
@@ -38,6 +42,7 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
   const depth = useContext(PeekDepth);
   const depthColor = peekDepthColor(depth);
   const inherited = useContext(PeekNavigation);
+  const inheritedReload = useContext(PeekReload);
   const locations = parentLocation ? [...inherited, parentLocation] : inherited;
   const panelRef = useRef<HTMLDivElement>(null);
   const dragCleanup = useRef<(() => void) | null>(null);
@@ -180,10 +185,11 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
       <div className="flex flex-col flex-1 min-w-0 min-h-0">
       <div role="tablist" aria-label="Relation peeks" className="flex shrink-0 overflow-x-auto bg-zinc-950"
         style={depth > 0 ? { backgroundColor: peekDepthTint(depth - 1) } : undefined}>
-        {peeks.map((p) => <PeekTab key={p.id} idPrefix={idPrefix} peek={p} active={p.id === activeId} accentColor={depthColor} parentTitle={parentTitle} onSelect={() => select(p.id)} onContextMenu={(x, y) => setTabMenu({ id: p.id, x, y })} />)}
+        {(state.solo ? peeks.filter((p) => p.id === activeId) : peeks).map((p) => <PeekTab key={p.id} idPrefix={idPrefix} peek={p} active={p.id === activeId} accentColor={depthColor} parentTitle={parentTitle} onSelect={() => select(p.id)} onContextMenu={(x, y) => setTabMenu({ id: p.id, x, y })} />)}
         <div className="flex-1 border-b border-zinc-700" />
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
+        <PeekReload.Provider value={inheritedReload + reload}>
         {peeks.map((p) => <div key={p.id} role="tabpanel" id={`${idPrefix}panel-${p.id}`}
           aria-labelledby={`${idPrefix}tab-${p.id}`} hidden={p.id !== activeId} className="h-full bg-[var(--peek-tint,#2d2a3b)]">
           <PeekNavigation.Provider value={parentLocation ? [...inherited, { ...parentLocation, childTable: p.target.table }] : inherited}>
@@ -195,6 +201,7 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
             onViewChange={(patch) => updateView(p.id, patch)} />}
           </PeekNavigation.Provider>
         </div>)}
+        </PeekReload.Provider>
         {peeks.length === 0 && <div role="status" className="p-4 text-sm text-zinc-500">{selectionBlocked ? "Select a single row or cell to view relations." : state.peeks.length ? "Related records are already displayed above." : "Click a relation name to open a peek tab."}</div>}
       </div>
       </div>

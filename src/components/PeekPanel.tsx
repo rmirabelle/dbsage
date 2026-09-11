@@ -24,6 +24,8 @@ import { ExpandedPanel } from "./ExpandedPanel";
 import { RelationEditDialog } from "./RelationEditDialog";
 import { RelationsPanel } from "./RelationsPanel";
 import { IntegratedPeekPanel } from "./IntegratedPeekPanel";
+import { PeekReload } from "./PeekReload";
+import { PeekBusy } from "./PeekBusy";
 import {
   peekableColumnsFor,
   type RowRelationTarget,
@@ -51,6 +53,16 @@ const PEEK_LIMIT = 1000;
  * button is disabled and an open Inspector is hidden until the panel grows. */
 const INSPECTOR_MIN_PANEL_H = 220;
 
+
+/** Translucent cover with a spinner over content whose rows are being replaced. */
+function LoadingVeil({ label }: { label?: string }) {
+  return (
+    <div role="status" aria-label={label ?? "Loading"} data-el="peek-loading"
+      className="dbs-loading-veil absolute inset-0 z-20 flex items-center justify-center text-xs text-zinc-300 gap-2">
+      <CircleNotch size={16} className="animate-spin" />{label}
+    </div>
+  );
+}
 
 export function PeekPanel({
   profileId,
@@ -184,9 +196,17 @@ export function PeekPanel({
   /** No row to match (the parent has no selection): show nothing, fetch nothing. */
   const unmatched = target.value == null;
 
+  const inheritedReload = useContext(PeekReload);
+  const [childReload, setChildReload] = useState(0);
+  /* While an ancestor reloads, this peek's match value is null only in
+     passing; keep the old rows behind the veil instead of emptying the grid. */
+  const ancestorBusy = useContext(PeekBusy);
+  const busy = !unmatched && (loading || loadedMatch !== matchKey);
   useEffect(() => {
     if (unmatched) {
+      if (ancestorBusy) return;
       setData((d) => (d ? { ...d, rows: [], total: 0 } : d));
+      setLoadedMatch(matchKey);
       setLoading(false);
       setError(null);
       return;
@@ -217,11 +237,11 @@ export function PeekPanel({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, database, target.table, filtersKey, sort, reloadKey]);
+  }, [profileId, database, target.table, filtersKey, sort, reloadKey, inheritedReload, ancestorBusy]);
 
   useEffect(() => {
     if (unmatched) {
-      setTotal(0);
+      if (!ancestorBusy) setTotal(0);
       return;
     }
     let cancelled = false;
@@ -237,7 +257,7 @@ export function PeekPanel({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, database, target.table, filtersKey, reloadKey]);
+  }, [profileId, database, target.table, filtersKey, reloadKey, inheritedReload, ancestorBusy]);
 
   const onFilterChange = (column: string, filter: ColumnFilter | null) =>
     setExtraFilters((prev) => {
@@ -282,6 +302,13 @@ export function PeekPanel({
     loadedMatch === matchKey && !unmatched && !relationsSelectionBlocked
       ? activeRow ?? (data && selectedRows.length ? data.rows[selectedRows[0]] ?? null : null)
       : null;
+
+  /** Fresh rows arrived but the first cell is not auto-selected yet; the
+   * children's match values update on that selection, so keep them veiled. */
+  const awaitingSelect = !!data && data.rows.length > 0 && !activeCell && selectedRows.length === 0;
+  /** Veil the previous row's related rows (and their Inspector) until the new
+   * ones arrive, so stale data can't be read or clicked on a slow connection. */
+  const veiled = ancestorBusy || busy;
 
   const currentLocation: PeekLocation = {
     profileId, database, table: target.table, target, filters: extraFilters, row: relationsRow,
@@ -489,7 +516,8 @@ export function PeekPanel({
           row={relationsRow}
           column={activeCell?.column ?? null}
           onSelect={toggleChildPeek}
-          openRelationIds={childPeekAll?.peeks.map((p) => p.id) ?? []}
+          onRefresh={() => setChildReload((r) => r + 1)}
+          openRelationIds={childPeekAll?.solo ? childPeekOpen && childPeekAll.activeId ? [childPeekAll.activeId] : [] : childPeekAll?.peeks.map((p) => p.id) ?? []}
           returnLabel={(t) => destination(t)?.label}
           hideReturnRelations
           activeRelationId={childPeekOpen ? childPeekAll?.activeId : undefined}
@@ -617,7 +645,8 @@ export function PeekPanel({
           className="flex-1 min-h-0 flex"
         >
           <div className="relative flex-1 min-w-0 min-h-0 flex flex-col">
-            <div ref={peekRowsRef} className="flex-1 min-h-0 flex flex-col">
+            <div ref={peekRowsRef} className="relative flex-1 min-h-0 flex flex-col">
+            {veiled && <LoadingVeil label="Loading related rows…" />}
             <DataGrid
               key={matchKey}
               readOnly={loading || loadedMatch !== matchKey || unmatched}
@@ -666,6 +695,8 @@ export function PeekPanel({
             </div>
             {(showInspector || childPanelVisible) && <div className={clsx("shrink-0 flex flex-col min-h-0 mt-[10px]", relationsStrip && "border-l border-zinc-700")}>
             {showInspector && (
+              <div className="relative shrink-0 flex flex-col min-h-0">
+              {(veiled || awaitingSelect) && <LoadingVeil />}
               <ExpandedPanel
                 key={matchKey}
                 editable={hasPrimaryKey && !loading && loadedMatch === matchKey && !unmatched}
@@ -683,16 +714,19 @@ export function PeekPanel({
                   - (childPanelVisible ? childPeekAll?.height ?? 0 : 0))}
                 onHeightChange={(px) => onViewChange?.({ inspectorHeight: px })}
               />
+              </div>
             )}
+            <PeekBusy.Provider value={ancestorBusy || busy || awaitingSelect}>
             {childPanelVisible && childPeekAll && <IntegratedPeekPanel table={target.table} state={childPeekAll}
               selectionBlocked={relationsSelectionBlocked}
               parentTitle={trail ?? title ?? target.table}
               parentLocation={currentLocation}
-              row={relationsRow} rowsRef={peekRowsRef} active={active}
+              row={relationsRow} rowsRef={peekRowsRef} active={active} reload={childReload}
               onClose={() => showChildren(false)}
               onChange={(update) => {
                 if (childPeekRef.current) changeChildren(update(childPeekRef.current));
               }} />}
+            </PeekBusy.Provider>
             </div>}
           </div>
         </div>

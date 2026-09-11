@@ -8,6 +8,7 @@ import {
   Prohibit,
   AlignBottom,
   AlignRight,
+  ArrowsClockwise,
   Eye,
   CaretDoubleLeft,
   X,
@@ -19,6 +20,7 @@ import { toggleRelationFilter } from "../lib/relationFilterToggle";
 import {
   relKey,
   checkRelatedExistence,
+  dropRelatedExistence,
   TABLE_CHANGED_EVENT,
   type TableChanged,
 } from "../lib/relatedExistence";
@@ -58,6 +60,7 @@ export function RelationsPanel({
   openRelationIds,
   solo = false,
   onSoloChange,
+  onRefresh,
   dock = "bottom",
   onDockChange,
   hideNewRelation = false,
@@ -93,6 +96,8 @@ export function RelationsPanel({
   openRelationIds?: string[];
   solo?: boolean;
   onSoloChange?: (solo: boolean) => void;
+  /** Reload the peeks this panel opened, and every peek nested under them. */
+  onRefresh?: () => void;
   dock?: "bottom" | "right";
   onDockChange?: (dock: "bottom" | "right") => void;
   hideNewRelation?: boolean;
@@ -211,6 +216,14 @@ export function RelationsPanel({
      the previous row's entries or an empty panel. */
   const items = (pending ? targets.map((m) => ({ ...m, exists: false })) : checked)
     .filter((m) => !hideReturnRelations || !returnLabel?.(m));
+
+  /** Forget the cached related-row answers for every target table, re-check
+   * them, then reload the peeks below. */
+  const refresh = () => {
+    for (const t of new Set(targets.map((m) => m.table))) dropRelatedExistence(profileId, database, t);
+    setTick((t) => t + 1);
+    onRefresh?.();
+  };
 
   const LabelTag = onSelect ? "button" : "div";
   return (
@@ -366,7 +379,7 @@ export function RelationsPanel({
             );
           })
         )}
-      {(!hideNewRelation || onSoloChange || onDockChange || onCollapse) && <div role="group" aria-label="Relations tools" className="bg-[var(--peek-tint,#2d2a3b)] border-t border-zinc-800/60 px-2 py-1 flex flex-wrap items-center gap-1">
+      {(!hideNewRelation || onSoloChange || onDockChange || onCollapse || onRefresh) && <div role="group" aria-label="Relations tools" className="bg-[var(--peek-tint,#2d2a3b)] border-t border-zinc-800/60 px-2 py-1 flex flex-wrap items-center gap-1">
           {onCollapse && <button type="button" data-el="relation-panel-collapse"
             onClick={onCollapse} aria-label="Collapse master Relations panel"
             {...helpHandlers("Collapse the master Relations panel and keep peek tabs open")}
@@ -385,10 +398,16 @@ export function RelationsPanel({
           {onSoloChange && <button type="button" data-el="relation-panel-solo"
             aria-label="Solo mode"
             aria-pressed={solo} onClick={() => onSoloChange(!solo)}
-            {...helpHandlers("Solo mode: keep only one relation tab open at a time")}
+            {...helpHandlers("Solo mode: show only one relation tab at a time; the others stay loaded")}
             className={clsx("inline-flex items-center justify-center rounded border-0 shadow-none p-1 transition-colors",
               solo ? "bg-violet-600 text-white hover:bg-violet-500" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700")}>
             <Eye size={14} weight="bold" />
+          </button>}
+          {onRefresh && <button type="button" data-el="relation-panel-refresh"
+            aria-label="Refresh relations" onClick={refresh}
+            {...helpHandlers("Re-check which relations have rows and reload the peeks below, including nested peeks")}
+            className="inline-flex items-center justify-center rounded bg-zinc-800 p-1 text-zinc-300 hover:bg-zinc-700">
+            <ArrowsClockwise size={14} weight="bold" />
           </button>}
           {!hideNewRelation && <button
             type="button"

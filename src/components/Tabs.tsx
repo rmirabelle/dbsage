@@ -664,6 +664,8 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   useEffect(() => {
     loadRelations(tab.profileId, tab.database).catch(() => {});
   }, [tab.profileId, tab.database, loadRelations]);
+  /** Refresh clicks in the master Relations panel; reloads every peek. */
+  const [peekReload, setPeekReload] = useState(0);
 
   /** When the row set changes (page / refresh / sort / filter), follow the
    * selected row to its new position if it is still present (matched by
@@ -1111,7 +1113,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
       )}
 
       </div>
-      {relationsOpen && tab.peekAll && !tab.peekAll.closed && <IntegratedPeekPanel key={tab.id} table={tab.table} state={tab.peekAll} row={relationsRow} rowsRef={rowsPanelRef}
+      {relationsOpen && tab.peekAll && !tab.peekAll.closed && <IntegratedPeekPanel key={tab.id} table={tab.table} state={tab.peekAll} row={relationsRow} rowsRef={rowsPanelRef} reload={peekReload}
         selectionBlocked={relationsSelectionBlocked}
         dock={tab.peekAll.dock ?? "bottom"}
         parentLocation={rootPeekLocation}
@@ -1147,8 +1149,9 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             row={relationsRow}
             column={activeCell?.column ?? null}
             activeRelationId={tab.peekAll.activeId}
-            openRelationIds={tab.peekAll.peeks.map((p) => p.id)}
+            openRelationIds={tab.peekAll.solo ? tab.peekAll.activeId ? [tab.peekAll.activeId] : [] : tab.peekAll.peeks.map((p) => p.id)}
             solo={tab.peekAll.solo ?? false}
+            onRefresh={() => setPeekReload((r) => r + 1)}
             onSoloChange={(solo) => {
               const current = useStore.getState().tabs.find((t) => t.id === tab.id);
               if (current?.kind === "rows" && current.peekAll) setRowsPeekAll(tab.id, setIntegratedPeekSolo(current.peekAll, solo));

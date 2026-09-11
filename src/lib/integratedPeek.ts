@@ -83,9 +83,12 @@ export function toggleIntegratedPeek(state: IntegratedPeekState, peek: Integrate
   if (index < 0) {
     const remembered = state.hiddenPeeks?.find((p) => p.id === peek.id);
     const reopened = { relationsSolo: state.solo ?? false, ...remembered, ...peek };
-    const hiddenPeeks = rememberPeeks(state.hiddenPeeks ?? [], state.solo ? state.peeks : []).filter((p) => p.id !== peek.id);
-    return { ...state, hiddenPeeks, peeks: state.solo ? [reopened] : [...state.peeks, reopened], activeId: peek.id };
+    const hiddenPeeks = (state.hiddenPeeks ?? []).filter((p) => p.id !== peek.id);
+    return { ...state, hiddenPeeks, peeks: [...state.peeks, reopened], activeId: peek.id };
   }
+  /* Solo mode shows one tab but keeps the others open (and their rows loaded),
+     so selecting a hidden one only brings it forward. */
+  if (state.solo && state.activeId !== peek.id) return { ...state, activeId: peek.id };
   const peeks = state.peeks.filter((p) => p.id !== peek.id);
   const activeId = state.activeId === peek.id
     ? peeks[Math.min(index, peeks.length - 1)]?.id ?? ""
@@ -93,11 +96,9 @@ export function toggleIntegratedPeek(state: IntegratedPeekState, peek: Integrate
   return { ...state, peeks, activeId, hiddenPeeks: rememberPeeks(state.hiddenPeeks ?? [], [state.peeks[index]]) };
 }
 
+/** Solo is a display rule: the open peeks stay mounted, only one tab shows. */
 export function setIntegratedPeekSolo(state: IntegratedPeekState, solo: boolean): IntegratedPeekState {
-  const active = state.peeks.find((peek) => peek.id === state.activeId) ?? state.peeks[0];
-  return solo ? { ...state, solo, peeks: active ? [active] : [], activeId: active?.id ?? "",
-    hiddenPeeks: rememberPeeks(state.hiddenPeeks ?? [], state.peeks.filter((p) => p.id !== active?.id)),
-  } : { ...state, solo };
+  return { ...state, solo };
 }
 
 /** Filter actions select an open tab without toggling it off. */
