@@ -42,6 +42,10 @@ interface Props {
   onSort: (direction: SortDirection | null) => void;
   onFilter: (filter: ColumnFilter | null) => void;
   onJsonShow: (path: string | null) => void;
+  /** The column's current display label, and the setter for it (null clears).
+   * Absent = no Alias row (grids that don't support aliases). */
+  currentAlias?: string | null;
+  onAlias?: (alias: string | null) => void;
   /** Fetches distinct column values starting with `prefix` for the Equals
    * auto-suggest. Absent = no suggestions (result grids, unsupported types). */
   suggest?: (prefix: string) => Promise<SuggestResult>;
@@ -73,6 +77,8 @@ export function ColumnHeaderMenu({
   onSort,
   onFilter: applyFilter,
   onJsonShow,
+  currentAlias = null,
+  onAlias,
   suggest,
   locked = false,
   onOpenRelation,
@@ -108,6 +114,8 @@ export function ColumnHeaderMenu({
   const [jsonPath, setJsonPath] = useState(currentFilter?.jsonPath ?? "");
   const [showPath, setShowPath] = useState(currentJsonShow ?? "");
   const [showEditor, setShowEditor] = useState(false);
+  const [alias, setAlias] = useState(currentAlias ?? "");
+  const aliasActive = !!currentAlias;
   const showError = validateJsonShow(showPath);
   const ref = useRef<HTMLDivElement>(null);
   const { style: menuPosition } = useAnchoredPosition(anchor.x, anchor.y, 8, ref);
@@ -195,6 +203,12 @@ export function ColumnHeaderMenu({
     const v = value.trim();
     onFilter(v ? { column, op: compareOp, value: v } : null);
     if (close) onClose();
+  };
+  /* Enter applies the alias (an empty value clears it) and closes the menu. */
+  const commitAlias = () => {
+    const v = alias.trim();
+    onAlias?.(v ? v : null);
+    onClose();
   };
 
   if (showEditor) return <JsonShowEditorDialog
@@ -489,6 +503,59 @@ export function ColumnHeaderMenu({
           </button>
         )}
       </div>
+      )}
+
+      {onAlias && (
+        <div className="border-t border-zinc-800 px-3 py-2">
+          <div className="flex items-stretch">
+            <span
+              className={clsx(
+                "flex items-center justify-center w-[88px] shrink-0 px-3 text-[11px] uppercase tracking-[0.12em] rounded-l whitespace-nowrap",
+                aliasActive
+                  ? "bg-amber-400 text-black border-2 border-r-0 border-amber-400"
+                  : "bg-zinc-900 text-zinc-400 border border-r-0 border-zinc-700"
+              )}
+            >
+              Alias
+            </span>
+            <div className="relative flex-1 min-w-0">
+              <input
+                type="text"
+                data-el="column-alias-input"
+                aria-label="Column alias"
+                value={alias}
+                placeholder={column}
+                onChange={(e) => setAlias(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitAlias();
+                  }
+                }}
+                className={clsx(
+                  "w-full bg-zinc-950 rounded-r px-2 py-[7px] pr-7 text-[12.5px] text-zinc-100 outline-none focus:border-accent-500",
+                  aliasActive ? "border-2 border-amber-400" : "border border-zinc-700"
+                )}
+              />
+              {alias && (
+                <button
+                  type="button"
+                  data-el="column-alias-clear"
+                  aria-label="Clear alias"
+                  {...helpHandlers("Clear alias")}
+                  onClick={() => {
+                    setAlias("");
+                    onAlias(null);
+                    onClose();
+                  }}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>,
     document.body

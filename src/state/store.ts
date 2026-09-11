@@ -117,6 +117,7 @@ function persistColumnSetup(tab: RowsTab) {
       hiddenColumns: tab.hiddenColumns,
       filters: tab.filters,
       jsonDisplay: tab.jsonDisplay,
+      columnAliases: tab.columnAliases,
       columnWidths: tab.columnWidths,
       sort: tab.sort,
       peekAll: tab.peekAll ?? null,
@@ -476,6 +477,8 @@ interface Store {
   setHiddenColumns: (tabId: string, hidden: string[]) => void;
   /** Set (or clear, with null) a JSON column's display property path. */
   setJsonDisplay: (tabId: string, column: string, path: string | null) => void;
+  /** Set (or clear, with null) a column's display label. */
+  setColumnAlias: (tabId: string, column: string, alias: string | null) => void;
   setRowsActiveCell: (
     tabId: string,
     cell: { rowIndex: number; column: string } | null
@@ -1121,6 +1124,7 @@ export const useStore = create<Store>((set, get) => ({
       selectFrom,
       hiddenColumns: saved?.hiddenColumns ?? [],
       jsonDisplay: saved?.jsonDisplay ?? {},
+      columnAliases: saved?.columnAliases ?? {},
       columnWidths: saved?.columnWidths ?? {},
       peekAll: restoreIntegratedPeek(saved?.peekAll, profileId, profileName, database),
       relationsOpen: saved?.relationsOpen,
@@ -2568,6 +2572,20 @@ export const useStore = create<Store>((set, get) => ({
     if (t && t.kind === "rows") persistColumnSetup(t);
   },
 
+  setColumnAlias: (tabId, column, alias) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== tabId || t.kind !== "rows") return t;
+        const next = { ...t.columnAliases };
+        if (alias && alias.trim()) next[column] = alias.trim();
+        else delete next[column];
+        return { ...t, columnAliases: next };
+      }),
+    }));
+    const t = get().tabs.find((x) => x.id === tabId);
+    if (t && t.kind === "rows") persistColumnSetup(t);
+  },
+
   setColumnWidths: (tabId, widths) => {
     set((s) => ({
       tabs: s.tabs.map((t) =>
@@ -2593,6 +2611,7 @@ export const useStore = create<Store>((set, get) => ({
         sort: tab.sort,
         filters: tab.filters,
         jsonDisplay: tab.jsonDisplay,
+        columnAliases: tab.columnAliases,
         /** Relations controls the entire integrated workspace. */
         relationsOpen: tab.relationsOpen ?? Boolean(tab.peekAll),
       },
@@ -2625,6 +2644,7 @@ export const useStore = create<Store>((set, get) => ({
       get().relations[`${tab.profileId}::${tab.database}`] ?? [], tab.profileId, tab.profileName, tab.database);
     const { hiddenColumns, columnWidths, sort, filters, jsonDisplay } =
       preset.setup;
+    const columnAliases = preset.setup.columnAliases ?? {};
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "rows"
@@ -2635,6 +2655,7 @@ export const useStore = create<Store>((set, get) => ({
               sort,
               filters,
               jsonDisplay,
+              columnAliases,
               /* Views saved before the Relations panel existed leave it as is. */
               relationsOpen: preset.setup.relationsOpen ?? (peekAll ? true : t.relationsOpen),
               peekAll,
@@ -2688,6 +2709,7 @@ export const useStore = create<Store>((set, get) => ({
               sort: null,
               filters: [],
               jsonDisplay: {},
+              columnAliases: {},
               activePreset: null,
             }
           : t

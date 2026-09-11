@@ -170,6 +170,9 @@ export interface ColumnSetup {
   hiddenColumns: string[];
   filters: ColumnFilter[];
   jsonDisplay: Record<string, string>;
+  /** Display labels that replace column names in the grid header, keyed by
+   * column name. Absent in setups saved before aliases existed. */
+  columnAliases?: Record<string, string>;
   /** Manual column-width overrides in pixels, keyed by column name. Absent in
    * setups saved before width persistence existed. */
   columnWidths?: Record<string, number>;
@@ -194,7 +197,10 @@ export interface PeekSeed {
   relationsSolo?: boolean;
   childPeekAll?: IntegratedPeekState | null;
   childPeekOpen?: boolean;
-  hostedPeeks?: (PeekSeed & { id: string; title: string })[];
+  /** `title` follows the relation's name; `customTitle` is a user rename of
+   * this one tab (right-click › Rename) and wins over `title` when set. (Not
+   * `label`: the importer strips that legacy window-label field.) */
+  hostedPeeks?: (PeekSeed & { id: string; title: string; customTitle?: string })[];
   activeHostedPeek?: string;
   profileId: string;
   profileName: string;
@@ -217,6 +223,7 @@ export interface PeekSeed {
   filters?: ColumnFilter[];
   columnWidths?: Record<string, number>;
   jsonDisplay?: Record<string, string>;
+  columnAliases?: Record<string, string>;
   /** Whether the Relations side panel was showing, the Inspector's height in
    * this peek (CSS px), and the column of the active cell (re-selected on row
    * 1 when the peek loads, so the Inspector shows that column at once). */
@@ -249,6 +256,7 @@ export type PeekViewState = Pick<
   | "filters"
   | "columnWidths"
   | "jsonDisplay"
+  | "columnAliases"
   | "relationsOpen"
   | "relationsSolo"
   | "inspectorHeight"
@@ -299,6 +307,7 @@ export interface TableViewSetup {
   sort: SortSpec | null;
   filters: ColumnFilter[];
   jsonDisplay: Record<string, string>;
+  columnAliases?: Record<string, string>;
   /** Legacy window layout, migrated to integrated panels when applying the view. */
   peeks?: PeekDescriptor[];
   /** Whether the Relations side panel was showing when the view was saved. */
@@ -444,6 +453,9 @@ export interface RowsTab extends BaseTab {
    * column's cells display the extracted property (truncated) instead of the
    * full JSON. Keyed by column name. */
   jsonDisplay: Record<string, string>;
+  /** Display labels that replace column names in the grid header, keyed by
+   * column name. */
+  columnAliases: Record<string, string>;
   /** Manual column-width overrides in pixels, keyed by column name. */
   columnWidths: Record<string, number>;
   /** Named view presets saved for this table. */

@@ -232,7 +232,7 @@ impl Mapper<'_> {
                 items.retain(|item| item.as_str().is_some_and(|col| self.column(table, col)));
             }
         }
-        for key in ["columnWidths", "jsonDisplay"] {
+        for key in ["columnWidths", "jsonDisplay", "columnAliases"] {
             if let Some(items) = obj.get_mut(key).and_then(Value::as_object_mut) {
                 items.retain(|col, _| self.column(table, col));
             }

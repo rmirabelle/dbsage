@@ -2,7 +2,7 @@ import { helpHandlers } from "../state/help";
 import { useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { findPeekLocation, type PeekLocation } from "../lib/peekNavigation";
 import { PeekNavigation } from "./PeekNavigation";
-import { CaretDoubleRight, ShareNetwork, X } from "@phosphor-icons/react";
+import { CaretDoubleRight, PencilSimple, ShareNetwork, X } from "@phosphor-icons/react";
 import { createPortal } from "react-dom";
 import { followIntegratedPeeks, resizeIntegratedPeek, refreshPeekRelations, toggleIntegratedPeek } from "../lib/integratedPeek";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
@@ -115,6 +115,14 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
       return peek ? toggleIntegratedPeek(current, peek) : current;
     });
   };
+  /** Rename applies to this one tab only; the relation itself is untouched. */
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const renamePeek = (id: string, label: string | null) => {
+    setRenamingId(null);
+    onChange((current) => ({ ...current,
+      peeks: current.peeks.map((p) => p.id === id ? { ...p, customTitle: label ?? undefined } : p),
+    }));
+  };
   const updateView = (id: string, patch: PeekViewState) => {
     onChange((current) => ({ ...current,
       peeks: current.peeks.map((p) => p.id === id ? { ...p, ...patch } : p),
@@ -185,7 +193,7 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
       <div className="flex flex-col flex-1 min-w-0 min-h-0">
       <div role="tablist" aria-label="Relation peeks" className="flex shrink-0 overflow-x-auto bg-zinc-950"
         style={depth > 0 ? { backgroundColor: peekDepthTint(depth - 1) } : undefined}>
-        {(state.solo ? peeks.filter((p) => p.id === activeId) : peeks).map((p) => <PeekTab key={p.id} idPrefix={idPrefix} peek={p} active={p.id === activeId} accentColor={depthColor} parentTitle={parentTitle} onSelect={() => select(p.id)} onContextMenu={(x, y) => setTabMenu({ id: p.id, x, y })} />)}
+        {(state.solo ? peeks.filter((p) => p.id === activeId) : peeks).map((p) => <PeekTab key={p.id} idPrefix={idPrefix} peek={p} active={p.id === activeId} accentColor={depthColor} parentTitle={parentTitle} onSelect={() => select(p.id)} onContextMenu={(x, y) => setTabMenu({ id: p.id, x, y })} renaming={renamingId === p.id} onRename={(label) => renamePeek(p.id, label)} />)}
         <div className="flex-1 border-b border-zinc-700" />
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
@@ -197,7 +205,7 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
             profileName={p.profileName}
             parentTable={table}
             parentSolo={state.solo ?? false}
-            profileId={p.profileId} database={p.database} target={p.target} initialView={p} title={p.title} trail={`${parentTitle ?? table} › ${p.title}`}
+            profileId={p.profileId} database={p.database} target={p.target} initialView={p} title={p.customTitle ?? p.title} trail={`${parentTitle ?? table} › ${p.customTitle ?? p.title}`}
             onViewChange={(patch) => updateView(p.id, patch)} />}
           </PeekNavigation.Provider>
         </div>)}
@@ -207,16 +215,21 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
       </div>
       </div>
     </div>
-    {tabMenu && <PeekTabMenu x={tabMenu.x} y={tabMenu.y} onClose={() => closePeek(tabMenu.id)} />}
+    {tabMenu && <PeekTabMenu x={tabMenu.x} y={tabMenu.y} onClose={() => closePeek(tabMenu.id)}
+      onRename={() => { setRenamingId(tabMenu.id); setTabMenu(null); }} />}
     </PeekDepth.Provider>
   );
 }
 
-function PeekTabMenu({ x, y, onClose }: { x: number; y: number; onClose: () => void }) {
+function PeekTabMenu({ x, y, onClose, onRename }: { x: number; y: number; onClose: () => void; onRename: () => void }) {
   const { ref, style } = useAnchoredPosition(x, y);
   return createPortal(
     <div ref={ref} data-el="peek-tab-menu" style={style} onClick={(e) => e.stopPropagation()}
       className="dbs-context-menu fixed z-50 min-w-[140px] rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60">
+      <button className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-zinc-200 hover:bg-zinc-800" onClick={onRename}>
+        <PencilSimple size={14} className="shrink-0 text-amber-400" />
+        Rename
+      </button>
       <button className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-zinc-200 hover:bg-zinc-800" onClick={onClose}>
         <X size={14} className="shrink-0 text-rose-400" />
         Close

@@ -614,6 +614,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   const setRowsFilter = useStore((s) => s.setRowsFilter);
   const setHiddenColumns = useStore((s) => s.setHiddenColumns);
   const setJsonDisplay = useStore((s) => s.setJsonDisplay);
+  const setColumnAlias = useStore((s) => s.setColumnAlias);
   const setColumnWidths = useStore((s) => s.setColumnWidths);
   const saveTablePreset = useStore((s) => s.saveTablePreset);
   const applyTablePreset = useStore((s) => s.applyTablePreset);
@@ -1002,6 +1003,8 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           }}
           onHiddenColumnsChange={(hidden) => setHiddenColumns(tab.id, hidden)}
           onJsonShow={(column, path) => setJsonDisplay(tab.id, column, path)}
+          columnAliases={tab.columnAliases}
+          onColumnAlias={(column, alias) => setColumnAlias(tab.id, column, alias)}
           onCellEdit={(rowIndex, column, value) =>
             updateCell(tab.id, rowIndex, column, value)
           }

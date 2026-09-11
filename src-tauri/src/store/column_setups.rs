@@ -56,6 +56,7 @@ fn is_empty_setup(setup: &Value) -> bool {
             empty_arr(o.get("hiddenColumns"))
                 && empty_arr(o.get("filters"))
                 && empty_obj(o.get("jsonDisplay"))
+                && empty_obj(o.get("columnAliases"))
                 && empty_obj(o.get("columnWidths"))
                 && o.get("sort").map_or(true, Value::is_null)
                 && o.get("peekAll").map_or(true, Value::is_null)

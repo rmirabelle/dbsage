@@ -113,6 +113,10 @@ interface Props {
   filters: ColumnFilter[];
   hiddenColumns: string[];
   jsonDisplay: Record<string, string>;
+  /** Display labels that replace column names in the header, keyed by column
+   * name. Absent = no aliases and no Alias row in the column menu. */
+  columnAliases?: Record<string, string>;
+  onColumnAlias?: (column: string, alias: string | null) => void;
   activeCell: { rowIndex: number; column: string } | null;
   onActiveCellChange: (cell: { rowIndex: number; column: string } | null) => void;
   onSortChange: (sort: SortSpec | null) => void;
@@ -280,6 +284,8 @@ type DisplayRow =
   | { kind: "stored"; sourceIndex: number; row: RowRecord }
   | { kind: "draft"; draft: DraftRow };
 
+const EMPTY_ALIASES: Record<string, string> = {};
+
 export function DataGrid({
   columns,
   rows,
@@ -288,6 +294,8 @@ export function DataGrid({
   filters,
   hiddenColumns,
   jsonDisplay,
+  columnAliases = EMPTY_ALIASES,
+  onColumnAlias,
   activeCell,
   onActiveCellChange,
   onSortChange,
@@ -1360,6 +1368,7 @@ export function DataGrid({
           sort={sort}
           filterByColumn={filterByColumn}
           jsonDisplay={jsonDisplay}
+          columnAliases={columnAliases}
           peekableColumns={peekableColumns}
           hasHiddenColumns={hiddenColumns.length > 0}
           onColumnClick={(column, rect) =>
@@ -1521,7 +1530,6 @@ export function DataGrid({
                           resolvedCellSel.rows.includes(sourceIndex)
                         }
                         pending={pending}
-                        isPeekable={peekableColumns?.has(col.name) ?? false}
                         hideValueTooltip={hideValueTooltip}
                         onCellMouseDown={(e) =>
                           handleCellMouseDown(sourceIndex, col.name, e)
@@ -1614,6 +1622,8 @@ export function DataGrid({
           }
           onFilter={(filter) => onFilterChange(menu.column, filter)}
           onJsonShow={(path) => onJsonShow(menu.column, path)}
+          currentAlias={columnAliases[menu.column] ?? null}
+          onAlias={onColumnAlias ? (alias) => onColumnAlias(menu.column, alias) : undefined}
           locked={lockedFilterColumns?.includes(menu.column) ?? false}
           onOpenRelation={onOpenRelation ? (relation) => onOpenRelation(menu.column, relation) : undefined}
           suggest={
@@ -2066,6 +2076,7 @@ function HeaderRow({
   sort,
   filterByColumn,
   jsonDisplay,
+  columnAliases,
   peekableColumns,
   hasHiddenColumns,
   onColumnClick,
@@ -2081,6 +2092,7 @@ function HeaderRow({
   sort: SortSpec | null;
   filterByColumn: Map<string, ColumnFilter>;
   jsonDisplay: Record<string, string>;
+  columnAliases: Record<string, string>;
   peekableColumns?: Set<string>;
   hasHiddenColumns: boolean;
   onColumnClick: (column: string, rect: DOMRect) => void;
@@ -2090,11 +2102,13 @@ function HeaderRow({
    * eyeball menu — lights a 2px amber bar across the top of the header, so a
    * restored filtered view is impossible to miss. Complements — does not
    * replace — the amber highlight on each filtered control/header. */
+  const hasAliases = Object.keys(columnAliases).length > 0;
   const anyFiltered =
     hasHiddenColumns ||
+    hasAliases ||
     filterByColumn.size > 0 ||
     Object.keys(jsonDisplay).length > 0;
-  const hasUserFilters = hasHiddenColumns || Object.keys(jsonDisplay).length > 0
+  const hasUserFilters = hasHiddenColumns || hasAliases || Object.keys(jsonDisplay).length > 0
     || [...filterByColumn.keys()].some((column) => !lockedFilterColumns?.includes(column));
   return (
     <div
@@ -2134,6 +2148,9 @@ function HeaderRow({
           filterByColumn.has(col.name) || !!jsonDisplay[col.name];
         const isPeekable = peekableColumns?.has(col.name) ?? false;
         const isRelationFilter = filterByColumn.has(col.name) && lockedFilterColumns?.includes(col.name);
+        /* An alias shows in place of the name; when the column is not
+           filtered (no amber background), the label itself turns amber. */
+        const alias = columnAliases[col.name];
         const comment = col.comment?.trim();
         const cell = (
           <div
@@ -2170,7 +2187,9 @@ function HeaderRow({
                   )}
                 />
               )}
-              <span className="truncate flex-1">{col.name}</span>
+              <span className={clsx("truncate flex-1", alias && !isFiltered && "text-amber-400")}>
+                {alias ?? col.name}
+              </span>
               {isPeekable && (
                 <ShareNetwork
                   size={12}
@@ -2299,7 +2318,6 @@ function Cell({
   isActive,
   isCellSelected,
   pending,
-  isPeekable,
   hideValueTooltip,
   onCellMouseDown,
   onCellMouseEnter,
@@ -2321,7 +2339,6 @@ function Cell({
    * string, null for a staged NULL, or undefined when no session covers this
    * cell. */
   pending: string | null | undefined;
-  isPeekable: boolean;
   hideValueTooltip: boolean;
   /** Mousedown drives cell selection (click, shift/ctrl-click, drag start). */
   onCellMouseDown: (e: React.MouseEvent) => void;
@@ -2354,12 +2371,6 @@ function Cell({
   const { display, tone } = renderCell(
     jsonPath ? extractJsonDisplay(value, jsonPath) : value
   );
-  /* Colorize peekable (relation) values in the relation violet, so cells you can
-   * peek from stand out. NULL stays muted — there's nothing to match on. */
-  const peekTone =
-    isPeekable && value !== null && value !== undefined
-      ? "text-violet-400 font-bold"
-      : null;
   /* What the cell publishes to the help strip on hover: an edit hint when
      editable, otherwise its full value so truncated content stays readable.
      Suppressed (undefined) when the value tooltip is hidden (e.g. peeks). */
@@ -2428,9 +2439,9 @@ function Cell({
           ))}
         </span>
       ) : (
-        <span className={clsx("truncate", peekTone ?? tone)}>
+        <span className={clsx("truncate", tone)}>
           {column.key === "PRI" ? (
-            <strong className={peekTone ?? "text-zinc-100"}>{display}</strong>
+            <strong className="text-zinc-100">{display}</strong>
           ) : (
             display
           )}

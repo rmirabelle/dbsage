@@ -1,5 +1,6 @@
 import { helpHandlers } from "../state/help";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { PeekDepth, peekDepthColor } from "./PeekDepth";
 import { findPeekLocation, type PeekLocation } from "../lib/peekNavigation";
 import { PeekNavigation, revealPeekRows } from "./PeekNavigation";
 import { toggleIntegratedPeek, setIntegratedPeekSolo } from "../lib/integratedPeek";
@@ -99,6 +100,8 @@ export function PeekPanel({
   const rootRef = useRef<HTMLDivElement>(null);
   const peekRowsRef = useRef<HTMLDivElement>(null);
   const ancestorLocations = useContext(PeekNavigation);
+  /* The host panel provides depth + 1, so its own accent is one step back. */
+  const depthColor = peekDepthColor(Math.max(0, useContext(PeekDepth) - 1));
   const [childPeekAll, setChildPeekAll] = useState(initialView?.childPeekAll ?? null);
   const [relationsSolo, setRelationsSolo] = useState(initialView?.childPeekAll?.solo ?? initialView?.relationsSolo ?? parentSolo);
   const childPeekRef = useRef(childPeekAll);
@@ -123,6 +126,9 @@ export function PeekPanel({
   const [jsonDisplay, setJsonDisplay] = useState<Record<string, string>>(
     initialView?.jsonDisplay ?? {}
   );
+  const [columnAliases, setColumnAliases] = useState<Record<string, string>>(
+    initialView?.columnAliases ?? {}
+  );
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>(
     initialView?.columnWidths ?? {}
   );
@@ -135,11 +141,12 @@ export function PeekPanel({
       filters: extraFilters,
       hiddenColumns,
       jsonDisplay,
+      columnAliases,
       columnWidths,
       relationsSolo,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sort, extraFilters, hiddenColumns, jsonDisplay, columnWidths, relationsSolo]);
+  }, [sort, extraFilters, hiddenColumns, jsonDisplay, columnAliases, columnWidths, relationsSolo]);
   const [activeCell, setActiveCell] = useState<{
     rowIndex: number;
     column: string;
@@ -555,19 +562,10 @@ export function PeekPanel({
         data-el="peek-titlebar"
         className="dbs-toolbar shrink-0 h-10 pl-3 pr-2 flex items-center gap-2 select-none bg-[var(--peek-tint,#2d2a3b)] bg-none"
       >
-        <Table size={16} className="text-emerald-400 shrink-0 pointer-events-none" />
+        <Table size={16} style={{ color: depthColor }} className="shrink-0 pointer-events-none" />
         <span className="min-w-0 shrink text-[13px] text-zinc-200 truncate pointer-events-none">
-          <span className="font-semibold text-zinc-100 mr-3">{target.table}</span>
-          <span className="text-zinc-500"> where </span>
-          <span className="font-mono text-zinc-500">{target.column}</span>
-          <span className="text-zinc-500"> = </span>
-          {unmatched ? (
-            <span className="italic text-zinc-500">no row selected</span>
-          ) : (
-            <span className="font-mono text-zinc-500">
-              {JSON.stringify(target.value)}
-            </span>
-          )}
+          <span style={{ color: depthColor }} className="mr-3">{target.table}</span>
+          {unmatched && <span className="italic text-zinc-500">no row selected</span>}
         </span>
 
         <span className="flex-1 pointer-events-none" />
@@ -663,6 +661,15 @@ export function PeekPanel({
               truncatedNotice={capped && total != null ? { total, onOpen: openAsTable } : undefined}
               hiddenColumns={hiddenColumns}
               jsonDisplay={jsonDisplay}
+              columnAliases={columnAliases}
+              onColumnAlias={(column, alias) =>
+                setColumnAliases((prev) => {
+                  const next = { ...prev };
+                  if (alias) next[column] = alias;
+                  else delete next[column];
+                  return next;
+                })
+              }
               columnWidths={columnWidths}
               suggestSource={{ profileId, database, table: target.table }}
               copyTarget={{ database, table: target.table }}
