@@ -16,7 +16,6 @@ import {
   WarningCircle as AlertCircle,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useStore, isQueryTabDirty } from "../state/store";
 import { notifyError } from "../state/notify";
 import { ipc } from "../ipc";
@@ -171,9 +170,9 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   /* Expanded-value panel (read-only) for the active result cell. Visibility
      lives on the tab (not component state) so tearing the tab into its own
      window — or docking it back — keeps whatever state it had. Tabs predating
-     the field fall back to open-in-main, closed elsewhere. */
+     the field fall back to closed. */
   const setTabInspectorOpen = useStore((s) => s.setTabInspectorOpen);
-  const expanded = tab.inspectorOpen ?? getCurrentWindow().label === "main";
+  const expanded = tab.inspectorOpen ?? false;
   const setExpanded = (open: boolean) => setTabInspectorOpen(tab.id, open);
   useEffect(() => {
     if (!expanded) return;

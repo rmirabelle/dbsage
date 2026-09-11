@@ -121,6 +121,7 @@ function persistColumnSetup(tab: RowsTab) {
       sort: tab.sort,
       peekAll: tab.peekAll ?? null,
       relationsOpen: tab.relationsOpen,
+      inspectorOpen: tab.inspectorOpen,
       inspectorHeight: tab.inspectorHeight,
     }));
   void drainColumnSetups();
@@ -1123,6 +1124,7 @@ export const useStore = create<Store>((set, get) => ({
       columnWidths: saved?.columnWidths ?? {},
       peekAll: restoreIntegratedPeek(saved?.peekAll, profileId, profileName, database),
       relationsOpen: saved?.relationsOpen,
+      inspectorOpen: saved?.inspectorOpen,
       inspectorHeight: saved?.inspectorHeight,
       presets,
       activePreset: null,
@@ -1663,7 +1665,7 @@ export const useStore = create<Store>((set, get) => ({
       activeSavedQuery: null,
       savedSql: "",
       queryHistory: [],
-      inspectorOpen: true,
+      inspectorOpen: false,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     loadSavedQueries(tabId, set, get);
@@ -2526,6 +2528,8 @@ export const useStore = create<Store>((set, get) => ({
           : t
       ),
     }));
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (tab?.kind === "rows") persistColumnSetup(tab);
   },
 
   setTabRelationsOpen: (tabId, open) => {

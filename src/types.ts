@@ -164,6 +164,8 @@ export const STATE_CATEGORIES: { key: keyof StateSelection; label: string }[] = 
 export interface ColumnSetup {
   peekAll?: IntegratedPeekState | null;
   relationsOpen?: boolean;
+  /** Whether the table's Inspector is open. Absent in older setups. */
+  inspectorOpen?: boolean;
   inspectorHeight?: number;
   hiddenColumns: string[];
   filters: ColumnFilter[];
