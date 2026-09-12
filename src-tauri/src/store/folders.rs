@@ -1,7 +1,7 @@
 use crate::error::{AppError, AppResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -209,67 +209,125 @@ pub fn import_merge(app: &AppHandle, incoming: &FoldersFile) -> AppResult<usize>
     let mut count = 0;
     for (host, by_db) in incoming {
         for (database, folders) in by_db {
-            let list = file
-                .entry(host.clone())
-                .or_default()
-                .entry(database.clone())
-                .or_default();
-            for folder in folders {
-                if let Some(existing) = list.iter_mut().find(|f| f.id == folder.id) {
-                    *existing = folder.clone();
-                } else {
-                    list.push(folder.clone());
-                }
-                count += 1;
-            }
+            count += merge_database_in_file(&mut file, host, database, folders.clone());
         }
     }
     save_file(app, &file)?;
     Ok(count)
 }
 
-fn replace_database_in_file(file: &mut FoldersFile, host: &str, database: &str, folders: Vec<Folder>) {
-    if folders.is_empty() {
+/**
+ * Merge imported folders into one destination database.
+ *
+ * Import rule: a table that is already in a destination folder stays there.
+ * Only tables that are not in any destination folder are moved into the
+ * imported folder that names them. Existing folders are kept, even when the
+ * import does not mention them. An imported folder matches an existing one
+ * by id or by case-insensitive name; otherwise it is created.
+ *
+ * Returns the number of imported folders processed.
+ */
+fn merge_database_in_file(file: &mut FoldersFile, host: &str, database: &str, incoming: Vec<Folder>) -> usize {
+    let list = file
+        .entry(host.to_string())
+        .or_default()
+        .entry(database.to_string())
+        .or_default();
+    let mut placed: HashSet<String> = list.iter().flat_map(|f| f.tables.iter().cloned()).collect();
+    let now = Utc::now();
+    let count = incoming.len();
+    for folder in incoming {
+        /* `insert` is true only for a table not yet in any folder, which also
+           drops duplicates within the import itself. */
+        let tables: Vec<String> = folder.tables.into_iter().filter(|t| placed.insert(t.clone())).collect();
+        let existing = list
+            .iter_mut()
+            .find(|f| f.id == folder.id || f.name.eq_ignore_ascii_case(&folder.name));
+        match existing {
+            Some(existing) => {
+                if !tables.is_empty() {
+                    existing.tables.extend(tables);
+                    existing.updated_at = now;
+                }
+            }
+            None => list.push(Folder { tables, ..folder }),
+        }
+    }
+    if list.is_empty() {
         if let Some(databases) = file.get_mut(host) {
             databases.remove(database);
             if databases.is_empty() { file.remove(host); }
         }
-    } else {
-        file.entry(host.to_string()).or_default().insert(database.to_string(), folders);
     }
+    count
 }
 
-/** A database settings import replaces the destination folder list, including an empty list. */
-pub fn replace_database(app: &AppHandle, host: &str, database: &str, folders: Vec<Folder>) -> AppResult<usize> {
-    let count = folders.len();
+/** A database settings import merges into the destination folder list (see `merge_database_in_file`). */
+pub fn merge_database(app: &AppHandle, host: &str, database: &str, folders: Vec<Folder>) -> AppResult<usize> {
     let mut file = load_file(app)?;
-    replace_database_in_file(&mut file, host, database, folders);
+    let count = merge_database_in_file(&mut file, host, database, folders);
     save_file(app, &file)?;
     Ok(count)
 }
 
 #[cfg(test)]
-mod replacement_tests {
+mod merge_tests {
     use super::*;
 
-    fn folder(id: &str, name: &str) -> Folder {
-        Folder { id: id.into(), name: name.into(), tables: vec!["orders".into()], created_at: Utc::now(), updated_at: Utc::now() }
+    fn folder(id: &str, name: &str, tables: &[&str]) -> Folder {
+        Folder {
+            id: id.into(),
+            name: name.into(),
+            tables: tables.iter().map(|t| t.to_string()).collect(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn tables(file: &FoldersFile, name: &str) -> Vec<String> {
+        file["host"]["dest"].iter().find(|f| f.name == name).unwrap().tables.clone()
     }
 
     #[test]
-    fn replaces_case_variants_and_removes_extra_folders_only_in_destination() {
+    fn keeps_foldered_tables_and_moves_only_unfoldered_ones() {
         let mut file = FoldersFile::new();
-        replace_database_in_file(&mut file, "host", "dest", vec![folder("old", "answers"), folder("extra", "Old")]);
-        replace_database_in_file(&mut file, "host", "other", vec![folder("other", "Other")]);
-        replace_database_in_file(&mut file, "elsewhere", "dest", vec![folder("remote", "Remote")]);
-        replace_database_in_file(&mut file, "host", "dest", vec![folder("new", "Answers")]);
+        merge_database_in_file(&mut file, "host", "dest", vec![
+            folder("a", "Sales", &["orders", "invoices"]),
+            folder("b", "People", &["users"]),
+        ]);
+        /* Import claims `orders` for a new folder and `users` for Sales; both
+           are already foldered and must stay put. `carts` is new and moves. */
+        let count = merge_database_in_file(&mut file, "host", "dest", vec![
+            folder("x", "Shop", &["orders", "carts"]),
+            folder("a", "Sales", &["users", "returns"]),
+        ]);
+        assert_eq!(count, 2);
+        assert_eq!(tables(&file, "Sales"), vec!["orders", "invoices", "returns"]);
+        assert_eq!(tables(&file, "People"), vec!["users"]);
+        assert_eq!(tables(&file, "Shop"), vec!["carts"]);
+        assert_eq!(file["host"]["dest"].len(), 3);
+    }
+
+    #[test]
+    fn matches_existing_folder_by_name_ignoring_case_and_keeps_others() {
+        let mut file = FoldersFile::new();
+        merge_database_in_file(&mut file, "host", "dest", vec![folder("old", "answers", &["a"]), folder("extra", "Old", &["z"])]);
+        merge_database_in_file(&mut file, "host", "other", vec![folder("other", "Other", &["o"])]);
+        merge_database_in_file(&mut file, "host", "dest", vec![folder("new", "Answers", &["b"])]);
+        assert_eq!(file["host"]["dest"].len(), 2);
+        assert_eq!(tables(&file, "answers"), vec!["a", "b"]);
+        assert_eq!(tables(&file, "Old"), vec!["z"]);
+        assert_eq!(file["host"]["other"][0].tables, vec!["o"]);
+    }
+
+    #[test]
+    fn empty_import_leaves_destination_untouched() {
+        let mut file = FoldersFile::new();
+        merge_database_in_file(&mut file, "host", "dest", vec![folder("a", "Sales", &["orders"])]);
+        merge_database_in_file(&mut file, "host", "dest", vec![]);
         assert_eq!(file["host"]["dest"].len(), 1);
-        assert_eq!(file["host"]["dest"][0].name, "Answers");
-        assert_eq!(file["host"]["other"][0].name, "Other");
-        assert_eq!(file["elsewhere"]["dest"][0].name, "Remote");
-        replace_database_in_file(&mut file, "host", "dest", vec![]);
-        assert!(!file["host"].contains_key("dest"));
-        assert!(file["host"].contains_key("other"));
+        merge_database_in_file(&mut file, "host", "empty", vec![]);
+        assert!(!file["host"].contains_key("empty"));
     }
 }
 

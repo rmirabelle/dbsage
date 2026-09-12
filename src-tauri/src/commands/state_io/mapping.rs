@@ -147,7 +147,7 @@ pub async fn import_database_settings(
             preview.notices.push("Saved queries are copied unchanged; explicit database names inside SQL are not rewritten.".into());
         }
     }
-    preview.notices.push("Replace the destination folder list completely, removing folders not in this import.".into());
+    preview.notices.push("Folders are merged: tables already in a destination folder stay there, and only unfoldered tables move into imported folders. Existing folders are kept.".into());
     if !preview_only {
         let profile = profiles::get(&app, &profile_id)?;
         let replacement_folders = prepared.folders.remove(&profile.host)
@@ -161,7 +161,7 @@ pub async fn import_database_settings(
                 ..selection
             },
         )?;
-        preview.counts.folders = folders::replace_database(&app, &profile.host, &database, replacement_folders)?;
+        preview.counts.folders = folders::merge_database(&app, &profile.host, &database, replacement_folders)?;
     }
     Ok(preview)
 }
@@ -530,7 +530,7 @@ fn map_bundle(
                 }
                 mapper
                     .notices
-                    .push(format!("Replace existing folder {}.", folder.name));
+                    .push(format!("Merge into existing folder {}.", folder.name));
                 folder.id = existing.id.clone();
             }
             bundle
