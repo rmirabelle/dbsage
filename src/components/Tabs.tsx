@@ -790,8 +790,8 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   };
   const rootDestination = (t: RowRelationTarget) => findPeekLocation([rootPeekLocation], tab.profileId, tab.database, t, t.relation.kind, tab.table);
   const showPeekPanel = () => {
-    /* Reopening always reveals the master Relations list, even if it was collapsed. */
-    if (tab.peekAll) setRowsPeekAll(tab.id, { ...tab.peekAll, closed: false, relationsCollapsed: false });
+    /* Reopening keeps the master Relations list collapsed if it was collapsed. */
+    if (tab.peekAll) setRowsPeekAll(tab.id, { ...tab.peekAll, closed: false });
     if (!tab.peekAll) setRowsPeekAll(tab.id, {
       height: (rowsPanelRef.current?.offsetHeight ?? 400) / 2, activeId: "", peeks: [],
     });
