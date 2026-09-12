@@ -483,3 +483,141 @@ input[type="checkbox"].dbs-check:checked {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/** Folder badge on a table tile during a root-level Database View search. */
+.table-folder-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  max-width: 9rem;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--color-amber-300);
+  background: color-mix(in srgb, var(--color-amber-400) 14%, transparent);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/** Relations tab: three-column relation-graph explorer. */
+.relations-explorer {
+  .explorer-columns {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr minmax(200px, 0.8fr) 1fr;
+  }
+  .explorer-col {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    &.is-middle {
+      border-left: 1px solid var(--color-zinc-800);
+      border-right: 1px solid var(--color-zinc-800);
+      background: color-mix(in srgb, var(--color-zinc-900) 40%, transparent);
+    }
+    > header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--color-zinc-400);
+      border-bottom: 1px solid var(--color-zinc-800);
+      .count {
+        font-family: var(--font-mono);
+        font-weight: 400;
+        color: var(--color-zinc-500);
+      }
+    }
+    > ul {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 4px 0;
+    }
+    .empty { padding: 6px 12px; font-size: 12px; color: var(--color-zinc-500); }
+  }
+
+  .table-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    cursor: pointer;
+    &:hover { background: color-mix(in srgb, var(--color-zinc-800) 60%, transparent); }
+    &.is-selected {
+      background: color-mix(in srgb, var(--color-violet-500) 15%, transparent);
+      .name { color: var(--color-zinc-50); font-weight: 600; }
+    }
+    .name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      color: var(--color-zinc-200);
+    }
+    .counts { font-family: var(--font-mono); font-size: 10px; color: var(--color-zinc-500); }
+  }
+
+  .relation-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    cursor: pointer;
+    &:hover {
+      background: color-mix(in srgb, var(--color-zinc-800) 60%, transparent);
+      .delete { opacity: 1; }
+    }
+    .kind {
+      flex-shrink: 0;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      &.is-many { background: color-mix(in srgb, var(--color-accent-500) 15%, transparent); color: var(--color-accent-300); }
+      &.is-one { background: color-mix(in srgb, var(--color-amber-500) 15%, transparent); color: var(--color-amber-300); }
+    }
+    .label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-violet-400);
+    }
+    .neighbour {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      color: var(--color-zinc-200);
+      border-bottom: 1px dotted var(--color-zinc-600);
+      &:hover { color: var(--color-zinc-50); border-bottom-color: var(--color-zinc-300); }
+    }
+    .delete {
+      margin-left: auto;
+      flex-shrink: 0;
+      padding: 4px;
+      border-radius: 4px;
+      color: var(--color-zinc-500);
+      opacity: 0;
+      &:hover { color: var(--color-rose-300); background: var(--color-zinc-700); }
+    }
+  }
+}

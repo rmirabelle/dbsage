@@ -564,7 +564,7 @@ export const captures = [
     async steps(page) {
       await openDb(page);
       await page.locator('[data-el="relationships-btn"]').click();
-      await page.locator('[data-el="relation-group"]').first().waitFor();
+      await page.locator('[data-el="relation-table-row"]').first().waitFor();
     },
   },
   {

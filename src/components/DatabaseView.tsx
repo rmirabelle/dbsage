@@ -131,6 +131,12 @@ export function DatabaseView({ tab }: Props) {
     return map;
   }, [tab.folders]);
 
+  const folderNameByTable = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const f of tab.folders) for (const t of f.tables) map.set(t, f.name);
+    return map;
+  }, [tab.folders]);
+
   const filter = tab.filter.trim().toLowerCase();
 
   const visibleTables: TableInfo[] = useMemo(() => {
@@ -138,7 +144,13 @@ export function DatabaseView({ tab }: Props) {
     if (currentFolder) {
       const inFolder = new Set(currentFolder.tables);
       list = list.filter((t) => inFolder.has(t.name));
-    } else {
+    } else if (!filter) {
+      /**
+       * At the root, a filter searches every table, including those inside
+       * folders, so the user need not open each folder in turn. Foldered
+       * tiles show a folder badge. Without a filter, foldered tables stay
+       * hidden behind their folder tile.
+       */
       list = list.filter((t) => !folderByTable.has(t.name));
     }
     if (filter) list = list.filter((t) => t.name.toLowerCase().includes(filter));
@@ -156,6 +168,8 @@ export function DatabaseView({ tab }: Props) {
 
   const totalCount = currentFolder
     ? currentFolder.tables.length
+    : filter
+    ? tab.folders.length + tab.tables.length
     : tab.folders.length +
       tab.tables.filter((t) => !folderByTable.has(t.name)).length;
   const visibleCount = visibleFolders.length + visibleTables.length;
@@ -781,6 +795,7 @@ export function DatabaseView({ tab }: Props) {
                   database={tab.database}
                   hasViews={viewTables.has(t.name)}
                   hasRelations={relatedTables.has(t.name)}
+                  folderName={currentFolder ? undefined : folderNameByTable.get(t.name)}
                   moveNames={
                     selectedTables.has(t.name)
                       ? Array.from(selectedTables)
@@ -1070,6 +1085,7 @@ function TableTile({
   database,
   hasViews,
   hasRelations,
+  folderName,
   moveNames,
   isSelected,
   isAnyDragging,
@@ -1087,6 +1103,8 @@ function TableTile({
   database: string;
   hasViews: boolean;
   hasRelations: boolean;
+  /** Folder containing this table, shown as a badge during a root-level search. */
+  folderName?: string;
   moveNames: string[];
   isSelected: boolean;
   isAnyDragging: boolean;
@@ -1180,6 +1198,12 @@ function TableTile({
               >
                 <ViewsIcon size={12} className="text-emerald-400" />
               </Tooltip>
+            )}
+            {folderName && (
+              <span className="table-folder-badge" title={`In folder ${folderName}`}>
+                <FolderIcon size={11} weight="fill" />
+                {folderName}
+              </span>
             )}
           </span>
           {table.estimatedRows != null && (

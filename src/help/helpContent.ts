@@ -139,11 +139,11 @@ export const HELP_GROUPS: HelpGroup[] = [
             ],
           },
           {
-            title: "Get to your data quickly",
+            title: "Find your data fast",
             blocks: [
               {
                 type: "paragraph",
-                text: "Open a table and click any column header to sort, search/filter or alias the column. 2 clicks filters the column to NULL or NOT NULL values only. Filter suggestions (EQUALS, etc) pull from the column's distinct values in real-time. Clearly see when a table is filtered by:",
+                text: "Open a table and click any column header to sort, search/filter or alias the column. Filter the column to NULL or NOT NULL values in just 2 clicks. Filter suggestions (EQUALS, etc) pull from the column's distinct values in real-time. Clearly see when a table is filtered by:",
               },
               {
                 type: "steps",
@@ -156,7 +156,7 @@ export const HELP_GROUPS: HelpGroup[] = [
             ],
           },
           {
-            title: "Navigate to related data instantly",
+            title: "Find related data instantly",
             blocks: [
               {
                 type: "paragraph",
@@ -345,12 +345,12 @@ export const HELP_GROUPS: HelpGroup[] = [
         ],
       },
       {
-        id: "connections-server-tools",
-        title: "Monitor and Server Admin",
-        summary: "Inspect server activity and administer local MySQL services.",
+        id: "connections-monitor",
+        title: "Monitor",
+        summary: "Inspect live server activity, history, and processes.",
         sections: [
           {
-            title: "Monitor",
+            title: "Monitor window",
             blocks: [
               shot(
                 "connection-monitor",
@@ -372,12 +372,24 @@ export const HELP_GROUPS: HelpGroup[] = [
               },
             ],
           },
+        ],
+      },
+      {
+        id: "connections-server-admin",
+        title: "Server Admin",
+        summary: "Control the local MySQL service, read its logs, and edit its configuration.",
+        sections: [
           {
             title: "Windows service control",
             blocks: [
               {
+                type: "note",
+                title: "Local connections only",
+                text: "Server Admin is available only for connections to localhost. It controls the MySQL installation on this computer and does not appear for remote servers.",
+              },
+              {
                 type: "paragraph",
-                text: "Localhost profiles expose Server Admin. When MySQL is installed as a Windows service, the Service tab shows its current state, registered executable, and defaults file.",
+                text: "When MySQL is installed as a Windows service, the Service tab shows its current state, registered executable, and defaults file.",
               },
               shot(
                 "connection-admin-service",
@@ -1306,11 +1318,27 @@ export const HELP_GROUPS: HelpGroup[] = [
               },
               {
                 type: "paragraph",
-                text: "Use the Table View's Relations button to show or hide the peek workspace. Choose Bottom or Right beside Dock at the bottom of the master Relations list to place the list and peek host together below or beside the table. Bottom docking starts at half the rows height; Right docking starts at half the table area width. Drag the workspace's top edge when below, or its left edge when beside the table, to resize it. Double-click that edge to split the space evenly. Each position remembers its own size, and docking is saved with table state and Views. Showing Relations automatically hides the parent table's Inspector; you can reopen it with the Inspector button. Select parent rows to update related data. Tab titles dim when there are no related records, and HAS MANY tabs show positive row counts. Hiding the workspace preserves its active tab and peek settings.",
+                text: "Use the Table View's Relations button to show or hide the peek workspace. Choose Bottom or Right beside Dock at the bottom of the master Relations list to place the list and peek host together below or beside the table. Bottom docking starts at half the rows height; Right docking starts at half the table area width.",
               },
               {
                 type: "paragraph",
-                text: "Click a relation name to open just that relation's peek tab. Clicking other relation names adds their tabs; clicking an open relation name again closes its tab. Click a tab header to switch tabs without closing it. The same behavior applies inside peeks: child tabs open underneath that peek's rows and Inspector, initially using half the available rows height. Closing the last child tab collapses its panel. Relations that reverse a table relationship along the current peek path and point to the same ancestor row or record set are hidden from the peek's Relations list. Relations from different source tables open their own peeks even when they target the same records. Another row in the same table can still open a new peek. Each child follows its immediate parent's selected row. Drag each group's top edge to adjust its height. Open nested peek tabs and their settings are saved with the enclosing workspace.",
+                text: "Drag the workspace's top edge when below, or its left edge when beside the table, to resize it. Double-click that edge to split the space evenly. Each position remembers its own size, and docking is saved with table state and Views.",
+              },
+              {
+                type: "paragraph",
+                text: "Showing Relations automatically hides the parent table's Inspector; you can reopen it with the Inspector button. Select parent rows to update related data. Tab titles dim when there are no related records, and HAS MANY tabs show positive row counts. Hiding the workspace preserves its active tab and peek settings.",
+              },
+              {
+                type: "paragraph",
+                text: "Click a relation name to open just that relation's peek tab. Clicking other relation names adds their tabs; clicking an open relation name again closes its tab. Click a tab header to switch tabs without closing it.",
+              },
+              {
+                type: "paragraph",
+                text: "The same behavior applies inside peeks: child tabs open underneath that peek's rows and Inspector, initially using half the available rows height. Closing the last child tab collapses its panel. Each child follows its immediate parent's selected row. Drag each group's top edge to adjust its height. Open nested peek tabs and their settings are saved with the enclosing workspace.",
+              },
+              {
+                type: "paragraph",
+                text: "Relations that reverse a table relationship along the current peek path and point to the same ancestor row or record set are hidden from the peek's Relations list. Relations from different source tables open their own peeks even when they target the same records. Another row in the same table can still open a new peek.",
               },
               {
                 type: "steps",
@@ -1352,6 +1380,33 @@ export const HELP_GROUPS: HelpGroup[] = [
               {
                 type: "paragraph",
                 text: "With well-chosen relations and a saved peek layout, you can build an advanced data mining setup: select a row in the parent table, and every level of related data updates at once.",
+              },
+            ],
+          },
+          {
+            title: "Peek panel workspace tips",
+            blocks: [
+              {
+                type: "paragraph",
+                text: "Peek panel layouts can be completely customized per table, per database. You can configure them to navigate as deep as the relation graph goes.",
+              },
+              {
+                type: "paragraph",
+                text: "Each peek panel table is bound to the parent table's selected row. Selecting a new row in the parent table updates related tables all the way through the relation graph.",
+              },
+              {
+                type: "paragraph",
+                text: "Navigating Relations is powerful, but it imposes overhead that should be considered carefully. With a complex, multi-level peek panel layout, selecting a cell in the main table may trigger several additional MySQL queries to count and fetch related data. This additional work occurs per parent table row selection. The impact depends largely on the index quality and table size of all the related tables.",
+              },
+              {
+                type: "paragraph",
+                text: "For more involved layouts, consider hiding the Relations panel before you close the table.",
+              },
+              {
+                type: "note",
+                title: "Close Relations automatically",
+                text: "To automatically close the Relations panel when closing a table, enable Always close Relations panel on Table/Query close in File > Settings.",
+                tone: "tip",
               },
             ],
           },

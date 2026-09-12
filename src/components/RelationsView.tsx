@@ -57,6 +57,8 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   } | null>(null);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  /** Table shown in the middle column; null until the user picks one. */
+  const [target, setTarget] = useState<string | null>(null);
 
   /** Focus search on mount — covers both opening and re-focusing the tab, since
    * switching to this tab remounts the view. */
@@ -216,48 +218,85 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
     }
   };
 
-  const sortedRelations = useMemo(
-    () =>
-      [...relations].sort((a, b) => {
-        const byFrom = a.fromTable.localeCompare(b.fromTable, undefined, {
-          sensitivity: "base",
-        });
-        if (byFrom !== 0) return byFrom;
-        return a.toTable.localeCompare(b.toTable, undefined, {
-          sensitivity: "base",
-        });
-      }),
-    [relations]
-  );
+  const byName = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" });
+
+  /** Every table that takes part in at least one relation, with in/out counts. */
+  const graphTables = useMemo(() => {
+    const map = new Map<string, { name: string; incoming: number; outgoing: number }>();
+    const get = (name: string) => {
+      let t = map.get(name);
+      if (!t) {
+        t = { name, incoming: 0, outgoing: 0 };
+        map.set(name, t);
+      }
+      return t;
+    };
+    for (const r of relations) {
+      get(r.fromTable).outgoing++;
+      get(r.toTable).incoming++;
+    }
+    return [...map.values()].sort((a, b) => byName(a.name, b.name));
+  }, [relations]);
 
   const query = search.trim().toLowerCase();
-  /** Filter by from/to table names only (not columns or accessor name). */
-  const visibleRelations = useMemo(
+  const visibleTables = useMemo(
     () =>
       query
-        ? sortedRelations.filter(
-            (r) =>
-              r.fromTable.toLowerCase().includes(query) ||
-              r.toTable.toLowerCase().includes(query)
-          )
-        : sortedRelations,
-    [sortedRelations, query]
+        ? graphTables.filter((t) => t.name.toLowerCase().includes(query))
+        : graphTables,
+    [graphTables, query]
   );
 
+  /** The table shown in the middle column; falls back to the first table. */
+  const selected = useMemo(() => {
+    if (target && graphTables.some((t) => t.name === target)) return target;
+    return graphTables[0]?.name ?? null;
+  }, [target, graphTables]);
+
+  const relationLabel = (r: Relation) =>
+    r.name.trim() ||
+    (r.kind === "has_many"
+      ? pluralize(singularize(r.toTable))
+      : singularize(r.toTable));
+
+  /** Relations whose target is the selected table (left column). */
+  const incoming = useMemo(
+    () =>
+      relations
+        .filter((r) => r.toTable === selected)
+        .sort((a, b) => byName(a.fromTable, b.fromTable) || byName(relationLabel(a), relationLabel(b))),
+    [relations, selected]
+  );
+
+  /** Relations whose source is the selected table (right column). */
+  const outgoing = useMemo(
+    () =>
+      relations
+        .filter((r) => r.fromTable === selected)
+        .sort((a, b) => byName(a.toTable, b.toTable) || byName(relationLabel(a), relationLabel(b))),
+    [relations, selected]
+  );
+
+  const selectTable = (name: string) => setTarget(name);
+
   /**
-   * Group the visible relations by their source table (table1) so each table
-   * renders as a single card. Relies on visibleRelations already being sorted
-   * by fromTable, so Map insertion order yields alphabetical groups.
+   * Follow a relation to a neighbouring table. Clears the search so the
+   * new target is guaranteed to be in the middle list.
    */
-  const groupedRelations = useMemo(() => {
-    const groups = new Map<string, Relation[]>();
-    for (const r of visibleRelations) {
-      const arr = groups.get(r.fromTable);
-      if (arr) arr.push(r);
-      else groups.set(r.fromTable, [r]);
-    }
-    return [...groups.entries()];
-  }, [visibleRelations]);
+  const followTo = (name: string) => {
+    setSearch("");
+    setTarget(name);
+  };
+
+  /** Keep the selected table visible in the middle list. */
+  const tablesRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    if (!selected) return;
+    tablesRef.current
+      ?.querySelector<HTMLElement>(`[data-table="${CSS.escape(selected)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selected, visibleTables]);
 
   useEffect(() => {
     loadRelations(profileId, database).catch((e) => setError(String(e)));
@@ -301,7 +340,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         </button>
         <span className="ml-1 text-[11px] text-zinc-500">
           {query
-            ? `${visibleRelations.length} of ${relations.length}`
+            ? `${visibleTables.length} of ${graphTables.length} tables`
             : `${relations.length} defined`}
         </span>
         <button
@@ -363,87 +402,91 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         </div>
       )}
 
-      <div data-el="relations-body" className="flex-1 min-h-0 flex bg-[#1d2029]">
-        <div className="flex-1 min-h-0 flex flex-col">
-          <div className="flex-1 min-h-0 overflow-auto px-4 pt-4 pb-4">
-          {relations.length === 0 ? (
-            <div className="text-[12px] text-zinc-500 py-2">
-              No relations defined for this database yet.
-            </div>
-          ) : visibleRelations.length === 0 ? (
-            <div className="text-[12px] text-zinc-500 py-2">
-              No relations match “{search.trim()}”.
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              {groupedRelations.map(([fromTable, rels]) => (
-                <div
-                  key={fromTable}
-                  data-el="relation-group"
-                  className="flex rounded-lg border border-zinc-800 bg-zinc-900/40 overflow-hidden"
-                >
-                  <div className="flex w-44 shrink-0 items-center gap-2 px-3 py-2 border-r border-zinc-800 bg-zinc-900/60">
-                    <ShareNetwork
-                      size={15}
-                      weight="bold"
-                      className="shrink-0 text-violet-400"
-                    />
-                    <span className="truncate text-[13px] font-semibold text-zinc-100">
-                      {fromTable}
-                    </span>
-                  </div>
-                  <ul className="flex-1 min-w-0 divide-y divide-zinc-800/50">
-                    {rels.map((r) => {
-                      const object =
-                        r.name.trim() ||
-                        (r.kind === "has_many"
-                          ? pluralize(singularize(r.toTable))
-                          : singularize(r.toTable));
-                      return (
-                        <li
-                          key={r.id}
-                          data-el="relation-row"
-                          onClick={() => setRelationDialog(r)}
-                          className="group flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-zinc-800/60"
-                        >
-                          <span
-                            className={clsx(
-                              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                              r.kind === "has_many"
-                                ? "bg-accent-500/15 text-accent-300"
-                                : "bg-amber-500/15 text-amber-300"
-                            )}
-                          >
-                            {r.kind === "has_many" ? "has many" : "has one"}
-                          </span>
-                          <span className="truncate text-[13px] font-semibold text-violet-400">
-                            {object}
-                          </span>
-                          <span className="shrink-0 text-[12px] text-zinc-500 truncate">
-                            {r.fromColumn} &rarr; {r.toColumn}
-                          </span>
-                          <button
-                            data-el="relation-delete-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDelete(r.id);
-                            }}
-                            className="ml-auto shrink-0 p-1 rounded text-zinc-500 hover:text-rose-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100"
-                            aria-label="Delete relation"
-                          >
-                            <Trash size={13} />
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          )}
+      <div data-el="relations-body" className="relations-explorer flex-1 min-h-0 flex flex-col bg-[#1d2029]">
+        {relations.length === 0 ? (
+          <div className="text-[12px] text-zinc-500 px-4 py-4">
+            No relations defined for this database yet.
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="explorer-columns">
+              <section className="explorer-col" data-el="relations-incoming">
+                <header>
+                  <span>Incoming</span>
+                  <span className="count">{incoming.length}</span>
+                </header>
+                <ul>
+                  {incoming.length === 0 && (
+                    <li className="empty">No relations point to {selected}.</li>
+                  )}
+                  {incoming.map((r) => (
+                    <RelationRow
+                      key={r.id}
+                      relation={r}
+                      neighbour={r.fromTable}
+                      side="incoming"
+                      label={relationLabel(r)}
+                      onFollow={() => followTo(r.fromTable)}
+                      onEdit={() => setRelationDialog(r)}
+                      onDelete={() => onDelete(r.id)}
+                    />
+                  ))}
+                </ul>
+              </section>
 
+              <section className="explorer-col is-middle" data-el="relations-tables">
+                <header>
+                  <span>Tables</span>
+                  <span className="count">{visibleTables.length}</span>
+                </header>
+                <ul ref={tablesRef}>
+                  {visibleTables.length === 0 && (
+                    <li className="empty">No tables match "{search.trim()}".</li>
+                  )}
+                  {visibleTables.map((t) => (
+                    <li
+                      key={t.name}
+                      data-el="relation-table-row"
+                      data-table={t.name}
+                      className={clsx("table-row", t.name === selected && "is-selected")}
+                      onClick={() => selectTable(t.name)}
+                    >
+                      <ShareNetwork size={14} weight="bold" className="shrink-0 text-violet-400" />
+                      <span className="name">{t.name}</span>
+                      <span className="counts" title="incoming / outgoing">
+                        {t.incoming} / {t.outgoing}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
+              <section className="explorer-col" data-el="relations-outgoing">
+                <header>
+                  <span>Outgoing</span>
+                  <span className="count">{outgoing.length}</span>
+                </header>
+                <ul>
+                  {outgoing.length === 0 && (
+                    <li className="empty">{selected} has no relations.</li>
+                  )}
+                  {outgoing.map((r) => (
+                    <RelationRow
+                      key={r.id}
+                      relation={r}
+                      neighbour={r.toTable}
+                      side="outgoing"
+                      label={relationLabel(r)}
+                      onFollow={() => followTo(r.toTable)}
+                      onEdit={() => setRelationDialog(r)}
+                      onDelete={() => onDelete(r.id)}
+                    />
+                  ))}
+                </ul>
+              </section>
+            </div>
+          </>
+        )}
       </div>
 
       <CopyRelationsDialog
@@ -610,5 +653,73 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * One relation in the Incoming or Outgoing column. Clicking the row edits the
+ * relation; clicking the neighbouring table name follows it in the graph.
+ */
+function RelationRow({
+  relation,
+  neighbour,
+  side,
+  label,
+  onFollow,
+  onEdit,
+  onDelete,
+}: {
+  relation: Relation;
+  neighbour: string;
+  side: "incoming" | "outgoing";
+  label: string;
+  onFollow: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const kind = (
+    <span className={clsx("kind", relation.kind === "has_many" ? "is-many" : "is-one")}>
+      {relation.kind === "has_many" ? "has many" : "has one"}
+    </span>
+  );
+  const table = (
+    <button
+      className="neighbour"
+      title={`Go to ${neighbour}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onFollow();
+      }}
+    >
+      {neighbour}
+    </button>
+  );
+  return (
+    <li data-el="relation-row" className="relation-row" onClick={onEdit} title="Edit relation">
+      {side === "incoming" ? (
+        <>
+          {table}
+          {kind}
+          <span className="label">{label}</span>
+        </>
+      ) : (
+        <>
+          {kind}
+          <span className="label">{label}</span>
+          {table}
+        </>
+      )}
+      <button
+        data-el="relation-delete-btn"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+        className="delete"
+        aria-label="Delete relation"
+      >
+        <Trash size={13} />
+      </button>
+    </li>
   );
 }
