@@ -10,10 +10,12 @@ import {
   AlignRight,
   ArrowsClockwise,
   Eye,
-  CaretDoubleLeft,
+  ShareNetwork,
+  Table,
   X,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
+import { peekDepthColor } from "./PeekDepth";
 import { listen } from "@tauri-apps/api/event";
 import { rowRelationTargets, type RowRelationTarget } from "../lib/relations";
 import { toggleRelationFilter } from "../lib/relationFilterToggle";
@@ -86,6 +88,7 @@ export function RelationsPanel({
   /** Filter the grid to rows that have (`hasrelated`) or lack (`norelated`)
    * related rows through this relation; null clears that filter. */
   onRelationFilter: (target: RowRelationTarget, op: FilterOp | null) => void;
+  /** Called when the WITH filter is enabled, to select that relation's peek. */
   onFilterEnabled?: (target: RowRelationTarget) => void;
   onClose: () => void;
   onCollapse?: () => void;
@@ -258,7 +261,39 @@ export function RelationsPanel({
           <X size={15} />
         </button>
       </div>
+      {/* Master (table) panel only: titled with its table, and its close collapses
+          the list while open peek tabs stay visible. Peek panels toggle from the
+          Relations button in the peek title bar instead. */}
+      {onCollapse && <div
+        data-el="relations-panel-toolbar"
+        className="dbs-toolbar bg-[var(--peek-tint,#2d2a3b)] bg-none flex shrink-0 items-center gap-2 border-b border-zinc-800/60 pl-2 pr-1 py-2"
+      >
+        <button
+          type="button"
+          data-el="relation-panel-close"
+          onClick={onCollapse}
+          className="shrink-0 inline-flex items-center justify-center rounded bg-violet-600 px-1.5 py-1 text-white transition-colors hover:bg-violet-500"
+          aria-label="Close the Relations panel"
+          aria-pressed={true}
+          {...helpHandlers("Close the Relations panel; open peek tabs remain visible")}
+        >
+          <ShareNetwork size={15} />
+        </button>
+        <Table size={16} style={{ color: peekDepthColor(0) }} className="shrink-0 pointer-events-none" />
+        <span className="flex-1 min-w-0 truncate text-[13px]" style={{ color: peekDepthColor(0) }} {...helpHandlers(`${table} Relations`)}>
+          {table}
+        </span>
+      </div>}
       <div data-el="relations-panel-body" className="min-h-0 flex-1 overflow-y-auto">
+        {items.length === 0 && !hideNewRelation && (
+          <p data-el="relations-empty" className="px-3 py-3 text-[12px] leading-5 text-zinc-500">
+            No relations yet.
+            <br />
+            Click{" "}
+            <Plus size={12} weight="bold" className="inline -mt-px text-violet-300" aria-label="the plus button" />
+            {" "}below to add one.
+          </p>
+        )}
         {items.length === 0 ? null : (
           items.map((m) => {
             const label = m.relation.name?.trim() || m.table;
@@ -267,10 +302,11 @@ export function RelationsPanel({
                buttons stay at full strength. */
             const hasRows = !pending && m.value != null && m.exists;
             const current = activeFilterOp(m);
+            const selected = openRelationIds ? openRelationIds.includes(m.relation.id) : activeRelationId === m.relation.id;
             return (
               <div
                 key={m.relation.id}
-                className={clsx("border-b border-zinc-800/60 text-[12px]", (openRelationIds ? openRelationIds.includes(m.relation.id) : activeRelationId === m.relation.id) && "bg-violet-500/15")}
+                className={clsx("border-b border-zinc-800/60 text-[12px]", selected && "bg-violet-500/15")}
               >
                 <div className="flex items-center gap-2 py-1 pl-2 pr-1.5">
                 <button
@@ -302,7 +338,8 @@ export function RelationsPanel({
                 </span>
                 <span
                   className={clsx(
-                    "min-w-0 flex-1 truncate font-medium text-zinc-100",
+                    "min-w-0 flex-1 truncate text-zinc-100",
+                    selected ? "font-bold" : "font-medium",
                     !hasRows && "opacity-40"
                   )}
                   {...helpHandlers(
@@ -380,12 +417,6 @@ export function RelationsPanel({
           })
         )}
       {(!hideNewRelation || onSoloChange || onDockChange || onCollapse || onRefresh) && <div role="group" aria-label="Relations tools" className="bg-[var(--peek-tint,#2d2a3b)] border-t border-zinc-800/60 px-2 py-1 flex flex-wrap items-center gap-1">
-          {onCollapse && <button type="button" data-el="relation-panel-collapse"
-            onClick={onCollapse} aria-label="Collapse master Relations panel"
-            {...helpHandlers("Collapse the master Relations panel and keep peek tabs open")}
-            className="inline-flex items-center justify-center rounded bg-zinc-800 p-1 text-zinc-300 hover:bg-zinc-700">
-            <CaretDoubleLeft size={14} weight="bold" />
-          </button>}
           {onDockChange && <div role="group" aria-label="Relations docking position" className="inline-flex overflow-hidden rounded">
             {(["bottom", "right"] as const).map((position) => <button type="button" key={position}
               aria-label={`Dock ${position}`}

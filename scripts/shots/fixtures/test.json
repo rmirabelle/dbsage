@@ -1,0 +1,6 @@
+[
+  { "id": 1, "sku": "DSK-LAMP-01", "name": "Arc Desk Lamp", "category": "Workspace", "price": 89.00, "inventory_count": 46, "active": 1, "attributes": { "color": "graphite", "lumens": 800 }, "created_at": "2026-08-30 13:14:46" },
+  { "id": 2, "sku": "KEY-MECH-02", "name": "Tactile Mechanical Keyboard", "category": "Workspace", "price": 149.00, "inventory_count": 28, "active": 1, "attributes": { "layout": "TKL", "switch": "tactile" }, "created_at": "2026-08-30 13:14:46" },
+  { "id": 3, "sku": "MSE-ERG-03", "name": "Ergonomic Mouse", "category": "Workspace", "price": 79.00, "inventory_count": 71, "active": 1, "attributes": { "dpi": 1600, "wireless": true }, "created_at": "2026-08-30 13:14:46" },
+  { "id": 4, "sku": "HUB-USBC-04", "name": "USB-C Studio Hub", "category": "Connectivity", "price": 119.00, "inventory_count": 33, "active": 1, "attributes": { "display": "4K60", "ports": 9, "power_delivery_w": 100 }, "created_at": "2026-08-30 13:14:46" }
+]

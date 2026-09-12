@@ -10,14 +10,18 @@ import {
   BracketsCurly,
   PencilSimple,
   TreeStructure,
+  ArrowsOutSimple,
+  ArrowsInSimple,
   MagnifyingGlass as Search,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { useUi, PANEL_BOUNDS } from "../state/ui";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { JsonTreeView } from "./JsonTreeView";
+import { JsonTreeView, type JsonTreeViewHandle } from "./JsonTreeView";
 import { InspectorTextBackdrop } from "./InspectorTextBackdrop";
 import { matchOffsets } from "../lib/jsonTreeModel";
+
+const jsonToolbarButton = "h-5 inline-flex items-center gap-1 px-1.5 rounded hover:bg-zinc-800 hover:text-zinc-100";
 import type { ColumnInfo } from "../types";
 
 interface Props {
@@ -147,6 +151,7 @@ export function ExpandedPanel({
   /** JSON columns show the tree by default; the tree's Edit button swaps in
    * the raw editor, and a successful Save swaps the tree back. */
   const [jsonEditing, setJsonEditing] = useState(false);
+  const treeRef = useRef<JsonTreeViewHandle>(null);
 
   /** Reset the editor text whenever the inspected value changes. */
   useEffect(() => {
@@ -358,7 +363,7 @@ export function ExpandedPanel({
         ) : (
           <span className="text-zinc-600">Click a cell to view its value</span>
         )}
-        {column && (
+        {column && !isJsonColumn && (
           <button
             data-el="expanded-copy-btn"
             onClick={onCopy}
@@ -373,17 +378,6 @@ export function ExpandedPanel({
         <div className="ml-auto flex items-center gap-1">
           {column && rowOrdinal != null && (
             <span className="mr-1 font-mono text-zinc-500">row {rowOrdinal}</span>
-          )}
-          {jsonEdit && (
-            <button
-              data-el="expanded-json-tree-btn"
-              onClick={() => setJsonEditing(false)}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-              {...helpHandlers("Back to the tree view (keeps unsaved edits)")}
-            >
-              <TreeStructure size={13} className="text-sky-400" />
-              <span>Tree</span>
-            </button>
           )}
           {column && canFormatJson && (
             <button
@@ -407,6 +401,27 @@ export function ExpandedPanel({
           </button>
         </div>
       </div>
+
+      {/* JSON toolbar: Copy plus the tree/editor controls; stays put across
+          the tree and raw-editor views. */}
+      {column && isJsonColumn && (
+        <div data-el="json-toolbar" className="shrink-0 h-7 pl-1 pr-2 bg-[#262a34] flex items-center gap-1 border-b border-zinc-800/40 text-[11px] text-zinc-400">
+          <button data-el="expanded-copy-btn" onClick={onCopy} aria-label={copied ? "Copied" : "Copy to clipboard"} {...helpHandlers("Copy to clipboard")} className={jsonToolbarButton}>
+            {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}Copy
+          </button>
+          {canEdit && (jsonEdit ? (
+            <button data-el="json-tree-back" onClick={() => setJsonEditing(false)} {...helpHandlers("Back to the tree view (keeps unsaved edits)")} className={jsonToolbarButton}><TreeStructure size={13} />Tree</button>
+          ) : (
+            <button data-el="json-tree-edit" onClick={() => setJsonEditing(true)} {...helpHandlers("Edit JSON")} className={jsonToolbarButton}><PencilSimple size={13} />Edit</button>
+          ))}
+          {showTree && treeData !== undefined && (
+            <span className="ml-auto inline-flex items-center gap-1">
+              <button data-el="json-tree-expand-all" onClick={() => { treeRef.current?.expandAll(); setExpandAll(true); onExpandAllChange?.(true); }} {...helpHandlers("Expand all")} className={jsonToolbarButton}><ArrowsOutSimple size={13} />Expand</button>
+              <button data-el="json-tree-collapse-all" onClick={() => { treeRef.current?.collapseAll(); setExpandAll(false); onExpandAllChange?.(false); }} {...helpHandlers("Collapse all")} className={jsonToolbarButton}><ArrowsInSimple size={13} />Collapse</button>
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 flex">
         {showRaw && (
@@ -453,27 +468,16 @@ export function ExpandedPanel({
           <div className="relative flex-1 min-h-0 min-w-0 bg-zinc-950">
             {treeData !== undefined ? (
               <JsonTreeView
+                ref={treeRef}
                 key={`${column?.name ?? ""}:${rowOrdinal ?? ""}`}
                 data={treeData}
                 search={appliedSearch}
                 activeIndex={activeIndex}
-                onEdit={canEdit ? () => setJsonEditing(true) : undefined}
                 expandAll={expandAll}
-                onExpandAllChange={(v) => { setExpandAll(v); onExpandAllChange?.(v); }}
               />
             ) : (
-              <div className="px-3 py-2 flex items-center gap-2 text-[11px] text-zinc-600 font-mono">
-                <span>{text.trim() ? "Not valid JSON" : isNull ? "NULL" : ""}</span>
-                {canEdit && (
-                  <button
-                    data-el="json-tree-edit"
-                    onClick={() => setJsonEditing(true)}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-orange-400 hover:bg-zinc-800 hover:text-orange-300"
-                    {...helpHandlers("Edit JSON")}
-                  >
-                    <PencilSimple size={13} /> Edit
-                  </button>
-                )}
+              <div className="px-3 py-2 text-[11px] text-zinc-600 font-mono">
+                {text.trim() ? "Not valid JSON" : isNull ? "NULL" : ""}
               </div>
             )}
           </div>

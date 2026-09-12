@@ -7,7 +7,7 @@ import type { ColumnInfo } from "../types";
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 
 interface Props {
-  anchor: { x: number; y: number };
+  anchor: { x: number; y: number; flipY?: number };
   columns: ColumnInfo[];
   hidden: string[];
   selectedRowCount: number;
@@ -39,7 +39,7 @@ export function ColumnsVisibilityMenu({
   const baseBtn = "px-1.5 rounded text-zinc-200 font-semibold hover:bg-zinc-800";
   const activeBtn = "px-1.5 rounded font-semibold bg-emerald-900/60 text-emerald-200";
   const ref = useRef<HTMLDivElement>(null);
-  const { style: menuPosition } = useAnchoredPosition(anchor.x, anchor.y, 8, ref);
+  const { style: menuPosition } = useAnchoredPosition(anchor.x, anchor.y, 8, ref, 0, anchor.flipY);
   const hiddenSet = new Set(hidden);
 
   /** Keep the menu's height cap within the available viewport when resized. */

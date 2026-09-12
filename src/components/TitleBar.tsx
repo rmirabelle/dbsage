@@ -2,8 +2,7 @@ import { helpHandlers } from "../state/help";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DownloadSimple,
-  FileArrowDown,
-  FileArrowUp,
+  Gear,
   MagnifyingGlassPlus,
   MagnifyingGlassMinus,
   ArrowCounterClockwise,
@@ -27,16 +26,14 @@ const resetFocusedZoom = () => {
 interface Props {
   onHelp: () => void;
   onAbout: () => void;
-  onExport: () => void;
-  onImport: () => void;
+  onSettings: () => void;
   updateAvailable?: boolean;
 }
 
 export function TitleBar({
   onHelp,
   onAbout,
-  onExport,
-  onImport,
+  onSettings,
   updateAvailable,
 }: Props) {
   return (
@@ -58,29 +55,16 @@ export function TitleBar({
             {(close) => (
               <>
                 <button
-                  data-el="menu-import-state"
+                  data-el="menu-settings"
                   onClick={() => {
                     close();
-                    onImport();
+                    onSettings();
                   }}
                   className={MENU_ITEM_CLASS}
                 >
                   <span className={MENU_LABEL_CLASS}>
-                    <FileArrowDown size={14} className={MENU_ICON_CLASS} />
-                    Import Settings…
-                  </span>
-                </button>
-                <button
-                  data-el="menu-export-state"
-                  onClick={() => {
-                    close();
-                    onExport();
-                  }}
-                  className={MENU_ITEM_CLASS}
-                >
-                  <span className={MENU_LABEL_CLASS}>
-                    <FileArrowUp size={14} className={MENU_ICON_CLASS} />
-                    Export Settings…
+                    <Gear size={14} className={MENU_ICON_CLASS} />
+                    Settings…
                   </span>
                 </button>
               </>

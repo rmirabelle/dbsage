@@ -16,7 +16,21 @@ export interface TableCopyPrompt {
   y: number;
 }
 
+/** User-configurable app settings (File > Settings). */
+export interface AppSettings {
+  /** Drop the saved Views / saved Queries menu open when a table or query tab first opens. */
+  popDownSaved: boolean;
+  /** Forget a table's open Relations panel when its tab closes, so it reopens closed. */
+  closeRelationsOnTabClose: boolean;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  popDownSaved: true,
+  closeRelationsOnTabClose: false,
+};
+
 interface UiState {
+  settings: AppSettings;
   sidebarWidth: number;
   treeZoom: number;
   tabsZoom: number;
@@ -38,6 +52,7 @@ interface UiState {
   setRelationsPanelWidth: (px: number) => void;
   openTableCopyPrompt: (prompt: TableCopyPrompt) => void;
   closeTableCopyPrompt: () => void;
+  setSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
 }
 
 const KEY = "dbsage.ui.v1";
@@ -46,7 +61,7 @@ const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 560;
 const ZOOM_MIN = 0.7;
 const ZOOM_MAX = 2.0;
-const ZOOM_STEP = 0.1;
+const ZOOM_STEP = 0.05;
 const PANEL_MIN = 80;
 const PANEL_MAX = 1200;
 const SQL_PANE_MIN = 80;
@@ -58,6 +73,7 @@ const RELATIONS_PANEL_MAX = 800;
 export const RELATIONS_PANEL_DEFAULT = 300;
 
 interface Persisted {
+  settings?: Partial<AppSettings>;
   sidebarWidth?: number;
   treeZoom?: number;
   tabsZoom?: number;
@@ -85,6 +101,7 @@ const loadPersisted = (): Persisted => {
 const savePersisted = (state: UiState) => {
   try {
     const data: Persisted = {
+      settings: state.settings,
       sidebarWidth: state.sidebarWidth,
       treeZoom: state.treeZoom,
       tabsZoom: state.tabsZoom,
@@ -102,6 +119,7 @@ const savePersisted = (state: UiState) => {
 const persisted = loadPersisted();
 
 export const useUi = create<UiState>((set, get) => ({
+  settings: { ...DEFAULT_SETTINGS, ...persisted.settings },
   sidebarWidth: clamp(persisted.sidebarWidth ?? 256, SIDEBAR_MIN, SIDEBAR_MAX),
   treeZoom: clamp(persisted.treeZoom ?? 1, ZOOM_MIN, ZOOM_MAX),
   tabsZoom: clamp(persisted.tabsZoom ?? 1, ZOOM_MIN, ZOOM_MAX),
@@ -123,6 +141,11 @@ export const useUi = create<UiState>((set, get) => ({
     RELATIONS_PANEL_MAX
   ),
   tableCopyPrompt: null,
+
+  setSetting: (key, value) => {
+    set({ settings: { ...get().settings, [key]: value } });
+    savePersisted(get());
+  },
 
   setSidebarWidth: (px) => {
     set({ sidebarWidth: clamp(Math.round(px), SIDEBAR_MIN, SIDEBAR_MAX) });

@@ -13,6 +13,7 @@ import {
   droppedColumnNames,
 } from "../lib/tableSql";
 import { notifyError, notifySuccess, notifyInfo } from "./notify";
+import { useUi } from "./ui";
 import { analyzeQueryBundle } from "../lib/queryAnalysis";
 import { splitSqlStatements, returnsResultSet } from "../lib/splitSql";
 import { deleteRowsWithCascade, toIpcString } from "../lib/rowDelete";
@@ -124,6 +125,7 @@ function persistColumnSetup(tab: RowsTab) {
       relationsOpen: tab.relationsOpen,
       inspectorOpen: tab.inspectorOpen,
       inspectorHeight: tab.inspectorHeight,
+      pageSize: tab.pageSize,
     }));
   void drainColumnSetups();
 }
@@ -1114,7 +1116,7 @@ export const useStore = create<Store>((set, get) => ({
       table,
       tableComment,
       page: 1,
-      pageSize: 500,
+      pageSize: saved?.pageSize ?? 500,
       data: null,
       exactTotal: null,
       loading: true,
@@ -1238,6 +1240,16 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   closeTab: (tabId) => {
+    /* Setting: a table closed with its Relations workspace showing reopens
+       with it closed. `relationsOpen` is undefined until first toggled, in
+       which case an existing peek workspace means open (see Tabs.tsx), and a
+       collapsed master list still counts as open — the peek tabs are showing. */
+    const closing = get().tabs.find((t) => t.id === tabId);
+    if (closing?.kind === "rows" && (closing.relationsOpen ?? Boolean(closing.peekAll)) && !closing.peekAll?.closed
+      && useUi.getState().settings.closeRelationsOnTabClose) {
+      persistColumnSetup({ ...closing, relationsOpen: false,
+        peekAll: closing.peekAll ? { ...closing.peekAll, relationsCollapsed: false } : closing.peekAll });
+    }
     set((s) => {
       const idx = s.tabs.findIndex((t) => t.id === tabId);
       if (idx < 0) return s;
@@ -2402,6 +2414,8 @@ export const useStore = create<Store>((set, get) => ({
         t.id === tabId && t.kind === "rows" ? { ...t, pageSize, page: 1 } : t
       ),
     }));
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (tab?.kind === "rows") persistColumnSetup(tab);
     await loadTabPage(tabId, 1, set, get);
   },
 

@@ -22,6 +22,8 @@ export type TransferMode = "export" | "import";
 interface Props {
   mode: TransferMode;
   onClose: () => void;
+  /** Pre-selected file, e.g. when the app was opened from a .dbsage file. */
+  initialPath?: string;
 }
 
 const FILTERS = [{ name: "DB Sage State", extensions: ["dbsage"] }];
@@ -47,14 +49,14 @@ const fromCounts = (c: StateCounts): StateSelection => ({
 const totalCount = (counts: StateCounts) =>
   STATE_CATEGORIES.reduce((sum, c) => sum + counts[c.key], 0);
 
-export function StateTransferDialog({ mode, onClose }: Props) {
+export function StateTransferDialog({ mode, onClose, initialPath }: Props) {
   return mode === "export" ? (
     <DialogShell title="Export Settings" onClose={onClose}>
       <ExportBody onClose={onClose} />
     </DialogShell>
   ) : (
     <DialogShell title="Import Settings" onClose={onClose}>
-      <ImportBody onClose={onClose} />
+      <ImportBody onClose={onClose} initialPath={initialPath} />
     </DialogShell>
   );
 }
@@ -217,9 +219,9 @@ function ExportBody({ onClose }: { onClose: () => void }) {
   );
 }
 
-function ImportBody({ onClose }: { onClose: () => void }) {
+function ImportBody({ onClose, initialPath }: { onClose: () => void; initialPath?: string }) {
   const reloadAfterImport = useStore((s) => s.reloadAfterImport);
-  const [path, setPath] = useState<string | null>(null);
+  const [path, setPath] = useState<string | null>(initialPath ?? null);
   const [passphrase, setPassphrase] = useState("");
   const [counts, setCounts] = useState<StateCounts | null>(null);
   const [selection, setSelection] = useState<StateSelection>(allSelected);

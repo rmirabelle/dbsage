@@ -4,6 +4,7 @@ import { CaretDown, Check, Code, FloppyDisk, Plus, X } from "@phosphor-icons/rea
 import clsx from "clsx";
 import type { SavedQuery } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { useUi } from "../state/ui";
 
 /**
  * Tab ids whose Saved menu has already auto-opened. Kept at module scope (not
@@ -48,12 +49,13 @@ export function SavedQueryMenu({
   const ref = useRef<HTMLDivElement>(null);
 
   /* Auto-open exactly once per query tab — see autoOpenedTabs above. */
+  const popDown = useUi((s) => s.settings.popDownSaved);
   useEffect(() => {
-    if (disabled || !autoOpenKey || queries.length === 0) return;
+    if (!popDown || disabled || !autoOpenKey || queries.length === 0) return;
     if (autoOpenedTabs.has(autoOpenKey)) return;
     autoOpenedTabs.add(autoOpenKey);
     setOpen(true);
-  }, [autoOpenKey, queries.length, disabled]);
+  }, [autoOpenKey, queries.length, disabled, popDown]);
 
   useEffect(() => {
     if (!open) return;

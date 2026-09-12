@@ -134,11 +134,50 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               {
                 type: "paragraph",
-                text: "DB Sage is a desktop workbench for MySQL built around one idea: your data is connected, and the tool should follow those connections as fast as you can think. Open a table and filter it with value suggestions drawn from the data itself. Select a row, open the Relations panel, and peek at its related rows in a window of their own, then peek again from there, as deep as the relations go. Save that whole arrangement as a View and get it back with one click.",
+                text: "DB Sage is a desktop workbench for MySQL built around core principles:",
+              },
+            ],
+          },
+          {
+            title: "Get to your data quickly",
+            blocks: [
+              {
+                type: "paragraph",
+                text: "Open a table and click any column header to sort, search/filter or alias the column. 2 clicks filters the column to NULL or NOT NULL values only. Filter suggestions (EQUALS, etc) pull from the column's distinct values in real-time. Clearly see when a table is filtered by:",
+              },
+              {
+                type: "steps",
+                items: [
+                  "the yellow background on the filtered column(s)",
+                  "the yellow overline on the table",
+                  "the Clear Filters button",
+                ],
+              },
+            ],
+          },
+          {
+            title: "Navigate to related data instantly",
+            blocks: [
+              {
+                type: "paragraph",
+                text: "Relations are a DB Sage construct. Define arbitrary relationships between any 2 tables that have equal columnar values, regardless of MySQL foreign keys. Select a row, open the Relations panel, and peek at its related rows in a panel of their own. Each related row may be related to other rows. Peek again from there, as deep as the relations go.",
               },
               {
                 type: "paragraph",
-                text: "Around that core sits everything a daily database job needs: a query editor that explains and grades your SQL, a visual table designer, schema comparison and one-step synchronization between databases, JSON import and multi-format export, backup and restore, and live server monitoring. Every window is a real window, so tables, peeks, and Help can sit beside each other on your screen while you work.",
+                text: "Peek layouts are automatically saved per table and every table can have its own completely customized layout. You can quickly configure peek tables to show only relevant columns using the eyeball column filter.",
+              },
+            ],
+          },
+          {
+            title: "JSON columns are first class citizens",
+            blocks: [
+              {
+                type: "paragraph",
+                text: "Use the Column Filter menu to display only the specific properties of each JSON value you care about. Open the Inspector with a JSON column selected to navigate the JSON as a tree. Search the JSON tree and matches will be highlighted and scrolled into view. Search stays pinned while you navigate other parent rows. DB Sage supports a small DSL (Domain-Specific Language) for formatting and searching JSON values.",
+              },
+              {
+                type: "paragraph",
+                text: "Around that core sits everything a daily database job needs: a query editor that explains and grades your SQL, a visual table designer, schema comparison and one-step synchronization between databases, JSON import and multi-format export, backup and restore, live server monitoring, local server configuration and more.",
               },
             ],
           },
@@ -147,7 +186,7 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               {
                 type: "paragraph",
-                text: "Connections live in the left sidebar. On a new installation, choose + beside Connections to create one. A dimmed connection with a disconnected icon is already saved but is not currently connected; click it once to connect. If you are moving from another DB Sage installation, File > Import Settings can restore exported connections and other workspace settings instead.",
+                text: "Connections live in the left sidebar. On a new installation, choose + beside Connections to create one. A dimmed connection with a disconnected icon is already saved but is not currently connected; click it once to connect. If you are moving from another DB Sage installation, File > Settings > Import Settings can restore exported connections and other workspace settings instead.",
               },
               shot(
                 "main-first_run",
@@ -1363,8 +1402,8 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               shot(
                 "main-file-import",
-                "DB Sage File menu showing Import Settings and Export Settings",
-                "Open the File menu to import a .dbsage settings file or create one for transfer to another installation.",
+                "DB Sage Settings dialog showing Import Settings and Export Settings",
+                "Open File > Settings to import a .dbsage settings file or create one for transfer to another installation.",
                 "inline-right"
               ),
               {
@@ -1390,7 +1429,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               {
                 type: "steps",
                 items: [
-                  "Choose File > Import Settings, then select the .dbsage file.",
+                  "Choose File > Settings > Import Settings, then select the .dbsage file.",
                   "Enter the passphrase if the export is encrypted. Leave it empty for an unencrypted export.",
                   "Choose Continue. DB Sage validates and reads the file without merging anything yet.",
                 ],
@@ -1418,7 +1457,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               {
                 type: "steps",
                 items: [
-                  "Open the source database and choose Export settings in its toolbar. The file contains that database's column setups, relations, table folders, saved views, and saved queries. Connection passwords and other databases are excluded. File > Export Settings remains the full-application backup tool.",
+                  "Open the source database and choose Export settings in its toolbar. The file contains that database's column setups, relations, table folders, saved views, and saved queries. Connection passwords and other databases are excluded. File > Settings > Export Settings remains the full-application backup tool.",
                   "Open the destination database, choose Import settings in its toolbar, and select the exported file. The source and destination database names do not need to match. There are no categories or database mappings to select.",
                   "Choose Import to apply the settings directly. Check compatibility is optional; it shows counts and skipped items without applying anything. Compatibility is checked during import even if you do not request the preview.",
                   "Matching settings are replaced. The destination folder list is replaced completely, including removal of folders absent from the import. Missing tables, columns, and unavailable relation peeks are skipped and listed in the completion details. Tables and columns are matched by exact name.",

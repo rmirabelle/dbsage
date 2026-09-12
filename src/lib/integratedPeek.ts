@@ -90,9 +90,11 @@ export function toggleIntegratedPeek(state: IntegratedPeekState, peek: Integrate
      so selecting a hidden one only brings it forward. */
   if (state.solo && state.activeId !== peek.id) return { ...state, activeId: peek.id };
   const peeks = state.peeks.filter((p) => p.id !== peek.id);
-  const activeId = state.activeId === peek.id
-    ? peeks[Math.min(index, peeks.length - 1)]?.id ?? ""
-    : state.activeId;
+  /* Solo means at most one tab: closing the shown one leaves none showing
+     rather than promoting a neighbour. */
+  const activeId = state.activeId !== peek.id
+    ? state.activeId
+    : state.solo ? "" : peeks[Math.min(index, peeks.length - 1)]?.id ?? "";
   return { ...state, peeks, activeId, hiddenPeeks: rememberPeeks(state.hiddenPeeks ?? [], [state.peeks[index]]) };
 }
 

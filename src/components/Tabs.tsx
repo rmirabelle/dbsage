@@ -790,7 +790,8 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
   };
   const rootDestination = (t: RowRelationTarget) => findPeekLocation([rootPeekLocation], tab.profileId, tab.database, t, t.relation.kind, tab.table);
   const showPeekPanel = () => {
-    if (tab.peekAll?.closed) setRowsPeekAll(tab.id, { ...tab.peekAll, closed: false });
+    /* Reopening always reveals the master Relations list, even if it was collapsed. */
+    if (tab.peekAll) setRowsPeekAll(tab.id, { ...tab.peekAll, closed: false, relationsCollapsed: false });
     if (!tab.peekAll) setRowsPeekAll(tab.id, {
       height: (rowsPanelRef.current?.offsetHeight ?? 400) / 2, activeId: "", peeks: [],
     });
@@ -832,6 +833,23 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
         <button
+          data-el="relations-toggle-btn"
+          onClick={() => relationsOpen && tab.peekAll ? setRelationsOpen(false) : showPeekPanel()}
+          aria-pressed={relationsOpen && !!tab.peekAll}
+          className={clsx(
+            "inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors",
+            relationsOpen && tab.peekAll
+              ? "bg-violet-600 text-white hover:bg-violet-500"
+              : "bg-zinc-800 text-violet-300 hover:bg-zinc-700 hover:text-violet-200"
+          )}
+          {...helpHandlers(
+            "Show or hide the Relations list and its peek tabs; tab settings are retained"
+          )}
+        >
+          <ShareNetwork size={17} className={clsx(!(relationsOpen && tab.peekAll) && "-scale-x-100")} />
+          Relations
+        </button>
+        <button
           data-el="edit-table-btn"
           onClick={() =>
             openTableEditor(
@@ -845,7 +863,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
               )
             )
           }
-          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-orange-400 text-orange-950 hover:bg-orange-300 transition-colors"
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
           {...helpHandlers("Edit this table's structure")}
         >
           <PencilSimple size={17} />
@@ -855,7 +873,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         <button
           data-el="add-row-btn"
           onClick={() => setInsertOpen(true)}
-          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors"
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
           {...helpHandlers("Insert a new row")}
         >
           <span className="relative -top-px text-[16px] leading-none">+</span> Row
@@ -864,12 +882,26 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         <TableViewPresetMenu
           presets={tab.presets}
           activeName={tab.activePreset}
+          autoOpenKey={tab.id}
           dirty={isViewDirty(tab, relationsOpen)}
           onApply={(name) => applyTablePreset(tab.id, name)}
           onSave={(name) => saveTablePreset(tab.id, name)}
           onDelete={(name) => deleteTablePreset(tab.id, name)}
           onClear={() => clearTableView(tab.id)}
         />
+
+        {(tab.filters.length > 0 || tab.hiddenColumns.length > 0) && (
+          <button
+            data-el="clear-filters-btn"
+            onClick={() => clearRowsFilters(tab.id)}
+            disabled={tab.loading}
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-amber-400 text-black hover:bg-amber-300 transition-colors disabled:opacity-40"
+            {...helpHandlers("Remove every filter and show all columns")}
+          >
+            <Funnel size={15} weight="fill" />
+            Clear Filters
+          </button>
+        )}
 
         <button
           data-el="refresh-btn"
@@ -886,19 +918,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           )}
         </button>
 
-        {(tab.filters.length > 0 || tab.hiddenColumns.length > 0) && (
-          <button
-            data-el="clear-filters-btn"
-            onClick={() => clearRowsFilters(tab.id)}
-            disabled={tab.loading}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-amber-400 text-black hover:bg-amber-300 transition-colors disabled:opacity-40"
-            {...helpHandlers("Remove every filter and show all columns")}
-          >
-            <Funnel size={15} weight="fill" />
-            Clear Filters
-          </button>
-        )}
-
         <button
           data-el="import-json-btn"
           onClick={() => setImportOpen(true)}
@@ -909,23 +928,6 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
           Import
         </button>
 
-        <button
-          data-el="relations-toggle-btn"
-          onClick={() => relationsOpen && tab.peekAll ? setRelationsOpen(false) : showPeekPanel()}
-          aria-pressed={relationsOpen && !!tab.peekAll}
-          className={clsx(
-            "inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors",
-            relationsOpen && tab.peekAll
-              ? "bg-violet-600 text-white hover:bg-violet-500"
-              : "bg-zinc-800 text-violet-300 hover:bg-zinc-700 hover:text-violet-200"
-          )}
-          {...helpHandlers(
-            "Show or hide the Relations list and its peek tabs; tab settings are retained"
-          )}
-        >
-          <ShareNetwork size={17} />
-          Relations
-        </button>
 
         <button
           data-el="expanded-toggle-btn"
@@ -980,6 +982,11 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
             table: tab.table,
           }}
           resultCopy
+          morePagesNotice={
+            !atLastPage && !(isExactTotal && totalPages != null && tab.page >= totalPages)
+              ? { page: tab.page, totalPages: isExactTotal ? totalPages : null, onNext: () => setTabPage(tab.id, tab.page + 1) }
+              : undefined
+          }
           peekableColumns={peekableColumns}
           activeCell={activeCell}
           clearActiveCellOnRowSelect
@@ -1034,7 +1041,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         <div className="flex-1" />
       )}
 
-      <div data-el="rows-pager" className="h-8 pl-1 pr-3 border-t border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400 bg-zinc-950">
+      <div data-el="rows-pager" className="h-8 shrink-0 pl-1 pr-3 border-t border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400 bg-zinc-950">
         <button
           data-el="prev-page-btn"
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-40 disabled:hover:bg-zinc-800"

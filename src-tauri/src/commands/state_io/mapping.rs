@@ -666,7 +666,7 @@ mod tests {
         let bundle = serde_json::from_value(json!({
             "app": APP_TAG, "format": BUNDLE_FORMAT, "version": 1, "exportedAt": "2026-09-08T00:00:00Z",
             "relations": {"localhost": {"source": [{"id":"r", "name":"Customer", "fromTable":"orders", "fromColumn":"customer_id",
-                "toTable":"customers", "toColumn":"id", "kind":"has_one", "createdAt":"2026-09-08T00:00:00Z", "updatedAt":"2026-09-08T00:00:00Z"}]}},
+                "toTable":"customers", "toColumn":"id", "kind":"has_one"}]}},
             "folders": {"localhost": {"source": [{"id":"f", "name":"Sales", "tables":["orders", "missing"], "created_at":"2026-09-08T00:00:00Z", "updated_at":"2026-09-08T00:00:00Z"}]}},
             "columnSetups": {
                 "localhost::source::orders": {"hiddenColumns":["customer_id","removed"], "columnWidths":{"customer_id":120,"removed":50},

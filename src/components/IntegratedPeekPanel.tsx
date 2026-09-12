@@ -8,6 +8,7 @@ import { followIntegratedPeeks, resizeIntegratedPeek, refreshPeekRelations, togg
 import { useAnchoredPosition } from "../lib/useAnchoredPosition";
 import { oneRowGridHeight } from "../lib/gridMeasure";
 import { useStore } from "../state/store";
+import { PANEL_BOUNDS } from "../state/ui";
 import type { IntegratedPeekState, PeekViewState, RowRecord } from "../types";
 import { PeekTab } from "./PeekTab";
 import { PeekPanel } from "./PeekPanel";
@@ -17,11 +18,16 @@ import { PeekReload } from "./PeekReload";
 /** Inspector chrome (28 + 36), one 20px text line, 16px padding, and border. */
 export const SINGLE_ROW_INSPECTOR_HEIGHT = 101;
 
-export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel, onClose, onChange, active = true, parentLocation, dock = "bottom", selectionBlocked = false, parentTitle, reload = 0 }: {
+export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel, onClose, onChange, active = true, parentLocation, dock = "bottom", selectionBlocked = false, parentTitle, reload = 0, onInspectorResize }: {
   selectionBlocked?: boolean;
   /** Refresh clicks in this panel's Relations panel; reloads its peeks and
    * every peek nested under them (see PeekReload). */
   reload?: number;
+  /** Bottom dock only: the separator above this panel moves the boundary
+   * with the peek's Inspector just above it — the Inspector shrinks by what
+   * this panel grows and vice versa, down to the Inspector's minimum, after
+   * which the grid gives up rows. Called with the Inspector's new height. */
+  onInspectorResize?: (px: number) => void;
   /** The breadcrumb from the root table down to the hosting peek (`table ›
    * relation › …`) when this panel is nested under a peek; its tabs are then
    * shorter and their help text shows the full trail. */
@@ -55,7 +61,8 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
   }, [refreshed, state, relations, onChange]);
   const followed = useMemo(() => followIntegratedPeeks(refreshed.peeks, row), [refreshed.peeks, row]);
   const peeks = selectionBlocked ? [] : followed.filter((p) => !findPeekLocation(locations, p.profileId, p.database, p.target, p.kind ?? "has_many", p.sourceTable));
-  const activeId = peeks.some((p) => p.id === state.activeId) ? state.activeId : peeks[0]?.id ?? "";
+  /* Solo mode may legitimately show no tab; otherwise fall back to the first. */
+  const activeId = peeks.some((p) => p.id === state.activeId) ? state.activeId : state.solo ? "" : peeks[0]?.id ?? "";
   const [visited, setVisited] = useState(() => new Set([activeId]));
   useEffect(() => {
     setVisited((prev) => prev.has(activeId) ? prev : new Set([...prev, activeId]));
@@ -71,11 +78,17 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
     const rows = rowsRef.current;
     if (!panel || !rows) return;
     const measure = () => {
-      const total = rightDock ? panel.parentElement?.clientWidth ?? 0 : panel.offsetHeight + rows.offsetHeight;
+      /* A peek's Inspector sits beside this panel (outside `rows`); its
+         height is up for grabs too, down to the Inspector's own minimum, so
+         dragging this panel taller shrinks the Inspector once the grid is
+         at its one-row minimum. */
+      const inspector = siblingInspector(panel, rows);
+      const total = rightDock ? panel.parentElement?.clientWidth ?? 0 : panel.offsetHeight + rows.offsetHeight + (inspector?.offsetHeight ?? 0);
       if (total === 0) return;
       /* Bottom dock keeps the parent grid tall enough for its header, one
          row, and the horizontal scrollbar; right dock keeps 240px of width. */
-      setMaxHeight(Math.max(0, total - Math.min(rightDock ? 240 : oneRowGridHeight(rows), total / 3)));
+      const reserve = rightDock ? 240 : oneRowGridHeight(rows) + (inspector ? PANEL_BOUNDS.MIN : 0);
+      setMaxHeight(Math.max(0, total - Math.min(reserve, total / 3)));
     };
     const observer = new ResizeObserver(measure);
     observer.observe(panel);
@@ -85,6 +98,11 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
     return () => observer.disconnect();
   }, [rowsRef, rightDock]);
   useEffect(() => () => dragCleanup.current?.(), []);
+  /** The peek's Inspector beside this panel (never the parent grid's own). */
+  const siblingInspector = (panel: HTMLElement, rows: HTMLElement) => {
+    const el = panel.parentElement?.querySelector<HTMLElement>('[data-el="expanded-panel"]');
+    return el && !rows.contains(el) ? el : null;
+  };
 
   const change = (patch: Partial<IntegratedPeekState>) => {
     onChange((current) => ({ ...current, ...patch }));
@@ -154,11 +172,21 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
           const startHeight = rightDock ? panel.offsetWidth : panel.offsetHeight;
           const scale = (rightDock ? panel.getBoundingClientRect().width : panel.getBoundingClientRect().height) / (startHeight || 1);
           const startY = rightDock ? e.clientX : e.clientY;
+          const inspector = !rightDock && onInspectorResize && rowsRef.current ? siblingInspector(panel, rowsRef.current) : null;
+          const inspectorStart = inspector?.offsetHeight ?? 0;
           const cursor = document.body.style.cursor;
           const selection = document.body.style.userSelect;
           document.body.style.cursor = rightDock ? "ew-resize" : "ns-resize";
           document.body.style.userSelect = "none";
-          const move = (event: PointerEvent) => resize(resizeIntegratedPeek(startHeight, (rightDock ? event.clientX : event.clientY) - startY, scale, maxHeight, rightDock ? 320 : 140));
+          const move = (event: PointerEvent) => {
+            const delta = (rightDock ? event.clientX : event.clientY) - startY;
+            const next = resizeIntegratedPeek(startHeight, delta, scale, maxHeight, rightDock ? 320 : 140);
+            /* The Inspector gives up exactly what this panel gains (and takes
+               back what it loses), so the separator moves between the two;
+               past the Inspector's minimum the grid gives up rows instead. */
+            if (inspector) onInspectorResize?.(Math.round(Math.max(PANEL_BOUNDS.MIN, inspectorStart - (next - startHeight))));
+            resize(next);
+          };
           const cleanup = () => {
             document.body.style.cursor = cursor;
             document.body.style.userSelect = selection;
@@ -183,11 +211,11 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
       {relationsPanel && (state.relationsCollapsed ? (
         <button type="button" data-el="master-relations-expand"
           aria-label="Expand master Relations panel" aria-expanded={false}
-          {...helpHandlers("Expand the master Relations panel")}
+          {...helpHandlers(`Show the ${table} Relations panel`)}
           onClick={() => change({ relationsCollapsed: false })}
-          className="flex w-7 shrink-0 flex-col items-center gap-2 border-r border-zinc-700 py-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-          <CaretDoubleRight size={15} />
-          <span className="text-[11px] [writing-mode:vertical-rl]">Relations</span>
+          className="flex w-7 shrink-0 flex-col items-center gap-1.5 border-r border-zinc-700 py-1.5 text-violet-300 hover:bg-zinc-800 hover:text-violet-200">
+          <ShareNetwork size={16} className="-scale-x-100" />
+          <CaretDoubleRight size={13} className="text-zinc-400" />
         </button>
       ) : relationsPanel)}
       <div className="flex flex-col flex-1 min-w-0 min-h-0">
@@ -210,7 +238,7 @@ export function IntegratedPeekPanel({ table, state, row, rowsRef, relationsPanel
           </PeekNavigation.Provider>
         </div>)}
         </PeekReload.Provider>
-        {peeks.length === 0 && <div role="status" className="p-4 text-sm text-zinc-500">{selectionBlocked ? "Select a single row or cell to view relations." : state.peeks.length ? "Related records are already displayed above." : "Click a relation name to open a peek tab."}</div>}
+        {(peeks.length === 0 || !activeId) && <div role="status" className="p-4 text-sm text-zinc-500">{selectionBlocked ? "Select a single row or cell to view relations." : peeks.length === 0 && state.peeks.length ? "Related records are already displayed above." : "Click a relation name to open a peek tab."}</div>}
       </div>
       </div>
       </div>

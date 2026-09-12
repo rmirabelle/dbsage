@@ -16,6 +16,9 @@ import { BackupProgress } from "./components/BackupProgress";
 import { RestoreWizard } from "./components/RestoreWizard";
 import { CopyProgress } from "./components/CopyProgress";
 import { CopyTableMenu } from "./components/CopyTableMenu";
+import { ImportDatabaseFileDialog } from "./components/ImportDatabaseFileDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { notifyError } from "./state/notify";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import type { Tab } from "./types";
@@ -38,7 +41,12 @@ export default function App() {
   const closeRestore = useStore((s) => s.closeRestore);
 
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [transferMode, setTransferMode] = useState<TransferMode | null>(null);
+  /** File pre-selected in the Import Settings dialog (opened from a .dbsage file). */
+  const [importPath, setImportPath] = useState<string | null>(null);
+  /** A single-database settings file opened from Explorer. */
+  const [dbImportPath, setDbImportPath] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("");
   const [startupUpdate, setStartupUpdate] = useState<UpdateInfo | null>(null);
 
@@ -74,6 +82,19 @@ export default function App() {
      TabDndProvider so torn-off tab windows get the same context. */
 
   /**
+   * Route an opened .dbsage file to the right import dialog: a single-database
+   * export gets the multi-database picker, a full export (or an encrypted file,
+   * which needs a passphrase) gets Import Settings with the file pre-selected.
+   */
+  const openSettingsFile = async (path: string) => {
+    let kind: "app" | "database" = "app";
+    try { kind = await ipc.stateFileKind(path); }
+    catch (e) { notifyError(`Could not open ${path.split(/[\\/]/).pop()}: ${String(e)}`); return; }
+    if (kind === "database") { setDbImportPath(path); }
+    else { setImportPath(path); setTransferMode("import"); }
+  };
+
+  /**
    * Boot sequence. The standalone splash window (declared in tauri.conf.json) is
    * already on screen while this runs, and the main window stays hidden, so the
    * heavy lifting — loading the saved connection profiles — happens behind it.
@@ -99,10 +120,19 @@ export default function App() {
       await getCurrentWindow().setFocus();
       const splash = await Window.getByLabel("splash");
       await splash?.close();
+      const launch = await ipc.takeLaunchFile().catch(() => null);
+      if (launch && !cancelled) await openSettingsFile(launch);
     })();
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  /* A .dbsage file double-clicked while the app is already running arrives
+     from the single-instance plugin. */
+  useEffect(() => {
+    const un = listen<string>("dbsage://open-file", (e) => void openSettingsFile(e.payload));
+    return () => { un.then((f) => f()); };
   }, []);
 
   /* Re-docking: a torn-off tab window drags over the tab bar (hint) and drops
@@ -140,8 +170,7 @@ export default function App() {
       <TitleBar
         onHelp={() => ipc.openHelpWindow().catch(() => {})}
         onAbout={() => setAboutOpen(true)}
-        onExport={() => setTransferMode("export")}
-        onImport={() => setTransferMode("import")}
+        onSettings={() => setSettingsOpen(true)}
         updateAvailable={startupUpdate !== null}
       />
       <TabDndProvider>
@@ -199,11 +228,23 @@ export default function App() {
         initialUpdateInfo={startupUpdate}
         onClose={() => setAboutOpen(false)}
       />
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => setSettingsOpen(false)}
+          childOpen={transferMode !== null}
+          onImport={() => setTransferMode("import")}
+          onExport={() => setTransferMode("export")}
+        />
+      )}
       {transferMode && (
         <StateTransferDialog
           mode={transferMode}
-          onClose={() => setTransferMode(null)}
+          initialPath={transferMode === "import" ? importPath ?? undefined : undefined}
+          onClose={() => { setTransferMode(null); setImportPath(null); }}
         />
+      )}
+      {dbImportPath && (
+        <ImportDatabaseFileDialog path={dbImportPath} onClose={() => setDbImportPath(null)} />
       )}
       <Toaster />
       <SqlExportProgress />

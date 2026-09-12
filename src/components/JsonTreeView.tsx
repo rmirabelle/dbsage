@@ -1,7 +1,6 @@
-import { helpHandlers } from "../state/help";
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, memo, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { CaretRight, CaretDown, ArrowsOutSimple, ArrowsInSimple, PencilSimple, BracketsCurly } from "@phosphor-icons/react";
+import { CaretRight, CaretDown, BracketsCurly } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { buildJsonTreeRows, indexJsonTreeMatches, visibleJsonTreeRows } from "../lib/jsonTreeModel";
 
@@ -9,12 +8,14 @@ interface Props {
   data: unknown;
   search: string;
   activeIndex: number;
-  /** Switch the host to the raw JSON editor. Absent = read-only tree. */
-  onEdit?: () => void;
   /** Start fully expanded (the host remembered Expand all). */
   expandAll?: boolean;
-  /** Reports Expand all / Collapse all clicks so the host can remember them. */
-  onExpandAllChange?: (expandAll: boolean) => void;
+}
+
+/** Expand all / Collapse all live in the host's toolbar. */
+export interface JsonTreeViewHandle {
+  expandAll: () => void;
+  collapseAll: () => void;
 }
 
 function highlight(text: string, offsets: number[], length: number, start: number, active: number): ReactNode {
@@ -31,7 +32,7 @@ function highlight(text: string, offsets: number[], length: number, start: numbe
 }
 
 /** Searching expands the logical tree, but mounts only the viewport's rows. */
-export const JsonTreeView = memo(function JsonTreeView({ data, search, activeIndex, onEdit, expandAll = false, onExpandAllChange }: Props) {
+export const JsonTreeView = memo(forwardRef<JsonTreeViewHandle, Props>(function JsonTreeView({ data, search, activeIndex, expandAll = false }, ref) {
   const rows = useMemo(() => buildJsonTreeRows(data), [data]);
   const [collapsed, setCollapsed] = useState(() => expandAll
     ? new Set<string>()
@@ -40,6 +41,10 @@ export const JsonTreeView = memo(function JsonTreeView({ data, search, activeInd
   const index = useMemo(() => indexJsonTreeMatches(visible, search), [visible, search]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const getItemKey = useCallback((i: number) => visible[i].path, [visible]);
+  useImperativeHandle(ref, () => ({
+    expandAll: () => setCollapsed(new Set()),
+    collapseAll: () => setCollapsed(new Set(rows.filter((row) => row.container).map((row) => row.path))),
+  }), [rows]);
   const virtualizer = useVirtualizer({
     count: visible.length,
     getScrollElement: () => scrollRef.current,
@@ -56,11 +61,6 @@ export const JsonTreeView = memo(function JsonTreeView({ data, search, activeInd
   }, [activeRow, activeIndex, search, data, virtualizer]);
 
   return <div className="h-full flex flex-col">
-    <div className="shrink-0 h-7 pl-1 pr-2 bg-[#262a34] flex items-center gap-1 border-b border-zinc-800/40 text-[11px] text-zinc-400">
-      {onEdit && <button data-el="json-tree-edit" onClick={onEdit} {...helpHandlers("Edit JSON")} className="h-5 w-5 inline-flex items-center justify-center rounded text-orange-400 hover:bg-zinc-800 hover:text-orange-300"><PencilSimple size={13} /></button>}
-      <button data-el="json-tree-expand-all" onClick={() => { setCollapsed(new Set()); onExpandAllChange?.(true); }} {...helpHandlers("Expand all")} className="h-5 inline-flex items-center gap-1 px-1.5 rounded hover:bg-zinc-800 hover:text-zinc-100"><ArrowsOutSimple size={13} />Expand</button>
-      <button data-el="json-tree-collapse-all" onClick={() => { setCollapsed(new Set(rows.filter((row) => row.container).map((row) => row.path))); onExpandAllChange?.(false); }} {...helpHandlers("Collapse all")} className="h-5 inline-flex items-center gap-1 px-1.5 rounded hover:bg-zinc-800 hover:text-zinc-100"><ArrowsInSimple size={13} />Collapse</button>
-    </div>
     <div ref={scrollRef} data-el="json-tree" className="relative flex-1 min-h-0 overflow-auto px-3 text-[12px] font-mono leading-5">
       <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
         {virtualizer.getVirtualItems().map((item) => {
@@ -85,4 +85,4 @@ export const JsonTreeView = memo(function JsonTreeView({ data, search, activeInd
       </div>
     </div>
   </div>;
-});
+}));

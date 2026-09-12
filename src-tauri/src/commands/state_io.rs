@@ -195,6 +195,31 @@ pub async fn export_state(
 
 /// Read + validate a state file into a bundle (shared by preview and import).
 /// Handles both encrypted files and plaintext (passphrase-less) exports.
+/// Pull (and clear) the `.dbsage` path the app was launched with, if any.
+#[tauri::command]
+pub fn take_launch_file(state: tauri::State<'_, crate::state::AppState>) -> Option<String> {
+    state.launch_file.lock().ok()?.take()
+}
+
+/**
+ * Which import flow a `.dbsage` file belongs to, without needing a passphrase:
+ * "database" for a single-database export from the database toolbar, "app"
+ * for a full settings export. Encrypted files are always full exports, since
+ * database exports are written without a passphrase.
+ */
+#[tauri::command]
+pub fn state_file_kind(path: String) -> AppResult<String> {
+    let bytes = std::fs::read(&path)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| AppError::Other("not a DB Sage state file".to_string()))?;
+    if value.get("app").and_then(serde_json::Value::as_str) != Some(APP_TAG) {
+        return Err(AppError::Other("not a DB Sage state file".to_string()));
+    }
+    let scoped = value.get("format").and_then(serde_json::Value::as_str) == Some(BUNDLE_FORMAT)
+        && value.get("databaseScope").map_or(false, |v| !v.is_null());
+    Ok(if scoped { "database" } else { "app" }.to_string())
+}
+
 fn decode_bundle(path: &str, passphrase: &str) -> AppResult<StateBundle> {
     let bytes = std::fs::read(path)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)

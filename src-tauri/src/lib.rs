@@ -13,7 +13,7 @@ use commands::{
 use state::AppState;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 /// Stable id for the on-demand tray icon, so it can be created and removed.
@@ -24,6 +24,14 @@ const TRAY_ID: &str = "main-tray";
 /// tray presence during normal use (minimize goes to the taskbar, close quits),
 /// so the app never shows in both the taskbar and the tray at once. Left-click or
 /// "Show" restores all windows (and removes the tray); "Quit" exits for real.
+/// The first `.dbsage` path among command-line arguments (Explorer passes the
+/// double-clicked file as the only argument).
+fn launch_file_arg<I: IntoIterator<Item = String>>(args: I) -> Option<String> {
+    args.into_iter()
+        .skip(1)
+        .find(|a| a.to_ascii_lowercase().ends_with(".dbsage") && std::path::Path::new(a).is_file())
+}
+
 fn ensure_tray(app: &AppHandle) -> tauri::Result<()> {
     if app.tray_by_id(TRAY_ID).is_some() {
         return Ok(());
@@ -131,6 +139,19 @@ pub fn run() {
        connection is opened. */
     let _ = rustls::crypto::ring::default_provider().install_default();
     tauri::Builder::default()
+        /* Must be the first plugin. A second launch (e.g. double-clicking another
+         * .dbsage file while the app runs) hands its arguments to this instance,
+         * which forwards the file to the main window and focuses it. */
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.unminimize();
+                let _ = main.show();
+                let _ = main.set_focus();
+                if let Some(path) = launch_file_arg(args) {
+                    let _ = main.emit("dbsage://open-file", path);
+                }
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -151,6 +172,12 @@ pub fn run() {
             /* Re-key per-connection stores from profile id to host (idempotent).
              * Best-effort: a migration hiccup must never block app launch. */
             let _ = store::migrate::host_rekey(app.handle());
+
+            if let Some(path) = launch_file_arg(std::env::args()) {
+                if let Ok(mut slot) = app.state::<AppState>().launch_file.lock() {
+                    *slot = Some(path);
+                }
+            }
 
             /* No tray icon at startup — it's created on demand only when the user
              * picks "Minimize to Tray" (see hide_all_to_tray) and removed again on
@@ -290,6 +317,8 @@ pub fn run() {
             state_io::mapping::state_import_sources,
             state_io::mapping::preview_state_mapping,
             state_io::mapping::import_database_settings,
+            state_io::take_launch_file,
+            state_io::state_file_kind,
             export::export_query,
             updater::check_for_update,
             updater::download_and_run_installer,

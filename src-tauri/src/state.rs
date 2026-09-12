@@ -46,4 +46,7 @@ pub struct AppState {
     /// Main window's tab-strip rectangle in screen CSS pixels, published by the
     /// main window so a dragging tab-window can hit-test it for re-docking.
     pub tabstrip_rect: Mutex<Option<serde_json::Value>>,
+    /// A `.dbsage` file path passed on the command line (Explorer double-click).
+    /// The main window pulls it once on boot via `take_launch_file`.
+    pub launch_file: Mutex<Option<String>>,
 }

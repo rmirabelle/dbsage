@@ -56,11 +56,13 @@ const INSPECTOR_MIN_PANEL_H = 220;
 
 
 /** Translucent cover with a spinner over content whose rows are being replaced. */
-function LoadingVeil({ label }: { label?: string }) {
+const LOADING_LABEL = "Loading related rows…";
+
+function LoadingVeil({ label, spinner = true }: { label?: string; spinner?: boolean }) {
   return (
     <div role="status" aria-label={label ?? "Loading"} data-el="peek-loading"
       className="dbs-loading-veil absolute inset-0 z-20 flex items-center justify-center text-xs text-zinc-300 gap-2">
-      <CircleNotch size={16} className="animate-spin" />{label}
+      {spinner && <CircleNotch size={16} className="animate-spin" />}{label}
     </div>
   );
 }
@@ -315,7 +317,8 @@ export function PeekPanel({
   const awaitingSelect = !!data && data.rows.length > 0 && !activeCell && selectedRows.length === 0;
   /** Veil the previous row's related rows (and their Inspector) until the new
    * ones arrive, so stale data can't be read or clicked on a slow connection. */
-  const veiled = ancestorBusy || busy;
+  const veiled = !!ancestorBusy || busy;
+  const veilLabel = ancestorBusy ?? LOADING_LABEL;
 
   const currentLocation: PeekLocation = {
     profileId, database, table: target.table, target, filters: extraFilters, row: relationsRow,
@@ -347,6 +350,9 @@ export function PeekPanel({
     setExpandedState(open);
     onViewChange?.({ inspectorOpen: open });
   };
+  /** Height pushed onto the Inspector from outside: mirrors its own drags,
+   * and shrinks it when the child peek panel's separator is dragged up. */
+  const [inspectorRequest, setInspectorRequest] = useState<number | undefined>(undefined);
   const [tooShortForInspector, setTooShortForInspector] = useState(
     () => false
   );
@@ -504,18 +510,96 @@ export function PeekPanel({
 
   return (
     <div ref={rootRef} data-el="peek-panel"
-      className="h-full w-full flex overflow-hidden bg-[var(--peek-tint,#2d2a3b)]">
-      {/* The Relations panel (or its collapsed strip) sits left of BOTH the
-          title bar and the grid, so the title never covers it. */}
+      className="h-full w-full flex flex-col overflow-hidden bg-[var(--peek-tint,#2d2a3b)]">
+      <div
+        data-el="peek-titlebar"
+        className={clsx(
+          "dbs-toolbar shrink-0 h-10 pl-2 pr-2 flex items-center gap-2 select-none bg-[var(--peek-tint,#2d2a3b)] bg-none"
+        )}
+      >
+        <Table size={16} style={{ color: depthColor }} className="shrink-0 pointer-events-none" />
+        <span className="min-w-0 shrink text-[13px] text-zinc-200 truncate pointer-events-none">
+          <span style={{ color: depthColor }} className="mr-3">{target.table}</span>
+          {unmatched && <span className="italic text-zinc-500">no row selected</span>}
+        </span>
+
+        <button
+          data-el="peek-relations-btn"
+          onClick={() => setRelationsOpen(!relationsOpen)}
+          disabled={!data}
+          className={clsx(
+            "shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40",
+            relationsOpen
+              ? "bg-violet-600 text-white hover:bg-violet-500"
+              : "bg-violet-500/20 text-violet-300 hover:bg-violet-500/30 hover:text-violet-200"
+          )}
+          {...helpHandlers("Show or hide the Relations list; open peek tabs remain visible")}
+          aria-label="Toggle the Relations list"
+          aria-pressed={relationsOpen}
+        >
+          <ShareNetwork size={15} className={clsx(!relationsOpen && "-scale-x-100")} />
+          Relations
+        </button>
+
+        <span className="flex-1 pointer-events-none" />
+
+        <span className="text-[11px] text-zinc-500 shrink-0 pointer-events-none mr-3">
+          {total == null
+            ? `${shown} shown`
+            : capped
+            ? `${shown} of ${total.toLocaleString()} (first ${PEEK_LIMIT})`
+            : `${total.toLocaleString()} row${total === 1 ? "" : "s"}`}
+        </span>
+
+        <button
+          type="button"
+          data-el="peek-open-table-btn"
+          onClick={openAsTable}
+          className="shrink-0 inline-flex items-center justify-center px-1.5 py-1 rounded text-zinc-300 bg-zinc-800 hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
+          {...helpHandlers(`Open ${target.table} as a table with the same filter and selection`)}
+          aria-label={`Open ${target.table} as a table`}
+        >
+          <ArrowSquareOut size={15} />
+        </button>
+
+
+        <button
+          data-el="peek-inspector-btn"
+          /**
+           * Not a real `disabled` attribute: disabled buttons swallow mouse
+           * events, so the help strip could never explain why it is disabled.
+           */
+          onClick={() => { if (data && !tooShortForInspector) setExpanded(!expanded); }}
+          aria-disabled={!data || tooShortForInspector}
+          className={clsx(
+            "shrink-0 inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium transition-colors",
+            (!data || tooShortForInspector) && "opacity-40 cursor-default",
+            showInspector
+              ? "bg-zinc-700 text-emerald-300"
+              : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+          )}
+          {...helpHandlers(tooShortForInspector
+              ? "The panel is too short for the Inspector"
+              : "Toggle the Inspector panel")}
+          aria-label="Toggle the Inspector panel"
+        >
+          <Binoculars size={15} />
+          Inspector
+        </button>
+
+      </div>
+      {/* The Relations panel (or its collapsed strip) sits left of the grid,
+          under the title bar, so the title spans both. */}
+      <div className="flex-1 min-h-0 min-w-0 flex">
       {data && (relationsVisible ? (
         <RelationsPanel
-          className="pt-[6px]"
           solo={relationsSolo}
           onSoloChange={(solo) => {
             setRelationsSolo(solo);
             if (childPeekRef.current) changeChildren(setIntegratedPeekSolo(childPeekRef.current, solo));
           }}
           hideFilterButtons
+          neutralBorder
           profileId={profileId}
           database={database}
           table={target.table}
@@ -558,75 +642,6 @@ export function PeekPanel({
           className="w-[20px] shrink-0 self-stretch bg-[var(--peek-tint,#2d2a3b)] focus-visible:outline focus-visible:outline-violet-400" />
       ))}
       <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-      <div
-        data-el="peek-titlebar"
-        className="dbs-toolbar shrink-0 h-10 pl-3 pr-2 flex items-center gap-2 select-none bg-[var(--peek-tint,#2d2a3b)] bg-none"
-      >
-        <Table size={16} style={{ color: depthColor }} className="shrink-0 pointer-events-none" />
-        <span className="min-w-0 shrink text-[13px] text-zinc-200 truncate pointer-events-none">
-          <span style={{ color: depthColor }} className="mr-3">{target.table}</span>
-          {unmatched && <span className="italic text-zinc-500">no row selected</span>}
-        </span>
-
-        <span className="flex-1 pointer-events-none" />
-
-        <span className="text-[11px] text-zinc-500 shrink-0 pointer-events-none mr-3">
-          {total == null
-            ? `${shown} shown`
-            : capped
-            ? `${shown} of ${total.toLocaleString()} (first ${PEEK_LIMIT})`
-            : `${total.toLocaleString()} row${total === 1 ? "" : "s"}`}
-        </span>
-
-        <button
-          type="button"
-          data-el="peek-open-table-btn"
-          onClick={openAsTable}
-          className="shrink-0 inline-flex items-center justify-center px-1.5 py-1 rounded text-zinc-300 bg-zinc-800 hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
-          {...helpHandlers(`Open ${target.table} as a table with the same filter and selection`)}
-          aria-label={`Open ${target.table} as a table`}
-        >
-          <ArrowSquareOut size={15} />
-        </button>
-
-        <button
-          data-el="peek-relations-btn"
-          onClick={() => setRelationsOpen(!relationsOpen)}
-          disabled={!data}
-          className={clsx(
-            "shrink-0 inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-40",
-            relationsOpen
-              ? "bg-violet-600 text-white hover:bg-violet-500"
-              : "bg-zinc-800 text-violet-300 hover:bg-zinc-700 hover:text-violet-200"
-          )}
-          {...helpHandlers("Show or collapse the Relations list; open peek tabs remain visible")}
-          aria-label="Toggle the Relations list"
-          aria-pressed={relationsOpen}
-        >
-          <ShareNetwork size={15} />
-          Relations
-        </button>
-
-        <button
-          data-el="peek-inspector-btn"
-          onClick={() => setExpanded(!expanded)}
-          disabled={!data || tooShortForInspector}
-          className={clsx(
-            "shrink-0 inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-40",
-            showInspector
-              ? "bg-zinc-700 text-emerald-300"
-              : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
-          )}
-          {...helpHandlers(tooShortForInspector
-              ? "The panel is too short for the Inspector"
-              : "Toggle the Inspector panel")}
-          aria-label="Toggle the Inspector panel"
-        >
-          <Binoculars size={15} />
-          Inspector
-        </button>
-
-      </div>
 
       {error && (
         <div className="shrink-0 mx-3 mt-3 rounded bg-rose-950/40 border border-rose-900/60 px-3 py-2 text-[11px] text-rose-300 break-words">
@@ -644,7 +659,7 @@ export function PeekPanel({
         >
           <div className="relative flex-1 min-w-0 min-h-0 flex flex-col">
             <div ref={peekRowsRef} className="relative flex-1 min-h-0 flex flex-col">
-            {veiled && <LoadingVeil label="Loading related rows…" />}
+            {veiled && <LoadingVeil label={veilLabel} spinner={veilLabel === LOADING_LABEL} />}
             <DataGrid
               key={matchKey}
               readOnly={loading || loadedMatch !== matchKey || unmatched}
@@ -700,7 +715,7 @@ export function PeekPanel({
               onCascadePreview={hasPrimaryKey ? previewCascade : undefined}
             />
             </div>
-            {(showInspector || childPanelVisible) && <div className={clsx("shrink-0 flex flex-col min-h-0 mt-[10px]", relationsStrip && "border-l border-zinc-700")}>
+            {(showInspector || childPanelVisible) && <div className={clsx("shrink-0 flex flex-col min-h-0", relationsStrip && "border-l border-zinc-700")}>
             {showInspector && (
               <div className="relative shrink-0 flex flex-col min-h-0">
               {(veiled || awaitingSelect) && <LoadingVeil />}
@@ -713,22 +728,24 @@ export function PeekPanel({
                 rowOrdinal={activeRowOrdinal}
                 onClose={() => setExpanded(false)}
                 initialHeight={initialView?.inspectorHeight}
+                requestedHeight={inspectorRequest}
                 initialSearch={initialView?.inspectorSearch}
                 onSearchChange={(inspectorSearch) => onViewChange?.({ inspectorSearch })}
                 initialExpandAll={initialView?.inspectorExpandAll}
                 onExpandAllChange={(inspectorExpandAll) => onViewChange?.({ inspectorExpandAll })}
-                heightLimit={Math.max(80, hostHeight - 40 - 10 - oneRowGridHeight(peekRowsRef.current)
+                heightLimit={Math.max(80, hostHeight - 40 - oneRowGridHeight(peekRowsRef.current)
                   - (childPanelVisible ? childPeekAll?.height ?? 0 : 0))}
-                onHeightChange={(px) => onViewChange?.({ inspectorHeight: px })}
+                onHeightChange={(px) => { setInspectorRequest(px); onViewChange?.({ inspectorHeight: px }); }}
               />
               </div>
             )}
-            <PeekBusy.Provider value={ancestorBusy || busy || awaitingSelect}>
+            <PeekBusy.Provider value={ancestorBusy ?? (busy ? LOADING_LABEL : awaitingSelect ? `Select a row or cell in ${target.table}` : null)}>
             {childPanelVisible && childPeekAll && <IntegratedPeekPanel table={target.table} state={childPeekAll}
               selectionBlocked={relationsSelectionBlocked}
               parentTitle={trail ?? title ?? target.table}
               parentLocation={currentLocation}
               row={relationsRow} rowsRef={peekRowsRef} active={active} reload={childReload}
+              onInspectorResize={(px) => { setInspectorRequest(px); onViewChange?.({ inspectorHeight: px }); }}
               onClose={() => showChildren(false)}
               onChange={(update) => {
                 if (childPeekRef.current) changeChildren(update(childPeekRef.current));
@@ -752,6 +769,7 @@ export function PeekPanel({
           onDeleted={() => setRelDialog(null)}
         />
       )}
+      </div>
       </div>
     </div>
   );

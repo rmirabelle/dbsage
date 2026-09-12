@@ -107,8 +107,6 @@ export interface Relation {
   toColumn: string;
   kind: RelationKind;
   name: string;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface RelationsImportPreview {
@@ -167,6 +165,8 @@ export interface ColumnSetup {
   /** Whether the table's Inspector is open. Absent in older setups. */
   inspectorOpen?: boolean;
   inspectorHeight?: number;
+  /** Rows per page. Absent in setups saved before page size was persisted. */
+  pageSize?: number;
   hiddenColumns: string[];
   filters: ColumnFilter[];
   jsonDisplay: Record<string, string>;

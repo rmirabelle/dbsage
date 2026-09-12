@@ -17,13 +17,17 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
  * detection) so the measurement reuses it instead of needing a second ref.
  * Bump `revision` to force a re-measure when the viewport itself changed
  * (e.g. the host window was resized to make room for the popup).
+ * When the anchor is a trigger element rather than a click point, pass the
+ * trigger's top edge as `flipY` so a flipped popup opens above the trigger
+ * instead of covering it.
  */
 export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
   x: number,
   y: number,
   margin = 8,
   externalRef?: RefObject<T | null>,
-  revision = 0
+  revision = 0,
+  flipY?: number
 ) {
   const internalRef = useRef<T>(null);
   const ref = externalRef ?? internalRef;
@@ -47,7 +51,7 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
       left = Math.max(margin, Math.min(left, vw - margin - width));
 
       let top = y;
-      if (top + height > vh - margin) top = y - height;
+      if (top + height > vh - margin) top = (flipY ?? y) - height;
       top = Math.max(margin, Math.min(top, vh - margin - height));
 
       setPos((previous) => previous.top === top && previous.left === left ? previous : { top, left });
@@ -60,7 +64,7 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [x, y, margin, revision]);
+  }, [x, y, margin, revision, flipY]);
 
   return { ref, style: pos };
 }

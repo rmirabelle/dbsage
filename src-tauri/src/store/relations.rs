@@ -1,5 +1,4 @@
 use crate::error::{AppError, AppResult};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -19,8 +18,6 @@ pub struct Relation {
     pub kind: String,
     #[serde(default)]
     pub name: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 /**
@@ -95,7 +92,6 @@ pub fn save(
         return Err(AppError::Other(format!("invalid relation kind: {kind}")));
     }
 
-    let now = Utc::now();
     let mut file = load_file(app)?;
     let list = file
         .entry(host.to_string())
@@ -133,7 +129,6 @@ pub fn save(
             r.to_column = to_column.to_string();
             r.kind = kind.to_string();
             r.name = name.to_string();
-            r.updated_at = now;
             let result = r.clone();
             save_file(app, &file)?;
             return Ok(result);
@@ -148,8 +143,6 @@ pub fn save(
         to_column: to_column.to_string(),
         kind: kind.to_string(),
         name: name.to_string(),
-        created_at: now,
-        updated_at: now,
     };
     list.push(relation.clone());
     save_file(app, &file)?;

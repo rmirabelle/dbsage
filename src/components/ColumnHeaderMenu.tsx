@@ -31,7 +31,7 @@ const COMPARE_OP_SET = new Set<FilterOp>(["gt", "gte", "lt", "lte"]);
 interface Props {
   column: string;
   columnType: string;
-  anchor: { x: number; y: number };
+  anchor: { x: number; y: number; flipY?: number };
   currentSort: SortSpec | null;
   currentFilter: ColumnFilter | null;
   currentJsonShow: string | null;
@@ -118,7 +118,7 @@ export function ColumnHeaderMenu({
   const aliasActive = !!currentAlias;
   const showError = validateJsonShow(showPath);
   const ref = useRef<HTMLDivElement>(null);
-  const { style: menuPosition } = useAnchoredPosition(anchor.x, anchor.y, 8, ref);
+  const { style: menuPosition } = useAnchoredPosition(anchor.x, anchor.y, 8, ref, 0, anchor.flipY);
 
   /** One applied filter per column, including while a picker keeps the menu
    * open. Clear other groups' drafts so they cannot still look selected. */

@@ -21,6 +21,7 @@ import {
   FileCsv,
   MicrosoftExcelLogo,
   ArrowSquareOut,
+  CaretRight,
 } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type {
@@ -204,6 +205,9 @@ interface Props {
   /** When the rows shown are a capped slice of a larger set, render one extra
    * row after the last that invites the user to open the full table. */
   truncatedNotice?: { total: number; onOpen: () => void };
+  /** When more pages follow the rows shown, render one extra row after the
+   * last that says so and steps to the next page when clicked. */
+  morePagesNotice?: { page: number; totalPages: number | null; onNext: () => void };
   /** Suppress the native hover tooltip showing a cell's full value (used in peek
    * windows, where the value tooltip is noise). */
   hideValueTooltip?: boolean;
@@ -252,6 +256,8 @@ interface MenuAnchor {
   column: string;
   x: number;
   y: number;
+  /** The header cell's top edge: a menu that must open upward sits above it. */
+  flipY: number;
 }
 
 interface CellPoint {
@@ -327,6 +333,7 @@ export function DataGrid({
   peekBackground = false,
   contentBorderLeft = false,
   truncatedNotice,
+  morePagesNotice,
   hideValueTooltip = false,
   onCellContextMenu,
   onCellCopyMenuOpen,
@@ -347,7 +354,7 @@ export function DataGrid({
     selection: ResolvedCellRange;
   } | null>(null);
   useNativeMenuLayer(cellCopyMenu !== null);
-  const [columnsMenu, setColumnsMenu] = useState<{ x: number; y: number } | null>(
+  const [columnsMenu, setColumnsMenu] = useState<{ x: number; y: number; flipY: number } | null>(
     null
   );
 
@@ -1375,11 +1382,11 @@ export function DataGrid({
             setMenu((prev) =>
               prev?.column === column
                 ? null
-                : { column, x: rect.left, y: rect.bottom }
+                : { column, x: rect.left, y: rect.bottom, flipY: rect.top }
             )
           }
           onColumnsButtonClick={(rect) =>
-            setColumnsMenu({ x: rect.left, y: rect.bottom })
+            setColumnsMenu({ x: rect.left, y: rect.bottom, flipY: rect.top })
           }
         />
         {rows.length === 0 ? (
@@ -1601,6 +1608,23 @@ export function DataGrid({
             Open as table to view all rows.
           </button>
         )}
+        {morePagesNotice && rows.length > 0 && (
+          <button
+            type="button"
+            data-el="grid-more-pages-row"
+            onClick={morePagesNotice.onNext}
+            className={clsx(
+              "sticky left-0 flex w-full items-center gap-2 border-t border-zinc-700 px-3 text-left text-[12px] italic text-zinc-400 hover:text-zinc-100",
+              peekBackground ? "bg-[var(--peek-tint,#2d2a3b)] hover:bg-zinc-800/60" : "bg-zinc-950 hover:bg-zinc-900"
+            )}
+            style={{ height: ROW_HEIGHT }}
+            {...helpHandlers("Go to the next page of rows")}
+          >
+            <CaretRight size={15} className="shrink-0 not-italic text-zinc-300" />
+            More rows on page {morePagesNotice.page + 1}
+            {morePagesNotice.totalPages != null && ` of ${morePagesNotice.totalPages.toLocaleString()}`}…
+          </button>
+        )}
       </div>
 
       {menu && (
@@ -1609,7 +1633,7 @@ export function DataGrid({
           columnType={
             columns.find((c) => c.name === menu.column)?.dataType ?? ""
           }
-          anchor={{ x: menu.x, y: menu.y }}
+          anchor={{ x: menu.x, y: menu.y, flipY: menu.flipY }}
           currentSort={sort}
           currentFilter={filterByColumn.get(menu.column) ?? null}
           currentJsonShow={jsonDisplay[menu.column] ?? null}

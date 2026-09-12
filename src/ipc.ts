@@ -468,6 +468,10 @@ export const ipc = {
     invoke<StateMappingPreview>("import_database_settings", { path, passphrase, profileId, database, previewOnly }),
   previewState: (path: string, passphrase: string) =>
     invoke<StateCounts>("preview_state", { path, passphrase }),
+  /** The .dbsage path the app was launched with (Explorer double-click), once. */
+  takeLaunchFile: () => invoke<string | null>("take_launch_file"),
+  /** "database" for a single-database export, "app" for a full settings export. */
+  stateFileKind: (path: string) => invoke<"app" | "database">("state_file_kind", { path }),
   stateImportSources: (path: string, passphrase: string) =>
     invoke<StateImportSource[]>("state_import_sources", { path, passphrase }),
   previewStateMapping: (path: string, passphrase: string, selection: StateSelection, mapping: StateImportMapping) =>

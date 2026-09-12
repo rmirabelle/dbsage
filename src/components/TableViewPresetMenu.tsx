@@ -1,4 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { useUi } from "../state/ui";
+
+/**
+ * Tab ids whose Views menu has already auto-opened. Module scope so it survives
+ * the menu remounting on tab switches: the menu drops only once, when the
+ * table tab is first opened.
+ */
+const autoOpenedTabs = new Set<string>();
 import { ArrowCounterClockwise, CaretDown, Check, FloppyDisk, Plus, X } from "@phosphor-icons/react";
 import clsx from "clsx";
 import { helpHandlers } from "../state/help";
@@ -37,6 +45,9 @@ interface Props {
   /** The current setup differs from the active view: show a one-click save
    * that overwrites it, instead of retyping its name. */
   dirty?: boolean;
+  /** Identity of the owning table tab; the menu auto-opens once per tab when
+   * the "pop down saved Views" setting is on and the table has saved views. */
+  autoOpenKey?: string;
   onApply: (name: string) => void;
   onSave: (name: string) => void;
   onDelete: (name: string) => void;
@@ -47,12 +58,20 @@ export function TableViewPresetMenu({
   presets,
   activeName,
   dirty = false,
+  autoOpenKey,
   onApply,
   onSave,
   onDelete,
   onClear,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const popDown = useUi((s) => s.settings.popDownSaved);
+  useEffect(() => {
+    if (!popDown || !autoOpenKey || presets.length === 0) return;
+    if (autoOpenedTabs.has(autoOpenKey)) return;
+    autoOpenedTabs.add(autoOpenKey);
+    setOpen(true);
+  }, [autoOpenKey, presets.length, popDown]);
   const [name, setName] = useState("");
   /** View awaiting delete confirmation; the dialog outlives the dropdown. */
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);

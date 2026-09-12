@@ -62,6 +62,7 @@ fn is_empty_setup(setup: &Value) -> bool {
                 && o.get("peekAll").map_or(true, Value::is_null)
                 && !o.contains_key("relationsOpen")
                 && !o.contains_key("inspectorHeight")
+                && !o.contains_key("pageSize")
         }
         None => true,
     }

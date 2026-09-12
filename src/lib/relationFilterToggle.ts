@@ -1,6 +1,8 @@
 import type { FilterOp } from "../types";
 
-/** Clearing a relation filter must never open or activate its peek. */
+/** Clicking the active filter clears it; clicking the other sets it. Only
+ * enabling WITH (has related rows) also selects the relation's peek — WITHOUT
+ * has nothing to show, and clearing never opens a peek. */
 export function toggleRelationFilter(
   current: FilterOp | null,
   clicked: FilterOp,
@@ -12,5 +14,5 @@ export function toggleRelationFilter(
     return;
   }
   setFilter(clicked);
-  selectRelation?.();
+  if (clicked === "hasrelated") selectRelation?.();
 }
