@@ -1,6 +1,7 @@
 import { helpHandlers } from "../state/help";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CaretDown, Check, Code, FloppyDisk, Plus, X } from "@phosphor-icons/react";
+import { BracketsCurly, CaretDown, Check, Code, FloppyDisk, Plus, X } from "@phosphor-icons/react";
+import { placeholderSpans } from "../lib/queryParams";
 import clsx from "clsx";
 import type { SavedQuery } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -138,6 +139,15 @@ export function SavedQueryMenu({
                     <span className={clsx("truncate", active && "font-semibold text-zinc-100")}>
                       {q.name}
                     </span>
+                    {placeholderSpans(q.sql).length > 0 && (
+                      <span
+                        className="shrink-0 inline-flex text-accent-400"
+                        aria-label="Parameterized query"
+                        {...helpHandlers("This query asks for values when it runs")}
+                      >
+                        <BracketsCurly size={13} weight="bold" />
+                      </span>
+                    )}
                   </button>
                   {active && dirty && (
                     <button

@@ -39,6 +39,11 @@ export function JsonShowEditorDialog({ column, initialValue, rows, initialRowInd
   const [sampleStatus, setSampleStatus] = useState(sampleProperties ? "Sampling properties…" : "Suggestions from up to 100 loaded rows.");
   const [caret, setCaret] = useState(initialValue.length);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  /**
+   * Root-level property names only appear on Ctrl+Space, so a space typed in
+   * "first name" never opens a list. Inside items[...] suggestions stay automatic.
+   */
+  const [manualOpen, setManualOpen] = useState(false);
   const [choice, setChoice] = useState(0);
   const [suggestions, setSuggestions] = useState<{ text: string; caret: number; values: string[] } | null>(null);
   const options = suggestOpen && suggestions?.text === draft && suggestions.caret === caret ? suggestions.values : [];
@@ -76,11 +81,13 @@ export function JsonShowEditorDialog({ column, initialValue, rows, initialRowInd
         }
       }
       if (cancelled) return;
-      setSuggestions({ text: draft, caret, values: completion ? (completion.selectorProperty === undefined ? matchingRootProperties : matchingSelectorValues)(properties, completion.prefix) : [] });
+      const rootContext = completion?.arrayProperty === undefined;
+      const wanted = completion && (!rootContext || manualOpen);
+      setSuggestions({ text: draft, caret, values: wanted ? (completion.selectorProperty === undefined ? matchingRootProperties : matchingSelectorValues)(properties, completion.prefix) : [] });
       setChoice(0);
     }, 250);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [draft, caret, keys, suggestOpen, rows, column]);
+  }, [draft, caret, keys, suggestOpen, manualOpen, rows, column]);
 
   const acceptProperty = (property: string) => {
     const completion = jsonPropertyCompletion(draft, caret);
@@ -90,6 +97,7 @@ export function JsonShowEditorDialog({ column, initialValue, rows, initialRowInd
     setDraft(next);
     setCaret(position);
     setSuggestOpen(false);
+    setManualOpen(false);
     requestAnimationFrame(() => { inputRef.current?.focus(); inputRef.current?.setSelectionRange(position, position); setSuggestOpen(false); });
   };
   const [rowIndex, setRowIndex] = useState(Math.max(0, Math.min(initialRowIndex, rows.length - 1)));
@@ -169,10 +177,16 @@ export function JsonShowEditorDialog({ column, initialValue, rows, initialRowInd
               onChange={(event) => { setDraft(event.target.value); setCaret(event.target.selectionStart); setSuggestOpen(true); }}
               onSelect={(event) => { setCaret(event.currentTarget.selectionStart); if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) setSuggestOpen(false); }}
               onFocus={() => setSuggestOpen(true)}
-              onBlur={() => setSuggestOpen(false)}
+              onBlur={() => { setSuggestOpen(false); setManualOpen(false); }}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return;
-                if (event.key === "Escape" && suggestOpen) { event.preventDefault(); event.stopPropagation(); setSuggestOpen(false); return; }
+                if ((event.ctrlKey || event.metaKey) && event.key === " ") {
+                  event.preventDefault(); event.stopPropagation();
+                  setCaret(event.currentTarget.selectionStart);
+                  setManualOpen(true); setSuggestOpen(true);
+                  return;
+                }
+                if (event.key === "Escape" && suggestOpen) { event.preventDefault(); event.stopPropagation(); setSuggestOpen(false); setManualOpen(false); return; }
                 if (!options.length || event.ctrlKey || event.metaKey || event.altKey) return;
                 if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                   event.preventDefault(); event.stopPropagation();
@@ -222,7 +236,7 @@ export function JsonShowEditorDialog({ column, initialValue, rows, initialRowInd
         <div id="json-show-expression-help" className="min-h-0 flex-1 overflow-auto border-t border-zinc-800 px-4 py-3 text-xs leading-5 text-zinc-400">
           <h3 className="mb-1 font-semibold text-zinc-200">Expression guide</h3>
           <p className="mb-3">Separate expressions with commas. Use newlines to spread a long expression across several lines.</p>
-          <p className="mb-3">{sampleStatus} Use ↑/↓ to choose a suggestion, Enter or Tab to insert, and Escape to dismiss. In items[prop=value], property names come from the first array item; after =, suggestions come from that property's values across up to 1,000 items per sampled array.</p>
+          <p className="mb-3">{sampleStatus} Press Ctrl+Space to list property names; inside items[…] suggestions appear as you type. Use ↑/↓ to choose a suggestion, Enter or Tab to insert, and Escape to dismiss. In items[prop=value], property names come from the first array item; after =, suggestions come from that property's values across up to 1,000 items per sampled array.</p>
           <table className="w-full table-fixed text-left">
             <colgroup><col className="w-[18%]" /><col className="w-[32%]" /><col className="w-[50%]" /></colgroup>
             <thead>

@@ -43,9 +43,9 @@ export default function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [transferMode, setTransferMode] = useState<TransferMode | null>(null);
-  /** File pre-selected in the Import Settings dialog (opened from a .dbsage file). */
+  /** File pre-selected in the Import Workspace dialog (opened from a .dbsage file). */
   const [importPath, setImportPath] = useState<string | null>(null);
-  /** A single-database settings file opened from Explorer. */
+  /** A single-database setup file opened from Explorer. */
   const [dbImportPath, setDbImportPath] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("");
   const [startupUpdate, setStartupUpdate] = useState<UpdateInfo | null>(null);
@@ -84,7 +84,7 @@ export default function App() {
   /**
    * Route an opened .dbsage file to the right import dialog: a single-database
    * export gets the multi-database picker, a full export (or an encrypted file,
-   * which needs a passphrase) gets Import Settings with the file pre-selected.
+   * which needs a passphrase) gets Import Workspace with the file pre-selected.
    */
   const openSettingsFile = async (path: string) => {
     let kind: "app" | "database" = "app";
@@ -171,6 +171,8 @@ export default function App() {
         onHelp={() => ipc.openHelpWindow().catch(() => {})}
         onAbout={() => setAboutOpen(true)}
         onSettings={() => setSettingsOpen(true)}
+        onImportWorkspace={() => setTransferMode("import")}
+        onExportWorkspace={() => setTransferMode("export")}
         updateAvailable={startupUpdate !== null}
       />
       <TabDndProvider>
@@ -229,12 +231,7 @@ export default function App() {
         onClose={() => setAboutOpen(false)}
       />
       {settingsOpen && (
-        <SettingsDialog
-          onClose={() => setSettingsOpen(false)}
-          childOpen={transferMode !== null}
-          onImport={() => setTransferMode("import")}
-          onExport={() => setTransferMode("export")}
-        />
+        <SettingsDialog onClose={() => setSettingsOpen(false)} />
       )}
       {transferMode && (
         <StateTransferDialog

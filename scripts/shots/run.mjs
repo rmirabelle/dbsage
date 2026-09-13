@@ -19,7 +19,11 @@ const OUT_DIR = process.env.SHOTS_OUT ?? "public/help/screenshots";
 const HELP_CONTENT = "src/help/helpContent.ts";
 const CDP_URL = process.env.SHOTS_CDP ?? "http://127.0.0.1:9222";
 const WINDOW = { width: 1066, height: 632 };
-const only = process.argv.slice(2);
+/* `--grab name…` shoots the named captures as the screen is now: no steps, no
+   cleanup, just the capture's window size and crop rule. For shots a person
+   sets up by hand. */
+const grab = process.argv[2] === "--grab";
+const only = process.argv.slice(grab ? 3 : 2);
 const cdpSessions = new WeakMap();
 
 const browser = await chromium.connectOverCDP(CDP_URL);
@@ -39,16 +43,17 @@ const ctx = {
 };
 
 mkdirSync(OUT_DIR, { recursive: true });
-await dismissDialogs(main);
+if (!grab) await dismissDialogs(main);
 let failed = 0;
 
 for (const cap of captures) {
-  if (only.length && !only.some((o) => cap.name === o || cap.name.startsWith(o))) continue;
+  if (only.length && !only.some((o) => cap.name === o || (!grab && cap.name.startsWith(o)))) continue;
   try {
-    if (!cap.windowLabel) await setWindow(main, cap.window ?? WINDOW);
-    await cap.steps?.(main, ctx);
+    /* Grab mode keeps the window as the person sized it. */
+    if (!cap.windowLabel && !grab) await setWindow(main, cap.window ?? WINDOW);
+    if (!grab) await cap.steps?.(main, ctx);
     const target = cap.windowLabel ? await ctx.window(cap.windowLabel) : main;
-    if (cap.windowLabel) await setWindow(target, cap.window ?? WINDOW);
+    if (cap.windowLabel && !grab) await setWindow(target, cap.window ?? WINDOW);
     if (!cap.keepMouse) await parkMouse(target);
     await resetScroll(target);
     const clip = cap.full ? undefined : cap.box ?? (await joinedBox(target, cap));
@@ -66,6 +71,7 @@ for (const cap of captures) {
       console.error(`${cap.name}: state saved to ${dbg}`);
     }
   }
+  if (grab) continue;
   try {
     await cap.after?.(main, ctx);
   } catch (e) {

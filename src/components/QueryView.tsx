@@ -1,5 +1,5 @@
 import { helpHandlers } from "../state/help";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Play,
   Stop,
@@ -7,7 +7,10 @@ import {
   FloppyDisk,
   CaretDown,
   Binoculars,
+  Asterisk,
   BracketsCurly,
+  Check,
+  Copy,
   Funnel,
   Gauge,
   Database,
@@ -21,7 +24,11 @@ import { notifyError } from "../state/notify";
 import { ipc } from "../ipc";
 import { DataGrid } from "./DataGrid";
 import { StyledSelect } from "./StyledSelect";
-import { ExpandedPanel } from "./ExpandedPanel";
+import { ExpandedPanel, formatValue } from "./ExpandedPanel";
+import { QueryParamsDialog } from "./QueryParamsDialog";
+import { ExpandStarDialog } from "./ExpandStarDialog";
+import { expandStar, findSelectStars, nearestStar, type SelectStar } from "../lib/selectStar";
+import { parseQueryParams, placeholderSpans, substituteQueryParams, type QueryParam } from "../lib/queryParams";
 import { ExportButton } from "./ExportButton";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
 import { QueryAnalysisPanel } from "./QueryAnalysisPanel";
@@ -50,6 +57,10 @@ import type {
 /** Stable empty fallback so the selector never returns a fresh array (which, in
  * a window whose store has no tree loaded, would loop useSyncExternalStore). */
 const NO_DATABASES: string[] = [];
+/** SqlEditor text metrics: 13px at line-height 1.6, with 8px padding top and bottom. */
+const EDITOR_LINE_PX = 13 * 1.6;
+const EDITOR_PADDING_PX = 16;
+const NO_FILTERS: ColumnFilter[] = [];
 const NO_RELATIONS: Relation[] = [];
 const NO_SETS: StatementResult[] = [];
 const NO_STMTS: string[] = [];
@@ -63,6 +74,9 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   const setQueryConnection = useStore((s) => s.setQueryConnection);
   const setQueryDatabase = useStore((s) => s.setQueryDatabase);
   const setQueryMaxRows = useStore((s) => s.setQueryMaxRows);
+  const setQueryFilters = useStore((s) => s.setQueryFilters);
+  const setQueryParamValues = useStore((s) => s.setQueryParamValues);
+  const setQueryInspectorHeight = useStore((s) => s.setQueryInspectorHeight);
   const executeQuery = useStore((s) => s.executeQuery);
   const explainQuery = useStore((s) => s.explainQuery);
   const stopQuery = useStore((s) => s.stopQuery);
@@ -76,7 +90,10 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   /* Client-side view state for the read-only results grid (sort/filter/hide
      don't re-run the query — they just reshape the already-fetched rows). */
   const [sort, setSort] = useState<SortSpec | null>(null);
-  const [filters, setFilters] = useState<ColumnFilter[]>([]);
+  /* Filters live on the tab so a saved query can capture and restore them. */
+  const filters = tab.filters ?? NO_FILTERS;
+  const setFilters = (next: ColumnFilter[] | ((prev: ColumnFilter[]) => ColumnFilter[])) =>
+    setQueryFilters(tab.id, next);
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [jsonDisplay, setJsonDisplay] = useState<Record<string, string>>({});
   const [activeCell, setActiveCell] = useState<{
@@ -84,6 +101,51 @@ export function QueryView({ tab }: { tab: QueryTab }) {
     column: string;
   } | null>(null);
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
+
+  /* Select-list stars the toolbar can expand into explicit column lists. */
+  const stars = useMemo(() => findSelectStars(tab.sql), [tab.sql]);
+  const [starPrompt, setStarPrompt] = useState<SelectStar | null>(null);
+  const openStar = () => {
+    const star = nearestStar(stars, editorRef.current?.getCaret() ?? 0);
+    if (star) setStarPrompt(star);
+  };
+  const submitStar = (columns: string[]) => {
+    if (!starPrompt) return;
+    const next = expandStar(tab.sql, starPrompt, columns);
+    editorRef.current?.replaceRange(0, tab.sql.length, next);
+    setStarPrompt(null);
+  };
+
+  /**
+   * {{placeholders}} in the SQL are filled in from a dialog before the query
+   * runs. The editor keeps the template; only the run uses the filled-in SQL.
+   */
+  const [paramPrompt, setParamPrompt] = useState<{ params: QueryParam[]; action: "Execute" | "Explain"; sql: string } | null>(null);
+  /** `sqlOverride` runs text the store may not have committed yet (a query just loaded). */
+  const runWithParams = (action: "Execute" | "Explain", sqlOverride?: string) => {
+    const sql = sqlOverride ?? tab.sql;
+    let params: QueryParam[];
+    try {
+      params = parseQueryParams(sql);
+    } catch (e) {
+      notifyError(String(e instanceof Error ? e.message : e));
+      return;
+    }
+    if (params.length === 0) {
+      if (action === "Execute") executeQuery(tab.id, sqlOverride);
+      else explainQuery(tab.id, undefined, sqlOverride);
+      return;
+    }
+    setParamPrompt({ params, action, sql });
+  };
+  const submitParams = (values: Record<string, string>) => {
+    if (!paramPrompt) return;
+    setQueryParamValues(tab.id, { ...(tab.paramValues ?? {}), ...values });
+    const sql = substituteQueryParams(paramPrompt.sql, values);
+    if (paramPrompt.action === "Execute") executeQuery(tab.id, sql);
+    else explainQuery(tab.id, undefined, sql);
+    setParamPrompt(null);
+  };
 
   /* Focus the editor when this query pane becomes active (new tab, or switching
      to it) so the user can start typing immediately. */
@@ -166,6 +228,17 @@ export function QueryView({ tab }: { tab: QueryTab }) {
   /* Draggable splitter between the editor and the results. */
   const containerRef = useRef<HTMLDivElement>(null);
   const [editorHeight, setEditorHeight] = useState(180);
+
+  /* A tab built from a table view starts with its editor sized to the generated
+     SQL: one line each plus padding and a spare line, capped at half the host. */
+  useLayoutEffect(() => {
+    if (!tab.fromTable) return;
+    const lines = tab.sql.split("\n").length + 1;
+    const wanted = Math.ceil(lines * EDITOR_LINE_PX + EDITOR_PADDING_PX);
+    const host = containerRef.current?.clientHeight ?? 600;
+    setEditorHeight(Math.max(80, Math.min(wanted, Math.floor(host / 2))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab.id]);
 
   /* Expanded-value panel (read-only) for the active result cell. Visibility
      lives on the tab (not component state) so tearing the tab into its own
@@ -303,6 +376,19 @@ export function QueryView({ tab }: { tab: QueryTab }) {
       : undefined;
   const activeRowOrdinal = activeCell ? activeCell.rowIndex + 1 : null;
 
+  /* Copy the selected cell's value from the results toolbar, as the Inspector does. */
+  const [copiedCell, setCopiedCell] = useState(false);
+  const copyActiveCell = async () => {
+    if (!activeCell) return;
+    try {
+      await navigator.clipboard.writeText(formatValue(activeValue, activeColumn).text);
+      setCopiedCell(true);
+      setTimeout(() => setCopiedCell(false), 1200);
+    } catch {
+      /* no-op */
+    }
+  };
+
   const canRun = tab.sql.trim().length > 0 && !tab.loading;
 
   /* When a saved query is loaded and its SQL has been edited, offer a one-click
@@ -429,7 +515,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           <div ref={execMenuRef} className="relative inline-flex">
             <button
               data-el="query-execute-btn"
-              onClick={() => executeQuery(tab.id)}
+              onClick={() => runWithParams("Execute")}
               disabled={!canRun}
               {...helpHandlers("Execute (Ctrl+Enter)")}
               className="inline-flex items-center gap-1.5 pl-2 pr-2 py-1 rounded-l font-semibold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-colors"
@@ -454,7 +540,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
                 <button
                   onClick={() => {
                     setExecMenuOpen(false);
-                    executeQuery(tab.id);
+                    runWithParams("Execute");
                   }}
                   className="w-full text-left px-3 py-1.5 hover:bg-zinc-800 flex items-center gap-2 text-zinc-200"
                 >
@@ -466,7 +552,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
                   data-el="query-explain-btn"
                   onClick={() => {
                     setExecMenuOpen(false);
-                    explainQuery(tab.id);
+                    runWithParams("Explain");
                   }}
                   className="w-full text-left px-3 py-1.5 hover:bg-zinc-800 flex items-center gap-2 text-zinc-200"
                 >
@@ -484,18 +570,16 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           activeName={tab.activeSavedQuery}
           dirty={isQueryTabDirty(tab)}
           disabled={!tab.database}
-          autoOpenKey={tab.id}
-          onApply={(name) => applySavedQuery(tab.id, name)}
+          autoOpenKey={tab.fromTable ? undefined : tab.id}
+          onApply={(name) => {
+            applySavedQuery(tab.id, name);
+            /* A parameterized query is only useful once its values are in, so
+               loading one goes straight to the parameter dialog and runs. */
+            const saved = tab.savedQueries.find((q) => q.name === name);
+            if (saved && placeholderSpans(saved.sql).length > 0) runWithParams("Execute", saved.sql);
+          }}
           onSave={(name) => saveQuery(tab.id, name)}
           onDelete={(name) => deleteSavedQuery(tab.id, name)}
-        />
-
-        <QueryHistoryButton
-          items={tab.queryHistory}
-          disabled={!tab.database}
-          onApply={(sql) => applyQueryHistory(tab.id, sql)}
-          onDelete={(sql) => deleteQueryHistory(tab.id, sql)}
-          onClear={() => clearQueryHistory(tab.id)}
         />
 
         {savedQueryDirty && (
@@ -531,7 +615,36 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           </span>
         )}
 
-        <div ref={insertMenuRef} className="relative inline-flex ml-auto">
+        <div className="ml-auto" />
+
+        <QueryHistoryButton
+          items={tab.queryHistory}
+          disabled={!tab.database}
+          onApply={(sql) => applyQueryHistory(tab.id, sql)}
+          onDelete={(sql) => deleteQueryHistory(tab.id, sql)}
+          onClear={() => clearQueryHistory(tab.id)}
+        />
+
+        <span className="ml-4 mr-1 self-center text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+          SQL
+        </span>
+
+        {stars.length > 0 && (
+          <button
+            data-el="query-expand-star-btn"
+            onClick={openStar}
+            disabled={!tab.database}
+            {...helpHandlers(stars.length === 1
+              ? "Replace * with a list of columns"
+              : `Replace the * nearest the cursor with a list of columns (${stars.length} stars)`)}
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40"
+          >
+            <Asterisk size={16} weight="bold" className="text-accent-400" />
+            {stars.length > 1 && <span className="text-[10px] tabular-nums text-zinc-400">{stars.length}</span>}
+          </button>
+        )}
+
+        <div ref={insertMenuRef} className="relative inline-flex">
           <button
             data-el="query-insert-btn"
             onClick={() => setInsertMenuOpen((o) => !o)}
@@ -545,7 +658,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           {insertMenuOpen && (
             <div
               data-el="query-insert-menu"
-              className="absolute top-full left-0 mt-1 z-50 w-72 rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-[12px]"
+              className="absolute top-full right-0 mt-1 z-50 w-72 rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm py-1 shadow-xl shadow-black/60 text-[12px]"
             >
               {SQL_SNIPPETS.map((s) => (
                 <button
@@ -617,7 +730,7 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           ref={editorRef}
           value={tab.sql}
           onChange={(v) => setQuerySql(tab.id, v)}
-          onSubmit={() => executeQuery(tab.id)}
+          onSubmit={() => runWithParams("Execute")}
           completion={completion}
           placeholder="Type SQL here…  (Ctrl+Enter to run)"
         />
@@ -635,23 +748,33 @@ export function QueryView({ tab }: { tab: QueryTab }) {
         data-toolbar="query-results"
         className="dbs-toolbar h-9 pl-1 pr-1 border-b border-zinc-800/60 flex items-center gap-1 text-zinc-400"
       >
-        <StyledSelect
-          dataEl="query-maxrows-select"
-          value={tab.maxRows == null ? "" : String(tab.maxRows)}
-          onChange={(v) => setQueryMaxRows(tab.id, v === "" ? null : Number(v))}
-          title="Maximum rows to fetch — a safety cap against huge result sets"
-          options={[
-            { value: "100", label: "100 rows" },
-            { value: "1000", label: "1,000 rows" },
-            { value: "10000", label: "10,000 rows" },
-            { value: "", label: "No limit" },
-          ]}
-        />
+        {(tab.loading || result != null) && (
+          <span className="inline-flex items-center gap-3 px-2 text-[11px] tabular-nums">
+            <span {...helpHandlers("Server-side execution time (statement run only)")}>
+              <span className="text-zinc-500">Server</span>{" "}
+              <span className="text-zinc-300">
+                {formatMs(tab.loading ? tab.liveServerMs : result?.elapsedMs ?? 0)}
+              </span>
+            </span>
+            <span {...helpHandlers("Round-trip time (request, server, and transfer back)")}>
+              <span className="text-zinc-500">Round trip</span>{" "}
+              <span className="text-zinc-300">
+                {formatMs(
+                  tab.loading
+                    ? tab.runStartedAt != null
+                      ? Date.now() - tab.runStartedAt
+                      : 0
+                    : tab.roundTripMs ?? 0
+                )}
+              </span>
+            </span>
+          </span>
+        )}
 
         {sets.length > 1 && (
           <div
             data-el="query-result-set-tabs"
-            className="flex items-center gap-1 ml-2"
+            className="flex items-center gap-1 ml-1"
           >
             <span className="text-[11px] text-zinc-500 font-semibold mr-0.5">
               Result
@@ -697,6 +820,18 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           >
             <Funnel size={15} weight="fill" />
             Clear Filters
+          </button>
+        )}
+
+        {activeCell && hasResultSet && (
+          <button
+            data-el="query-copy-cell-btn"
+            onClick={() => void copyActiveCell()}
+            aria-label={copiedCell ? "Copied" : "Copy the selected cell"}
+            {...helpHandlers("Copy the selected cell's value to the clipboard")}
+            className="inline-flex items-center justify-center p-1.5 rounded text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
+          >
+            {copiedCell ? <Check size={15} className="text-emerald-400" /> : <Copy size={15} />}
           </button>
         )}
 
@@ -763,41 +898,47 @@ export function QueryView({ tab }: { tab: QueryTab }) {
           </span>
         </div>
       ) : (
-        <DataGrid
-          columns={activeSet.columns}
-          rows={viewRows}
-          suggestRows={activeSet.rows}
-          offset={0}
-          sort={sort}
-          filters={filters}
-          hiddenColumns={hiddenColumns}
-          jsonDisplay={jsonDisplay}
-          activeCell={activeCell}
-          clearActiveCellOnRowSelect
-          resultCopy
-          stripeTint="green"
-          onActiveCellChange={setActiveCell}
-          onSelectionChange={setSelectedRows}
-          onSortChange={setSort}
-          onFilterChange={(column, filter) =>
-            setFilters((prev) => {
-              const without = prev.filter((f) => f.column !== column);
-              return filter ? [...without, filter] : without;
-            })
-          }
-          onHiddenColumnsChange={setHiddenColumns}
-          onJsonShow={(column, path) =>
-            setJsonDisplay((prev) => {
-              const next = { ...prev };
-              if (path && path.trim()) next[column] = path.trim();
-              else delete next[column];
-              return next;
-            })
-          }
-          onCellEdit={async () => {
-            /* Query results are read-only (no primary-key context to update by). */
-          }}
-        />
+        <div
+          className="flex-1 min-h-0 flex flex-col"
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <DataGrid
+            hideValueTooltip
+            columns={activeSet.columns}
+            rows={viewRows}
+            suggestRows={activeSet.rows}
+            offset={0}
+            sort={sort}
+            filters={filters}
+            hiddenColumns={hiddenColumns}
+            jsonDisplay={jsonDisplay}
+            activeCell={activeCell}
+            clearActiveCellOnRowSelect
+            singleCellSelection
+            stripeTint="green"
+            onActiveCellChange={setActiveCell}
+            onSelectionChange={setSelectedRows}
+            onSortChange={setSort}
+            onFilterChange={(column, filter) =>
+              setFilters((prev) => {
+                const without = prev.filter((f) => f.column !== column);
+                return filter ? [...without, filter] : without;
+              })
+            }
+            onHiddenColumnsChange={setHiddenColumns}
+            onJsonShow={(column, path) =>
+              setJsonDisplay((prev) => {
+                const next = { ...prev };
+                if (path && path.trim()) next[column] = path.trim();
+                else delete next[column];
+                return next;
+              })
+            }
+            onCellEdit={async () => {
+              /* Query results are read-only (no primary-key context to update by). */
+            }}
+          />
+        </div>
       )}
 
       <div
@@ -857,38 +998,60 @@ export function QueryView({ tab }: { tab: QueryTab }) {
             )}
           </>
         )}
-        {(tab.loading || result != null) && (
-          <span className="ml-auto inline-flex items-center gap-3 tabular-nums">
-            <span {...helpHandlers("Server-side execution time (statement run only)")}>
-              <span className="text-zinc-500">Server</span>{" "}
-              <span className="text-zinc-300">
-                {formatMs(tab.loading ? tab.liveServerMs : result?.elapsedMs ?? 0)}
-              </span>
-            </span>
-            <span {...helpHandlers("Round-trip time (request, server, and transfer back)")}>
-              <span className="text-zinc-500">Round trip</span>{" "}
-              <span className="text-zinc-300">
-                {formatMs(
-                  tab.loading
-                    ? tab.runStartedAt != null
-                      ? Date.now() - tab.runStartedAt
-                      : 0
-                    : tab.roundTripMs ?? 0
-                )}
-              </span>
-            </span>
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Max rows</span>
+          <StyledSelect
+            dataEl="query-maxrows-select"
+            value={tab.maxRows == null ? "" : String(tab.maxRows)}
+            onChange={(v) => setQueryMaxRows(tab.id, v === "" ? null : Number(v))}
+            title="Maximum rows to fetch — a safety cap against huge result sets"
+            placement="above-right"
+            options={[
+              { value: "100", label: "100" },
+              { value: "1000", label: "1,000" },
+              { value: "10000", label: "10,000" },
+              { value: "", label: "No limit" },
+            ]}
+          />
+        </div>
       </div>
 
       {expanded && (
         <ExpandedPanel
           readOnly
           editable={false}
+          requestedHeight={tab.inspectorHeight}
+          initialHeight={tab.inspectorHeight}
+          onHeightChange={(height) => setQueryInspectorHeight(tab.id, height)}
           column={activeColumn}
           value={activeValue}
           rowOrdinal={activeRowOrdinal}
           onClose={() => setExpanded(false)}
+        />
+      )}
+
+      {starPrompt && (
+        <ExpandStarDialog
+          profileId={tab.profileId}
+          database={tab.database}
+          tables={tableNames}
+          star={starPrompt}
+          starCount={stars.length}
+          onSubmit={submitStar}
+          onClose={() => setStarPrompt(null)}
+        />
+      )}
+
+      {paramPrompt && (
+        <QueryParamsDialog
+          profileId={tab.profileId}
+          database={tab.database}
+          tabId={tab.id}
+          params={paramPrompt.params}
+          initialValues={tab.paramValues ?? {}}
+          action={paramPrompt.action}
+          onSubmit={submitParams}
+          onClose={() => setParamPrompt(null)}
         />
       )}
 

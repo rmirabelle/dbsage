@@ -2,6 +2,8 @@ import { helpHandlers } from "../state/help";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DownloadSimple,
+  FileArrowDown,
+  FileArrowUp,
   Gear,
   MagnifyingGlassPlus,
   MagnifyingGlassMinus,
@@ -27,6 +29,8 @@ interface Props {
   onHelp: () => void;
   onAbout: () => void;
   onSettings: () => void;
+  onImportWorkspace: () => void;
+  onExportWorkspace: () => void;
   updateAvailable?: boolean;
 }
 
@@ -34,6 +38,8 @@ export function TitleBar({
   onHelp,
   onAbout,
   onSettings,
+  onImportWorkspace,
+  onExportWorkspace,
   updateAvailable,
 }: Props) {
   return (
@@ -54,6 +60,33 @@ export function TitleBar({
           <TitleBarMenu label="File">
             {(close) => (
               <>
+                <button
+                  data-el="menu-import-state"
+                  onClick={() => {
+                    close();
+                    onImportWorkspace();
+                  }}
+                  className={MENU_ITEM_CLASS}
+                >
+                  <span className={MENU_LABEL_CLASS}>
+                    <FileArrowDown size={14} className={MENU_ICON_CLASS} />
+                    Import Workspace…
+                  </span>
+                </button>
+                <button
+                  data-el="menu-export-state"
+                  onClick={() => {
+                    close();
+                    onExportWorkspace();
+                  }}
+                  className={MENU_ITEM_CLASS}
+                >
+                  <span className={MENU_LABEL_CLASS}>
+                    <FileArrowUp size={14} className={MENU_ICON_CLASS} />
+                    Export Workspace…
+                  </span>
+                </button>
+                <div className="my-1 border-t border-zinc-800" />
                 <button
                   data-el="menu-settings"
                   onClick={() => {

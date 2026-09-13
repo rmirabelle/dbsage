@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::mysql::MySqlRow;
 use sqlx::{Column, Either, Executor, MySqlPool, Row};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -148,7 +148,7 @@ mod date_equality_tests {
         let filter: ColumnFilter = serde_json::from_value(serde_json::json!({
             "column": "created", "op": op, "value": value, "dateOnly": date_only
         })).unwrap();
-        build_where(Some(&vec![filter]), &HashSet::from(["created"]), "db", "events")
+        build_where(Some(&vec![filter]), &HashSet::from(["created"]), "db", "events", None)
     }
 
     #[test]
@@ -389,11 +389,14 @@ fn json_search_path(path: &str) -> String {
 
 /// Build the `WHERE …` clause and ordered bind values for the given filters.
 /// Returns an empty string when there are no filters.
+/// `outer_ref` is how the filtered table is addressed from a relation filter's
+/// subquery: `db.table` by default, or the table's alias when it has one.
 fn build_where(
     filters: Option<&Vec<ColumnFilter>>,
     column_set: &HashSet<&str>,
     database: &str,
     table: &str,
+    outer_ref: Option<&str>,
 ) -> AppResult<(String, Vec<String>)> {
     let mut where_clauses: Vec<String> = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
@@ -439,11 +442,10 @@ fn build_where(
                             f.column
                         )));
                     };
-                    let outer = format!(
-                        "{}.{}.{ident}",
-                        quote_ident(database),
-                        quote_ident(table)
-                    );
+                    let outer = match outer_ref {
+                        Some(alias) => format!("{alias}.{ident}"),
+                        None => format!("{}.{}.{ident}", quote_ident(database), quote_ident(table)),
+                    };
                     let sub = format!(
                         "SELECT 1 FROM {}.{} AS _rel WHERE _rel.{} = {outer}",
                         quote_ident(database),
@@ -507,6 +509,234 @@ fn build_where(
         format!(" WHERE {}", where_clauses.join(" AND "))
     };
     Ok((where_clause, bindings))
+}
+
+/// A string as a MySQL literal: single-quoted, backslashes and quotes escaped.
+fn quote_string_literal(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// One column of the SELECT list a table view turns into: the column, and the
+/// alias the view shows it under, if any.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectColumn {
+    pub column: String,
+    pub alias: Option<String>,
+}
+
+/**
+ * The SQL a table view amounts to — its visible columns and aliases, filters
+ * and sort — as runnable text with every value inlined, for a new query tab.
+ * Shares `build_where` with `fetch_rows` so the two never drift apart.
+ */
+#[tauri::command]
+pub async fn render_table_sql(
+    state: State<'_, AppState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    columns: Vec<SelectColumn>,
+    sort: Option<SortSpec>,
+    filters: Option<Vec<ColumnFilter>>,
+    peeks: Option<Vec<PeekSpec>>,
+) -> AppResult<String> {
+    let pool = pool_for(&state, &profile_id).await?;
+    let table_columns = fetch_columns(&pool, &database, &table).await?;
+    let column_set: HashSet<&str> = table_columns.iter().map(|c| c.name.as_str()).collect();
+
+    let (where_clause, bindings) =
+        build_where(filters.as_ref(), &column_set, &database, &table, None)?;
+    /* Inline each bound value where `fetch_rows` would bind it. */
+    let inlined = inline_bindings(&where_clause, &bindings);
+
+    let all_plain = columns.len() == table_columns.len()
+        && columns.iter().all(|c| c.alias.as_deref().map_or(true, str::is_empty));
+    let mut select_list = if all_plain {
+        "*".to_string()
+    } else {
+        columns
+            .iter()
+            .map(|c| match c.alias.as_deref().filter(|a| !a.is_empty()) {
+                Some(alias) => format!("{} AS {}", quote_ident(&c.column), quote_ident(alias)),
+                None => quote_ident(&c.column),
+            })
+            .collect::<Vec<_>>()
+            .join(",\n  ")
+    };
+
+    /* Relation peeks become JSON columns: one correlated subquery each. */
+    let peeks = peeks.unwrap_or_default();
+    if !peeks.is_empty() {
+        let mut tables = Vec::new();
+        collect_peek_tables(&peeks, &mut tables);
+        let mut columns_by_table = HashMap::new();
+        for t in tables {
+            columns_by_table.insert(t.to_string(), fetch_columns(&pool, &database, t).await?);
+        }
+        let parent_ref = format!("{}.{}", quote_ident(&database), quote_ident(&table));
+        let mut next_alias = 1;
+        for peek in &peeks {
+            let sub = render_peek(peek, &parent_ref, &database, &columns_by_table, &mut next_alias, 2)?;
+            select_list.push_str(&format!(",\n  {sub} AS {}", quote_ident(&peek.title)));
+        }
+    }
+
+    let mut sql = format!(
+        "SELECT {select_list}\nFROM {}.{}",
+        quote_ident(&database),
+        quote_ident(&table)
+    );
+    if !inlined.is_empty() {
+        sql.push('\n');
+        sql.push_str(inlined.trim_start());
+    }
+    if let Some(s) = sort.as_ref().filter(|s| column_set.contains(s.column.as_str())) {
+        let dir = match s.direction {
+            SortDirection::Asc => "ASC",
+            SortDirection::Desc => "DESC",
+        };
+        sql.push_str(&format!("\nORDER BY {} {dir}", quote_ident(&s.column)));
+    }
+    Ok(sql)
+}
+
+/// Replace each `?` in a WHERE clause with its bound value as a literal.
+fn inline_bindings(where_clause: &str, bindings: &[String]) -> String {
+    let mut inlined = String::with_capacity(where_clause.len());
+    let mut values = bindings.iter();
+    for ch in where_clause.chars() {
+        if ch == '?' {
+            match values.next() {
+                Some(v) => inlined.push_str(&quote_string_literal(v)),
+                None => inlined.push(ch),
+            }
+        } else {
+            inlined.push(ch);
+        }
+    }
+    inlined
+}
+
+/// One relation peek of a table view, as the frontend describes it: the
+/// related table, the join columns, its own view state, and nested peeks.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeekSpec {
+    /// The peek tab's title, used as the JSON key / column alias.
+    pub title: String,
+    /// The related table and the column matched against the parent.
+    pub table: String,
+    pub column: String,
+    /// The parent column the peek follows.
+    pub source_column: String,
+    pub kind: String,
+    #[serde(default)]
+    pub hidden_columns: Vec<String>,
+    #[serde(default)]
+    pub filters: Vec<ColumnFilter>,
+    #[serde(default)]
+    pub sort: Option<SortSpec>,
+    #[serde(default)]
+    pub column_aliases: HashMap<String, String>,
+    #[serde(default)]
+    pub children: Vec<PeekSpec>,
+}
+
+fn collect_peek_tables<'a>(peeks: &'a [PeekSpec], out: &mut Vec<&'a str>) {
+    for p in peeks {
+        if !out.contains(&p.table.as_str()) {
+            out.push(&p.table);
+        }
+        collect_peek_tables(&p.children, out);
+    }
+}
+
+/**
+ * A peek as a correlated subquery: `JSON_OBJECT` of its visible columns (and
+ * nested peeks) for a has-one relation, `JSON_ARRAYAGG` of those objects for
+ * a has-many. `parent_ref` is how the enclosing row is addressed (`db.table`
+ * for the main query, an alias for a nested peek); each peek gets its own
+ * alias so a self-relation still resolves.
+ */
+fn render_peek(
+    spec: &PeekSpec,
+    parent_ref: &str,
+    database: &str,
+    columns_by_table: &HashMap<String, Vec<ColumnInfo>>,
+    next_alias: &mut usize,
+    indent: usize,
+) -> AppResult<String> {
+    let alias = format!("p{next_alias}");
+    *next_alias += 1;
+    let pad = " ".repeat(indent);
+    let table_columns = columns_by_table
+        .get(&spec.table)
+        .ok_or_else(|| AppError::Other(format!("unknown peek table: {}", spec.table)))?;
+    let column_set: HashSet<&str> = table_columns.iter().map(|c| c.name.as_str()).collect();
+
+    let mut pairs: Vec<String> = table_columns
+        .iter()
+        .filter(|c| !spec.hidden_columns.contains(&c.name))
+        .map(|c| {
+            let key = spec
+                .column_aliases
+                .get(&c.name)
+                .filter(|a| !a.trim().is_empty())
+                .unwrap_or(&c.name);
+            format!("{}, {alias}.{}", quote_string_literal(key), quote_ident(&c.name))
+        })
+        .collect();
+    for child in &spec.children {
+        let sub = render_peek(child, &alias, database, columns_by_table, next_alias, indent + 4)?;
+        pairs.push(format!("{}, {sub}", quote_string_literal(&child.title)));
+    }
+    let object = format!("JSON_OBJECT({})", pairs.join(", "));
+
+    let (where_clause, bindings) =
+        build_where(Some(&spec.filters), &column_set, database, &spec.table, Some(&alias))?;
+    let extra = inline_bindings(&where_clause, &bindings);
+    let correlate = format!(
+        "{alias}.{} = {parent_ref}.{}",
+        quote_ident(&spec.column),
+        quote_ident(&spec.source_column)
+    );
+    let where_full = match extra.strip_prefix(" WHERE ") {
+        Some(rest) => format!("WHERE {correlate} AND {rest}"),
+        None => format!("WHERE {correlate}"),
+    };
+    let from = format!("FROM {}.{} AS {alias}", quote_ident(database), quote_ident(&spec.table));
+
+    if spec.kind == "has_one" {
+        let order = match spec.sort.as_ref().filter(|s| column_set.contains(s.column.as_str())) {
+            Some(s) => format!(
+                "\n{pad} ORDER BY {alias}.{} {}",
+                quote_ident(&s.column),
+                match s.direction {
+                    SortDirection::Asc => "ASC",
+                    SortDirection::Desc => "DESC",
+                }
+            ),
+            None => String::new(),
+        };
+        Ok(format!(
+            "(SELECT {object}\n{pad} {from}\n{pad} {where_full}{order}\n{pad} LIMIT 1)"
+        ))
+    } else {
+        Ok(format!(
+            "(SELECT JSON_ARRAYAGG({object})\n{pad} {from}\n{pad} {where_full})"
+        ))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -619,7 +849,7 @@ pub async fn fetch_rows(
     let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
 
     let (where_clause, bindings) =
-        build_where(filters.as_ref(), &column_set, &database, &table)?;
+        build_where(filters.as_ref(), &column_set, &database, &table, None)?;
 
     let order_clause = if let Some(s) = sort.as_ref() {
         if !column_set.contains(s.column.as_str()) {
@@ -698,7 +928,7 @@ pub async fn count_rows(
     let column_set: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
     let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
     let (where_clause, bindings) =
-        build_where(filters.as_ref(), &column_set, &database, &table)?;
+        build_where(filters.as_ref(), &column_set, &database, &table, None)?;
 
     let sql = format!("SELECT COUNT(*) FROM {qualified}{where_clause}");
     let mut q = sqlx::query(&sql);
@@ -3651,4 +3881,77 @@ pub async fn check_row_conflicts(
     }
 
     Ok(conflicts)
+}
+
+#[cfg(test)]
+mod render_sql_tests {
+    use super::quote_string_literal;
+
+    #[test]
+    fn string_literal_escapes_quotes_and_backslashes() {
+        assert_eq!(quote_string_literal("o'brien"), "'o\\'brien'");
+        assert_eq!(quote_string_literal("a\\b"), "'a\\\\b'");
+        assert_eq!(quote_string_literal("plain"), "'plain'");
+    }
+}
+
+#[cfg(test)]
+mod peek_render_tests {
+    use super::*;
+
+    fn col(name: &str) -> ColumnInfo {
+        ColumnInfo {
+            name: name.into(),
+            data_type: "varchar".into(),
+            nullable: true,
+            key: String::new(),
+            extra: String::new(),
+            comment: String::new(),
+        }
+    }
+
+    #[test]
+    fn renders_nested_peeks_with_filters_and_aliases() {
+        let mut columns_by_table = HashMap::new();
+        columns_by_table.insert("profiles".to_string(), vec![col("id"), col("user_id"), col("bio"), col("secret")]);
+        columns_by_table.insert("posts".to_string(), vec![col("id"), col("profile_id"), col("title")]);
+        let spec = PeekSpec {
+            title: "Profile".into(),
+            table: "profiles".into(),
+            column: "user_id".into(),
+            source_column: "id".into(),
+            kind: "has_one".into(),
+            hidden_columns: vec!["secret".into()],
+            filters: vec![ColumnFilter {
+                date_only: false,
+                column: "bio".into(),
+                op: FilterOp::Like,
+                value: "dev".into(),
+                json_path: None,
+                relation: None,
+            }],
+            sort: None,
+            column_aliases: HashMap::from([("bio".to_string(), "About".to_string())]),
+            children: vec![PeekSpec {
+                title: "Posts".into(),
+                table: "posts".into(),
+                column: "profile_id".into(),
+                source_column: "id".into(),
+                kind: "has_many".into(),
+                hidden_columns: vec![],
+                filters: vec![],
+                sort: None,
+                column_aliases: HashMap::new(),
+                children: vec![],
+            }],
+        };
+        let mut n = 1;
+        let sql = render_peek(&spec, "`shop`.`users`", "shop", &columns_by_table, &mut n, 2).unwrap();
+        println!("{sql}");
+        assert!(sql.contains("JSON_OBJECT('id', p1.`id`, 'user_id', p1.`user_id`, 'About', p1.`bio`, 'Posts', (SELECT JSON_ARRAYAGG("));
+        assert!(!sql.contains("secret"));
+        assert!(sql.contains("WHERE p1.`user_id` = `shop`.`users`.`id` AND `bio` LIKE '%dev%'"));
+        assert!(sql.contains("WHERE p2.`profile_id` = p1.`id`)"));
+        assert!(sql.trim_end().ends_with("LIMIT 1)"));
+    }
 }

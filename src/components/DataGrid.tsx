@@ -139,6 +139,9 @@ interface Props {
   ) => Promise<void>;
   /** When true, selecting a row clears the active (highlighted) cell. */
   clearActiveCellOnRowSelect?: boolean;
+  /** When true, the cell selection is never more than one cell: no drag,
+   * Shift/Ctrl+click, or Shift+arrow rectangle. Used by query results. */
+  singleCellSelection?: boolean;
   /** When true, cells are never editable (no double-click edit), regardless of PK. */
   readOnly?: boolean;
   /** Reports the currently selected row indices (ascending) on every change. */
@@ -312,6 +315,7 @@ export function DataGrid({
   onBatchEdit,
   onInsertRows,
   clearActiveCellOnRowSelect = false,
+  singleCellSelection = false,
   readOnly = false,
   onSelectionChange,
   onCellSelectionSpansRowsChange,
@@ -669,12 +673,12 @@ export function DataGrid({
     }
     const point = { rowIndex, column };
     onActiveCellChange(point);
-    if ((e.shiftKey || e.ctrlKey || e.metaKey) && cellSel) {
+    if ((e.shiftKey || e.ctrlKey || e.metaKey) && cellSel && !singleCellSelection) {
       setCellSel({ anchor: cellSel.anchor, focus: point });
       return;
     }
     setCellSel({ anchor: point, focus: point });
-    cellDraggingRef.current = true;
+    cellDraggingRef.current = !singleCellSelection;
   };
 
   const handleCellMouseEnter = (rowIndex: number, column: string) => {
@@ -1315,7 +1319,7 @@ export function DataGrid({
 
     const column = visibleColumns[colIndex].name;
     /* Shift+any arrow extends the rectangle from its original anchor. */
-    if (e.shiftKey && cellSel) {
+    if (e.shiftKey && cellSel && !singleCellSelection) {
       const focus = { rowIndex, column };
       setCellSel({ anchor: cellSel.anchor, focus });
       onActiveCellChange(focus);

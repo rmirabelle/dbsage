@@ -33,7 +33,7 @@ pub struct MappingPreview {
     notices: Vec<String>,
 }
 
-fn sources(bundle: &StateBundle) -> Vec<ImportSource> {
+pub(super) fn sources(bundle: &StateBundle) -> Vec<ImportSource> {
     let mut pairs = BTreeSet::new();
     if let Some(scope) = &bundle.database_scope {
         pairs.insert((scope.host.clone(), scope.database.clone()));

@@ -590,7 +590,8 @@ export function ExpandedPanel({
   );
 }
 
-function formatValue(
+/** A cell value as the text the Inspector shows and copies. */
+export function formatValue(
   value: unknown,
   column: ColumnInfo | null
 ): { text: string; isJson: boolean } {

@@ -642,6 +642,7 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
    * the tab into its own window — or docking it back — keeps whatever state it
    * had. Tabs predating the field fall back to open-in-main, closed elsewhere. */
   const setTabInspectorOpen = useStore((s) => s.setTabInspectorOpen);
+  const openQueryFromTable = useStore((s) => s.openQueryFromTable);
   /** Relations now controls the entire integrated peek workspace. */
   const expanded = tab.inspectorOpen ?? false;
   const setExpanded = (open: boolean) => setTabInspectorOpen(tab.id, open);
@@ -926,6 +927,19 @@ function RowsTabBody({ tab }: { tab: RowsTab }) {
         >
           <BracketsCurly size={15} />
           Import
+        </button>
+
+        <button
+          data-el="table-to-query-btn"
+          onClick={() => void openQueryFromTable(tab.id)}
+          disabled={!tab.data}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-emerald-600 text-black hover:bg-emerald-500 transition-colors disabled:opacity-40"
+          {...helpHandlers(relationsOpen
+            ? "Open a query tab with the SQL for this view and the selected relation peek at each level as a JSON column"
+            : "Open a query tab with the SQL for this view: its visible columns, filters, and sort")}
+        >
+          <Code size={16} weight="bold" />
+          to Query
         </button>
 
 

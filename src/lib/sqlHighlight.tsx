@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { placeholderSpans } from "./queryParams";
 
 /**
  * MySQL keywords highlighted in the query editor. Curated set of clause/operator
@@ -124,9 +125,31 @@ function isKeywordOrCall(tok: string, sql: string, index: number): boolean {
   return isFunction && callFollows(sql, index + tok.length);
 }
 
-/** Render SQL as React nodes with MySQL keywords in purple and comments in a
- * muted italic gray. */
+/**
+ * Render SQL as React nodes with MySQL keywords in purple, comments in a muted
+ * italic gray, and {{placeholders}} (nested ones included, as one span) in the
+ * accent blue. Placeholders are cut out first so a string literal that wraps
+ * one is colored around it.
+ */
 export function highlightSql(sql: string): ReactNode[] {
+  const spans = placeholderSpans(sql);
+  if (spans.length === 0) return highlightPlainSql(sql);
+  const out: ReactNode[] = [];
+  let last = 0;
+  spans.forEach((span, i) => {
+    out.push(...highlightPlainSql(sql.slice(last, span.start)).map((n, j) => <span key={`p${i}-${j}`}>{n}</span>));
+    out.push(
+      <span key={`h${i}`} className="text-accent-400">
+        {sql.slice(span.start, span.end)}
+      </span>
+    );
+    last = span.end;
+  });
+  out.push(...highlightPlainSql(sql.slice(last)).map((n, j) => <span key={`t${j}`}>{n}</span>));
+  return out;
+}
+
+function highlightPlainSql(sql: string): ReactNode[] {
   const out: ReactNode[] = [];
   let buffer = "";
   let key = 0;

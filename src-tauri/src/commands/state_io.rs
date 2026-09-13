@@ -11,6 +11,7 @@ use crate::store::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use tauri::AppHandle;
 
 pub mod mapping;
@@ -268,6 +269,79 @@ pub async fn preview_state(
     })
 }
 
+/// One host found in a workspace file, with the databases it carries and
+/// whether the file also carries a connection for it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportHost {
+    host: String,
+    databases: Vec<String>,
+    has_profile: bool,
+}
+
+/// List the hosts a workspace file refers to, so the import dialog can offer
+/// to re-point them at the user's own connections.
+#[tauri::command]
+pub async fn state_import_hosts(path: String, passphrase: String) -> AppResult<Vec<ImportHost>> {
+    let bundle = decode_bundle(&path, &passphrase)?;
+    let mut by_host: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for source in mapping::sources(&bundle) {
+        by_host.entry(source.host).or_default().push(source.database);
+    }
+    Ok(by_host
+        .into_iter()
+        .map(|(host, databases)| ImportHost {
+            has_profile: bundle.profiles.iter().any(|p| p.profile.host == host),
+            host,
+            databases,
+        })
+        .collect())
+}
+
+/// Move a `{host: {database: items}}` tree from one host key to another,
+/// merging into the destination when it already exists.
+fn rekey_tree<T>(
+    tree: &mut BTreeMap<String, BTreeMap<String, Vec<T>>>,
+    host_map: &BTreeMap<String, String>,
+) {
+    for (from, to) in host_map {
+        let Some(databases) = tree.remove(from) else { continue };
+        let target = tree.entry(to.clone()).or_default();
+        for (database, items) in databases {
+            target.entry(database).or_default().extend(items);
+        }
+    }
+}
+
+/// Rewrite `host::rest` keys for the hosts in `host_map`.
+fn rekey_prefixed(file: &mut BTreeMap<String, serde_json::Value>, host_map: &BTreeMap<String, String>) {
+    let keys: Vec<String> = file.keys().cloned().collect();
+    for key in keys {
+        let Some((host, rest)) = key.split_once("::") else { continue };
+        let Some(to) = host_map.get(host) else { continue };
+        let value = file.remove(&key).expect("key came from the map");
+        file.insert(format!("{to}::{rest}"), value);
+    }
+}
+
+/// Re-point every feature keyed by a source host at the host the user chose.
+/// Connection profiles keep their own host: they are what the user connects with.
+fn rekey_hosts(bundle: &mut StateBundle, host_map: &BTreeMap<String, String>) {
+    let host_map: BTreeMap<String, String> = host_map
+        .iter()
+        .filter(|(from, to)| !to.is_empty() && from != to)
+        .map(|(from, to)| (from.clone(), to.clone()))
+        .collect();
+    if host_map.is_empty() {
+        return;
+    }
+    rekey_tree(&mut bundle.relations, &host_map);
+    rekey_tree(&mut bundle.folders, &host_map);
+    rekey_prefixed(&mut bundle.column_setups, &host_map);
+    rekey_prefixed(&mut bundle.table_view_presets, &host_map);
+    rekey_prefixed(&mut bundle.saved_queries, &host_map);
+}
+
 #[tauri::command]
 pub async fn import_state(
     app: AppHandle,
@@ -277,8 +351,12 @@ pub async fn import_state(
     selection: CategorySelection,
     mapping: Option<ImportMapping>,
     preview_token: Option<String>,
+    host_map: Option<BTreeMap<String, String>>,
 ) -> AppResult<StateCounts> {
     let mut bundle = decode_bundle(&path, &passphrase)?;
+    if let Some(host_map) = host_map {
+        rekey_hosts(&mut bundle, &host_map);
+    }
     if let Some(mapping) = mapping {
         let (prepared, preview) = mapping::prepare(&app, &state, bundle, &selection, &mapping).await?;
         if preview_token.as_deref() != Some(preview.token.as_str()) {
@@ -340,4 +418,57 @@ fn merge_bundle(app: &AppHandle, bundle: StateBundle, selection: CategorySelecti
 pub struct DatabaseScope {
     profile_id: String,
     database: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bundle() -> StateBundle {
+        let mut relations = RelationsFile::default();
+        relations.entry("localhost".into()).or_default().insert("shop".into(), Vec::new());
+        let mut folders = FoldersFile::default();
+        folders.entry("localhost".into()).or_default().insert("shop".into(), Vec::new());
+        folders.entry("10.0.0.5".into()).or_default().insert("crm".into(), Vec::new());
+        let mut column_setups = ColumnSetupsFile::default();
+        column_setups.insert("localhost::shop::orders".into(), serde_json::json!({}));
+        let mut saved_queries = SavedQueriesFile::default();
+        saved_queries.insert("localhost::shop".into(), serde_json::json!([]));
+        StateBundle {
+            app: APP_TAG.into(),
+            format: BUNDLE_FORMAT.into(),
+            version: BUNDLE_VERSION,
+            exported_at: Utc::now(),
+            database_scope: None,
+            profiles: Vec::new(),
+            relations,
+            folders,
+            column_setups,
+            table_view_presets: PresetsFile::default(),
+            saved_queries,
+        }
+    }
+
+    #[test]
+    fn rekey_moves_every_feature_and_leaves_other_hosts_alone() {
+        let mut b = bundle();
+        let map = BTreeMap::from([("localhost".to_string(), "192.168.1.20".to_string())]);
+        rekey_hosts(&mut b, &map);
+        assert!(b.relations.contains_key("192.168.1.20") && !b.relations.contains_key("localhost"));
+        assert!(b.folders.contains_key("192.168.1.20") && b.folders.contains_key("10.0.0.5"));
+        assert!(b.column_setups.contains_key("192.168.1.20::shop::orders"));
+        assert!(b.saved_queries.contains_key("192.168.1.20::shop"));
+    }
+
+    #[test]
+    fn rekey_ignores_empty_and_identity_mappings() {
+        let mut b = bundle();
+        let map = BTreeMap::from([
+            ("localhost".to_string(), String::new()),
+            ("10.0.0.5".to_string(), "10.0.0.5".to_string()),
+        ]);
+        rekey_hosts(&mut b, &map);
+        assert!(b.relations.contains_key("localhost"));
+        assert!(b.folders.contains_key("10.0.0.5"));
+    }
 }

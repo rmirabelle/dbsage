@@ -39,6 +39,8 @@ interface UiState {
   sqlPaneHeight: number;
   analysisPanelWidth: number;
   relationsPanelWidth: number;
+  /** The Query History dialog's size (CSS px), remembered app-wide. */
+  historyDialogSize: { width: number; height: number };
   tableCopyPrompt: TableCopyPrompt | null;
 
   setSidebarWidth: (px: number) => void;
@@ -50,6 +52,7 @@ interface UiState {
   setSqlPaneHeight: (px: number) => void;
   setAnalysisPanelWidth: (px: number) => void;
   setRelationsPanelWidth: (px: number) => void;
+  setHistoryDialogSize: (size: { width: number; height: number }) => void;
   openTableCopyPrompt: (prompt: TableCopyPrompt) => void;
   closeTableCopyPrompt: () => void;
   setSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
@@ -81,7 +84,10 @@ interface Persisted {
   sqlPaneHeight?: number;
   analysisPanelWidth?: number;
   relationsPanelWidth?: number;
+  historyDialogSize?: { width: number; height: number };
 }
+
+export const HISTORY_DIALOG_BOUNDS = { MIN_W: 480, MAX_W: 1800, MIN_H: 320, MAX_H: 1400 };
 
 const clamp = (v: number, lo: number, hi: number) =>
   Math.max(lo, Math.min(hi, v));
@@ -109,6 +115,7 @@ const savePersisted = (state: UiState) => {
       sqlPaneHeight: state.sqlPaneHeight,
       analysisPanelWidth: state.analysisPanelWidth,
       relationsPanelWidth: state.relationsPanelWidth,
+      historyDialogSize: state.historyDialogSize,
     };
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch {
@@ -130,6 +137,10 @@ export const useUi = create<UiState>((set, get) => ({
     PANEL_MAX
   ),
   sqlPaneHeight: clamp(persisted.sqlPaneHeight ?? 200, SQL_PANE_MIN, SQL_PANE_MAX),
+  historyDialogSize: {
+    width: clamp(persisted.historyDialogSize?.width ?? 720, HISTORY_DIALOG_BOUNDS.MIN_W, HISTORY_DIALOG_BOUNDS.MAX_W),
+    height: clamp(persisted.historyDialogSize?.height ?? 560, HISTORY_DIALOG_BOUNDS.MIN_H, HISTORY_DIALOG_BOUNDS.MAX_H),
+  },
   analysisPanelWidth: clamp(
     persisted.analysisPanelWidth ?? 880,
     ANALYSIS_PANEL_MIN,
@@ -180,6 +191,16 @@ export const useUi = create<UiState>((set, get) => ({
 
   setSqlPaneHeight: (px) => {
     set({ sqlPaneHeight: clamp(Math.round(px), SQL_PANE_MIN, SQL_PANE_MAX) });
+    savePersisted(get());
+  },
+
+  setHistoryDialogSize: ({ width, height }) => {
+    set({
+      historyDialogSize: {
+        width: clamp(Math.round(width), HISTORY_DIALOG_BOUNDS.MIN_W, HISTORY_DIALOG_BOUNDS.MAX_W),
+        height: clamp(Math.round(height), HISTORY_DIALOG_BOUNDS.MIN_H, HISTORY_DIALOG_BOUNDS.MAX_H),
+      },
+    });
     savePersisted(get());
   },
 

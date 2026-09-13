@@ -292,7 +292,7 @@ export function CopyRelationsDialog({
               <p className="text-[12px] text-zinc-400">
                 Copy the {relations.length} relation
                 {relations.length === 1 ? "" : "s"} defined on{" "}
-                <span className="font-medium text-zinc-200">{sourceDatabase}</span>{" "}
+                <span className="font-semibold text-accent-400">{sourceDatabase}</span>{" "}
                 to another database.
               </p>
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-[12px] text-zinc-400">

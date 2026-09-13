@@ -3,10 +3,11 @@ import { CircleNotch, UploadSimple, X } from "@phosphor-icons/react";
 import { ipc } from "../ipc";
 import { flushColumnSetups, useStore } from "../state/store";
 import { notifyError } from "../state/notify";
+import { DatabaseSetupContents } from "./DatabaseSettingsDialog";
 import { STATE_CATEGORIES, type RowsTab, type StateMappingPreview } from "../types";
 
 /**
- * Import a single-database settings file that was opened from Explorer. Unlike
+ * Import a single-database setup file that was opened from Explorer. Unlike
  * the database-toolbar dialog, the destination is not known yet: the user picks
  * a connection and one or more of its databases, and the file is imported into
  * each of them in turn.
@@ -97,21 +98,18 @@ export function ImportDatabaseFileDialog({ path, onClose }: { path: string; onCl
 
   const summary = (preview: StateMappingPreview) => STATE_CATEGORIES
     .filter((category) => preview.counts[category.key] > 0)
-    .map((category) => `${preview.counts[category.key]} ${category.label.toLowerCase()}`)
-    .join(", ") || "no compatible settings";
+    .map((category) => `${preview.counts[category.key]} ${category.label}`)
+    .join(", ") || "no compatible setup data";
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div role="dialog" aria-modal="true" aria-labelledby="import-database-file-title" data-el="import-database-file-dialog"
       className="w-[480px] max-w-[95vw] max-h-[90vh] overflow-auto rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-200 shadow-2xl">
       <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-        <h2 id="import-database-file-title" className="text-sm font-semibold">Import database settings</h2>
+        <h2 id="import-database-file-title" className="text-sm font-semibold">Import database setup</h2>
         <button type="button" disabled={busy} onClick={onClose} aria-label="Close" className="p-1 text-zinc-400 hover:text-white disabled:opacity-40"><X size={16} /></button>
       </div>
       <fieldset disabled={busy || done} className="min-w-0 space-y-3 p-4">
-        <p className="text-[12px] text-zinc-400">
-          Import the layouts, relations, folders, saved views, and saved queries in{" "}
-          <span className="text-zinc-200">{fileName}</span> into one or more databases.
-        </p>
+        <DatabaseSetupContents lead={`Import ${fileName} into one or more databases. The file replaces these items in each selected database:`} />
         <label className="block text-[11px] text-zinc-400">
           Connection
           <select value={profileId} onChange={(e) => setProfileId(e.target.value)} aria-label="Connection"
@@ -134,7 +132,7 @@ export function ImportDatabaseFileDialog({ path, onClose }: { path: string; onCl
               ))}
           </div>
         </div>
-        <p className="text-[11px] text-zinc-400">Matching settings will be replaced. Folders are replaced completely. Open table tabs reload with their integrated peeks. Database tables and data are unchanged.</p>
+        <p className="text-[11px] text-zinc-400">Matching items will be replaced. Folders are merged: tables already in a folder stay there. Open table tabs reload with their integrated peeks. Database tables and data are unchanged.</p>
       </fieldset>
       {results.length > 0 && <div className="mx-4 mb-4 rounded border border-zinc-700 p-3 text-[12px]" role="status">
         <p className="font-semibold">Import complete</p>

@@ -16,11 +16,13 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import clsx from "clsx";
 import { ipc } from "../ipc";
 import { singularize, pluralize } from "../lib/inflector";
-import { useStore } from "../state/store";
+import { flushColumnSetups, useStore } from "../state/store";
 import { CopyRelationsDialog } from "./CopyRelationsDialog";
 import { RelationEditDialog } from "./RelationEditDialog";
 import { notifySuccess, notifyInfo } from "../state/notify";
+import { CategoryList } from "./stateCategoryIcons";
 import type {
+  PeekLayoutTable,
   Relation,
   RelationsImportPreview,
   RelationsTab,
@@ -50,6 +52,9 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
   const [clearing, setClearing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  /** Tables whose saved peek layouts Clear All would orphan; null while loading. */
+  const [peekLayouts, setPeekLayouts] = useState<PeekLayoutTable[] | null>(null);
   const [importing, setImporting] = useState(false);
   const [pendingImport, setPendingImport] = useState<{
     path: string;
@@ -170,6 +175,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
       notifySuccess(
         `Exported ${count} relation${count === 1 ? "" : "s"} from ${database}.`
       );
+      setExportOpen(false);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -315,7 +321,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
       data-el="relations-view"
       className="flex-1 flex flex-col min-h-0 bg-zinc-950"
     >
-      <div className="dbs-toolbar h-9 shrink-0 pl-1 pr-2 flex items-center gap-1 border-b border-zinc-800/60">
+      <div className="dbs-toolbar shrink-0 pl-1.5 pr-1.5 py-1.5 flex items-center gap-1 border-b border-zinc-800/60">
         <div className="relative">
           <MagnifyingGlass
             size={13}
@@ -344,55 +350,59 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
             : `${relations.length} defined`}
         </span>
         <button
-          data-el="copy-relations-btn"
-          onClick={() => setCopyOpen(true)}
-          disabled={relations.length === 0}
-          className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          {...helpHandlers("Copy these relations to another database")}
-        >
-          <Copy size={14} /> Copy All
-        </button>
-        <button
-          data-el="clear-relations-btn"
-          onClick={() => setClearOpen(true)}
-          disabled={relations.length === 0}
-          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          {...helpHandlers("Delete all relations for this database")}
-        >
-          <Trash size={14} /> Clear All
-        </button>
-        <button
           data-el="refresh-relations-btn"
           onClick={onRefresh}
           disabled={refreshing}
-          className="inline-flex items-center justify-center p-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50"
+          className="ml-2 inline-flex items-center justify-center p-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50"
           {...helpHandlers("Refresh relations")}
           aria-label="Refresh relations"
         >
           <ArrowsClockwise size={15} className={refreshing ? "animate-spin" : undefined} />
         </button>
         <button
+          data-el="copy-relations-btn"
+          onClick={() => setCopyOpen(true)}
+          disabled={relations.length === 0}
+          className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          {...helpHandlers("Copy these relations to another database")}
+        >
+          <Copy size={14} /> All
+        </button>
+        <button
+          data-el="clear-relations-btn"
+          onClick={() => {
+            setPeekLayouts(null);
+            setClearOpen(true);
+            void flushColumnSetups()
+              .then(() => ipc.listPeekLayoutTables(profileId, database))
+              .then(setPeekLayouts)
+              .catch(() => setPeekLayouts([]));
+          }}
+          disabled={relations.length === 0}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          {...helpHandlers("Delete all relations for this database")}
+        >
+          <Trash size={14} /> All
+        </button>
+        <button
           data-el="export-relations-btn"
-          onClick={onExport}
-          disabled={exporting || importing}
-          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          aria-label="Export relations"
+          onClick={() => setExportOpen(true)}
+          disabled={exporting || importing || relations.length === 0}
+          className="inline-flex items-center justify-center p-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           {...helpHandlers("Export relations to a file")}
         >
-          {exporting ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <DownloadSimple size={14} />
-          )}
-          Export
+          <UploadSimple size={15} />
         </button>
         <button
           data-el="import-relations-btn"
+          aria-label="Import relations"
           onClick={onChooseImport}
           disabled={exporting || importing}
-          className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="inline-flex items-center justify-center p-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           {...helpHandlers("Import relations from a file")}
         >
-          <UploadSimple size={14} /> Import
+          <DownloadSimple size={15} />
         </button>
       </div>
 
@@ -519,7 +529,7 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
-            className="w-[440px] max-w-[90vw] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
+            className="w-[600px] max-w-[90vw] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
               <div className="flex items-center gap-2">
@@ -539,16 +549,43 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
               )}
             </div>
 
-            <div className="px-4 py-4 text-[12px] leading-relaxed text-zinc-300">
+            <div className="px-4 py-4 space-y-3 text-[12px] leading-relaxed text-zinc-300">
               <p>
                 Delete all{" "}
                 <span className="font-semibold text-zinc-100">
                   {relations.length}
                 </span>{" "}
                 relation{relations.length === 1 ? "" : "s"} defined on{" "}
-                <span className="font-mono text-zinc-100">{database}</span>? This
+                <span className="font-semibold text-accent-400">{database}</span>? This
                 cannot be undone.
               </p>
+              {peekLayouts === null ? (
+                <p className="flex items-center gap-2 text-zinc-500">
+                  <Loader2 size={14} className="animate-spin" /> Checking saved peek layouts…
+                </p>
+              ) : peekLayouts.length > 0 && (
+                <div data-el="clear-relations-peek-warning" className="space-y-2">
+                  <p className="text-amber-300">
+                    {peekLayouts.length} table{peekLayouts.length === 1 ? " has" : "s have"} saved
+                    peek window layouts that use these relations. Those layouts are lost the next
+                    time each table opens.
+                  </p>
+                  <ul className="max-h-[50vh] overflow-auto rounded border border-zinc-800 bg-[#1d2029] divide-y divide-zinc-800/70">
+                    {peekLayouts.map(({ table, peeks }) => (
+                      <li key={table} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                        <span className="truncate font-mono text-zinc-200">{table}</span>
+                        <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">
+                          {peeks} peek{peeks === 1 ? "" : "s"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[11px] text-zinc-500">
+                    Export relations first if you want to restore them later. Importing that file
+                    brings the same relations back and reconnects these layouts.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-4 py-3">
@@ -571,6 +608,59 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                   <Trash size={14} />
                 )}
                 {clearing ? "Clearing…" : "Clear All"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {exportOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => !exporting && setExportOpen(false)}
+        >
+          <div
+            data-el="export-relations-dialog"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            className="w-[440px] max-w-[90vw] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+              <h2 className="text-sm font-semibold text-zinc-100">Export relations for <span className="font-semibold text-accent-400">{database}</span></h2>
+              {!exporting && (
+                <button
+                  onClick={() => setExportOpen(false)}
+                  className="text-zinc-500 hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+            <div className="px-4 py-4 space-y-2 text-[12px] text-zinc-400">
+              <p>The file will contain:</p>
+              <CategoryList keys={["relations"]} />
+              <p className="text-[11px]">
+                {relations.length} relation{relations.length === 1 ? "" : "s"} defined in <span className="font-semibold text-accent-400">{database}</span>. Nothing else is included.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-4 py-3">
+              <button
+                onClick={() => setExportOpen(false)}
+                disabled={exporting}
+                className="px-3 py-1.5 rounded text-[12px] text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                data-el="export-relations-confirm"
+                onClick={onExport}
+                disabled={exporting}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-semibold bg-accent-500 text-zinc-950 hover:bg-accent-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {exporting ? <Loader2 size={14} className="animate-spin" /> : <DownloadSimple size={14} />}
+                Export
               </button>
             </div>
           </div>
@@ -608,6 +698,8 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
             </div>
 
             <div className="px-4 py-4 space-y-3 text-[12px] leading-relaxed text-zinc-300">
+              <p className="text-zinc-400">The file replaces these items for this database:</p>
+              <CategoryList keys={["relations"]} />
               <p>
                 Import{" "}{pendingImport.preview.count}{" "}
                 relation{pendingImport.preview.count === 1 ? "" : "s"} from{" "}
@@ -615,11 +707,11 @@ export function RelationsView({ tab }: { tab: RelationsTab }) {
                   {pendingImport.preview.database}
                 </span>{" "}
                 into{" "}
-                <span className="font-mono text-zinc-100">{database}</span>?
+                <span className="font-semibold text-accent-400">{database}</span>?
               </p>
               <p className="text-amber-300">
                 This will overwrite all {relations.length} existing relation
-                {relations.length === 1 ? "" : "s"} in {database}. This cannot
+                {relations.length === 1 ? "" : "s"} in <span className="font-semibold text-accent-400">{database}</span>. This cannot
                 be undone.
               </p>
               <p className="break-all text-[11px] text-zinc-500">

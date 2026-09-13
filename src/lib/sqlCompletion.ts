@@ -1,3 +1,5 @@
+import { blankPlaceholders, placeholderSpans } from "./queryParams";
+
 /**
  * Parser-free SQL completion context detection. Given the editor text and caret
  * offset, decide what to suggest (table / column / keyword) and the partial word
@@ -14,7 +16,8 @@ export interface CompletionSource {
   keywords: string[];
 }
 
-export type CompletionKind = "table" | "column" | "keyword";
+/** "token" is a word already written in the editor (an alias, a typed table name, a literal). */
+export type CompletionKind = "table" | "column" | "keyword" | "token";
 
 export interface CompletionQuery {
   kind: CompletionKind;
@@ -24,7 +27,9 @@ export interface CompletionQuery {
   from: number;
   /** For column kind: the identifier before the dot (alias or table). */
   qualifier?: string;
-  /** Whether this context should pop automatically (vs Ctrl+Space only). */
+  /** Whether this context should pop automatically. False whenever the word
+   * under the caret is empty (the caret follows a space), where Ctrl+Space
+   * opens the list instead. */
   auto: boolean;
 }
 
@@ -59,7 +64,12 @@ function inSkipRegion(text: string, caret: number): boolean {
   }
   const lineStart = text.lastIndexOf("\n", caret - 1) + 1;
   const line = text.slice(lineStart, caret);
-  return /(^|\s)(--\s|#)/.test(line) || line.includes("--");
+  if (/(^|\s)(--\s|#)/.test(line) || line.includes("--")) return true;
+  /* Inside a {{placeholder}}, nested or not: the user is writing a parameter. */
+  if (placeholderSpans(text).some((s) => caret > s.start && caret < s.end)) return true;
+  /* An unfinished {{placeholder likewise. */
+  const open = text.lastIndexOf("{{", caret - 1);
+  return open >= 0 && !text.slice(open + 2, caret).includes("}}");
 }
 
 /** Most recent clause keyword before `before` (nearest wins), with the offset
@@ -105,11 +115,44 @@ export function analyzeCompletion(
        is at an alias / next-clause position, so stop suggesting tables. */
     const sinceClause = before.slice(gov.end).trimEnd();
     if (sinceClause === "" || sinceClause.endsWith(",")) {
-      return { kind: "table", prefix, from: start, auto: true };
+      /* Right after "FROM " a space is still valid SQL, so a bare space must not
+         pop the list; it opens once a letter is typed, or on Ctrl+Space. */
+      return { kind: "table", prefix, from: start, auto: prefix.length > 0 };
     }
   }
 
-  return { kind: "keyword", prefix, from: start, auto: false };
+  /* Keywords open as you type too; with nothing typed yet, Ctrl+Space. */
+  return { kind: "keyword", prefix, from: start, auto: prefix.length > 0 };
+}
+
+const WORD_RE = /[A-Za-z_][A-Za-z0-9_$]*/g;
+
+/**
+ * Words already written in the editor, so a typed table name, alias or value
+ * can be completed again later. Skips the word under the caret, strings and
+ * comments, and anything in `exclude` (keywords, names listed elsewhere).
+ */
+export function documentTokens(
+  text: string,
+  wordStart: number,
+  caret: number,
+  exclude: Iterable<string>
+): string[] {
+  const skip = new Set<string>();
+  for (const e of exclude) skip.add(e.toLowerCase());
+  const clean = blankPlaceholders(text).replace(SKIP_RE, (m) => " ".repeat(m.length));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  WORD_RE.lastIndex = 0;
+  while ((m = WORD_RE.exec(clean)) !== null) {
+    if (m.index < caret && m.index + m[0].length >= wordStart) continue;
+    const key = m[0].toLowerCase();
+    if (skip.has(key) || seen.has(key) || /^\d/.test(m[0])) continue;
+    seen.add(key);
+    out.push(m[0]);
+  }
+  return out;
 }
 
 /** Tables referenced by FROM/JOIN, with optional aliases. */

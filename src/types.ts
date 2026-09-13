@@ -114,6 +114,24 @@ export interface RelationsImportPreview {
   count: number;
 }
 
+/** A table whose saved layout holds peeks that point at live relations. */
+export interface PeekLayoutTable { table: string; peeks: number }
+
+/** A relation peek described for the query builder: the related table, the
+ * join columns, the peek's own view state, and its nested peeks. */
+export interface PeekQuerySpec {
+  title: string;
+  table: string;
+  column: string;
+  sourceColumn: string;
+  kind: RelationKind;
+  hiddenColumns: string[];
+  filters: ColumnFilter[];
+  sort: SortSpec | null;
+  columnAliases: Record<string, string>;
+  children: PeekQuerySpec[];
+}
+
 /** Per-category item counts — used both for an import result and for previewing
  * what an encrypted state file contains. */
 export interface StateCounts {
@@ -128,6 +146,8 @@ export interface StateCounts {
 export type ImportSummary = StateCounts;
 
 export interface StateImportSource { host: string; database: string }
+/** One host named in a workspace file: its databases, and whether the file also carries a connection for it. */
+export interface StateImportHost { host: string; databases: string[]; hasProfile: boolean }
 export interface StateImportMapping {
   sourceHost: string;
   sourceDatabase: string;
@@ -150,11 +170,11 @@ export interface StateSelection {
 /** The selectable state categories, in display order, with friendly labels. */
 export const STATE_CATEGORIES: { key: keyof StateSelection; label: string }[] = [
   { key: "profiles", label: "Connections" },
-  { key: "relations", label: "Relations" },
-  { key: "folders", label: "Table folders" },
-  { key: "columnSetups", label: "Column setups" },
-  { key: "tableViewPresets", label: "Table view presets" },
-  { key: "savedQueries", label: "Saved queries" },
+  { key: "relations", label: "DB relations" },
+  { key: "folders", label: "Table folder names" },
+  { key: "columnSetups", label: "Table column filters and peek window layouts" },
+  { key: "tableViewPresets", label: "Table saved views" },
+  { key: "savedQueries", label: "DB saved queries" },
 ];
 
 /** Per-table column configuration, persisted backend-side and included in
@@ -324,6 +344,12 @@ export interface TableViewPreset {
 export interface SavedQuery {
   name: string;
   sql: string;
+  /** Whether the Inspector panel was showing when the query was saved. Absent in older saves. */
+  inspectorOpen?: boolean;
+  /** Inspector panel height in pixels when the query was saved. Absent in older saves. */
+  inspectorHeight?: number;
+  /** Result-grid column filters active when the query was saved. Absent in older saves. */
+  filters?: ColumnFilter[];
 }
 
 /** One entry in the silent per-database query history. `executedAt` is a
@@ -593,6 +619,18 @@ export interface QueryTab extends BaseTab {
   /** Whether the Inspector panel is showing. Lives on the tab so tearing the
    * tab into its own window (and docking it back) keeps the state. */
   inspectorOpen?: boolean;
+  /** Inspector panel height in pixels; absent until the user resizes it or a
+   * saved query restores one. */
+  inspectorHeight?: number;
+  /** Column filters on the results grid. On the tab (not component state) so a
+   * saved query can capture and restore them. */
+  filters?: ColumnFilter[];
+  /** Values entered for {{placeholders}} on the last run, keyed by placeholder
+   * name, so the parameter dialog pre-fills next time. */
+  paramValues?: Record<string, string>;
+  /** True when the tab was opened from a table view's Query button: its SQL is
+   * already set, so the Saved queries menu must not pop open on its own. */
+  fromTable?: boolean;
 }
 
 /** One column row in the table designer. Numeric fields are kept as strings

@@ -28,7 +28,7 @@ import { TableActionDialog, type TableAction } from "./TableActionDialog";
 import { TableContextMenu } from "./TableContextMenu";
 import { CompareSchemaDialog } from "./CompareSchemaDialog";
 import { ImportJsonDialog } from "./ImportJsonDialog";
-import { DatabaseSettingsDialog, exportDatabaseSettings } from "./DatabaseSettingsDialog";
+import { DatabaseSettingsDialog, ExportDatabaseSetupDialog } from "./DatabaseSettingsDialog";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { ViewsIcon } from "./TableViewPresetMenu";
 import { Tooltip } from "./Tooltip";
@@ -52,7 +52,7 @@ interface ContextMenuState {
 
 export function DatabaseView({ tab }: Props) {
   const [settingsImportOpen, setSettingsImportOpen] = useState(false);
-  const [exportingSettings, setExportingSettings] = useState(false);
+  const [settingsExportOpen, setSettingsExportOpen] = useState(false);
   const setDatabaseFilter = useStore((s) => s.setDatabaseFilter);
   const refreshTab = useStore((s) => s.refreshTab);
   const refreshTableData = useStore((s) => s.refreshTableData);
@@ -494,7 +494,7 @@ export function DatabaseView({ tab }: Props) {
           alt=""
           className="absolute bottom-6 right-6 w-[120px] h-[120px] object-contain opacity-[0.08] select-none pointer-events-none -z-10"
         />
-        <div data-el="database-toolbar" className="dbs-toolbar pl-1.5 pr-3 py-1.5 border-b border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400">
+        <div data-el="database-toolbar" className="dbs-toolbar pl-1.5 pr-1.5 py-1.5 border-b border-zinc-800/60 flex items-center gap-1 text-[11px] text-zinc-400">
           <div className="relative">
             <Search
               size={13}
@@ -641,20 +641,15 @@ export function DatabaseView({ tab }: Props) {
               <RefreshCw size={17} />
             )}
           </button>
-          <button type="button" data-el="database-export-settings" disabled={exportingSettings}
-            onClick={async () => {
-              setExportingSettings(true);
-              try { await exportDatabaseSettings(tab); } catch (e) { notifyError(String(e)); }
-              finally { setExportingSettings(false); }
-            }}
-            {...helpHandlers(`Export all settings for ${tab.database}`)}
-            aria-label="Export database settings"
+          <button type="button" data-el="database-export-settings" onClick={() => setSettingsExportOpen(true)}
+            {...helpHandlers(`Export the database setup for ${tab.database}`)}
+            aria-label="Export database setup"
             className="inline-flex items-center justify-center rounded bg-zinc-700 p-1 text-zinc-200 hover:bg-zinc-600 hover:text-white disabled:opacity-40">
             <UploadSimple size={17} />
           </button>
           <button type="button" data-el="database-import-settings" onClick={() => setSettingsImportOpen(true)}
-            {...helpHandlers(`Import database settings into ${tab.database}`)}
-            aria-label="Import database settings"
+            {...helpHandlers(`Import a database setup into ${tab.database}`)}
+            aria-label="Import database setup"
             className="inline-flex items-center justify-center rounded bg-zinc-700 p-1 text-zinc-200 hover:bg-zinc-600 hover:text-white">
             <DownloadSimple size={17} />
           </button>
@@ -942,6 +937,7 @@ export function DatabaseView({ tab }: Props) {
           />
         )}
 
+        {settingsExportOpen && <ExportDatabaseSetupDialog tab={tab} onClose={() => setSettingsExportOpen(false)} />}
         {settingsImportOpen && <DatabaseSettingsDialog tab={tab} onClose={() => setSettingsImportOpen(false)} />}
 
         {compareTable && (

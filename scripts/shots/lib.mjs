@@ -66,6 +66,12 @@ export async function openTable(page, table, folder = null) {
   if (folder) await setFolderExpanded(page, folder.name, folder.firstTable, true);
   await page.locator('[data-el="table-row"]', { hasText: table }).first().dblclick();
   await page.locator('[data-el="grid-row"]').first().waitFor();
+  /* The Saved Views menu may drop open once per table open; it would block clicks. */
+  const presets = page.locator('[data-el="view-presets-menu"]');
+  if (await presets.isVisible()) {
+    await page.keyboard.press("Escape");
+    await presets.waitFor({ state: "hidden" });
+  }
   const clear = page.locator('[data-el="clear-filters-btn"]');
   if (await clear.isVisible()) {
     await clear.click();

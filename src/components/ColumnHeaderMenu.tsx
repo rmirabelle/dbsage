@@ -533,7 +533,7 @@ export function ColumnHeaderMenu({
                   }
                 }}
                 className={clsx(
-                  "w-full bg-zinc-950 rounded-r px-2 py-[7px] pr-7 text-[12.5px] text-zinc-100 outline-none focus:border-accent-500",
+                  "w-full bg-zinc-950 rounded-r px-2 py-1 pr-7 text-[12.5px] text-zinc-100 outline-none focus:border-accent-500",
                   aliasActive ? "border-2 border-amber-400" : "border border-zinc-700"
                 )}
               />

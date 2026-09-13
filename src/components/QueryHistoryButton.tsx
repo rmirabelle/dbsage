@@ -1,12 +1,18 @@
 import { helpHandlers } from "../state/help";
 import { useEffect, useState } from "react";
 import {
+  CaretLeft,
+  CaretRight,
   ClockCounterClockwise,
   Trash,
   X,
 } from "@phosphor-icons/react";
 import type { QueryHistoryItem } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { highlightSql } from "../lib/sqlHighlight";
+import { HISTORY_DIALOG_BOUNDS, useUi } from "../state/ui";
+
+const PAGE_SIZE = 10;
 
 interface Props {
   items: QueryHistoryItem[];
@@ -83,6 +89,42 @@ function QueryHistoryDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  /* Ten entries per page; deleting off the last page steps back. */
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const current = Math.min(page, pageCount - 1);
+  const pageItems = items.slice(current * PAGE_SIZE, current * PAGE_SIZE + PAGE_SIZE);
+
+  /* Size lives in the UI store so every query tab and session shares it. */
+  const size = useUi((s) => s.historyDialogSize);
+  const setSize = useUi((s) => s.setHistoryDialogSize);
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startW = size.width;
+    const startH = size.height;
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = "nwse-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (ev: PointerEvent) => {
+      setSize({
+        width: Math.min(window.innerWidth - 32, startW + (ev.clientX - startX)),
+        height: Math.min(window.innerHeight - 32, startH + (ev.clientY - startY)),
+      });
+    };
+    const cleanup = () => {
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", cleanup);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", cleanup);
+  };
+
   const handleClear = () => {
     if (items.length === 0) return;
     setClearConfirm(true);
@@ -98,7 +140,13 @@ function QueryHistoryDialog({
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
-        className="flex flex-col w-[720px] max-w-[92vw] max-h-[80vh] rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
+        style={{
+          width: Math.min(size.width, window.innerWidth - 32),
+          height: Math.min(size.height, window.innerHeight - 32),
+          minWidth: HISTORY_DIALOG_BOUNDS.MIN_W,
+          minHeight: HISTORY_DIALOG_BOUNDS.MIN_H,
+        }}
+        className="relative flex flex-col rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60"
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
           <div className="flex items-center gap-2">
@@ -135,14 +183,14 @@ function QueryHistoryDialog({
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto">
+        <div className="flex-1 min-h-0 overflow-auto px-5 py-4">
           {items.length === 0 ? (
             <div className="px-4 py-10 text-center text-xs text-zinc-500">
               No history yet. Executed queries will appear here.
             </div>
           ) : (
-            <ul className="divide-y divide-zinc-800">
-              {items.map((item, i) => (
+            <ul className="divide-y divide-zinc-800 rounded border border-zinc-800 bg-[#1d2029]">
+              {pageItems.map((item, i) => (
                 <HistoryRow
                   key={`${item.executedAt}-${i}`}
                   item={item}
@@ -153,6 +201,37 @@ function QueryHistoryDialog({
             </ul>
           )}
         </div>
+
+        {pageCount > 1 && (
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-800 px-5 py-2 text-[11px] text-zinc-400">
+            <button
+              onClick={() => setPage(Math.max(0, current - 1))}
+              disabled={current === 0}
+              aria-label="Previous page"
+              className="inline-flex items-center justify-center p-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-40"
+            >
+              <CaretLeft size={14} />
+            </button>
+            <span className="tabular-nums">
+              Page {current + 1} of {pageCount}
+            </span>
+            <button
+              onClick={() => setPage(Math.min(pageCount - 1, current + 1))}
+              disabled={current >= pageCount - 1}
+              aria-label="Next page"
+              className="inline-flex items-center justify-center p-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-40"
+            >
+              <CaretRight size={14} />
+            </button>
+          </div>
+        )}
+
+        <div
+          data-el="query-history-resize"
+          onPointerDown={startResize}
+          {...helpHandlers("Drag to resize")}
+          className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize rounded-br-lg bg-[linear-gradient(135deg,transparent_50%,#52525b_50%,#52525b_60%,transparent_60%,transparent_75%,#52525b_75%)]"
+        />
       </div>
       {clearConfirm && (
         <ConfirmDialog
@@ -186,14 +265,14 @@ function HistoryRow({
   onDelete: () => void;
 }) {
   return (
-    <li className="group flex items-start gap-2 px-3 py-2 hover:bg-zinc-800/60">
+    <li className="group flex items-start gap-2 px-3 py-2.5 hover:bg-zinc-800/60">
       <button
         onClick={onApply}
         className="flex-1 min-w-0 text-left"
         {...helpHandlers("Load into editor")}
       >
         <pre className="text-[11.5px] font-mono text-zinc-200 whitespace-pre-wrap break-words line-clamp-3">
-          {flattenSql(item.sql)}
+          {highlightSql(flattenSql(item.sql))}
         </pre>
         <div className="mt-1 text-[10px] text-zinc-500">
           {formatExecutedAt(item.executedAt)}

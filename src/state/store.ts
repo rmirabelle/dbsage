@@ -29,6 +29,7 @@ import type {
   DatabaseTab,
   Folder,
   IntegratedPeekState,
+  PeekQuerySpec,
   ProfileView,
   QueryResult,
   QueryTab,
@@ -106,9 +107,30 @@ function drainColumnSetups(): Promise<void> {
   return savingColumnSetup;
 }
 
-/** Finish queued automatic saves before exporting or replacing database settings. */
+/** Finish queued automatic saves before exporting or replacing a database setup. */
 export async function flushColumnSetups() {
   while (savingColumnSetup || pendingColumnSetups.size) await drainColumnSetups();
+}
+
+/** The selected peek at each level of an integrated-peek panel, nested ones
+ * included, as the query builder wants them. Only the active tab counts, so
+ * the query mirrors what the panel shows; a closed panel yields none. */
+function peekQuerySpecs(state: IntegratedPeekState | null | undefined): PeekQuerySpec[] {
+  if (!state || state.closed) return [];
+  const active = state.peeks.find((p) => p.id === state.activeId) ?? state.peeks[0];
+  if (!active) return [];
+  return [active].map((p) => ({
+    title: p.customTitle?.trim() || p.title,
+    table: p.target.table,
+    column: p.target.column,
+    sourceColumn: p.sourceColumn,
+    kind: p.kind ?? "has_many",
+    hiddenColumns: p.hiddenColumns ?? [],
+    filters: p.filters ?? [],
+    sort: p.sort ?? null,
+    columnAliases: p.columnAliases ?? {},
+    children: peekQuerySpecs(p.childPeekAll),
+  }));
 }
 
 /** Coalesce rapid resize/view updates and keep older snapshots from overwriting newer ones. */
@@ -331,19 +353,25 @@ interface Store {
   /** Open (or focus) the standalone server Monitoring window for a connection. */
   openMonitoring: (profileId: string) => void;
   /** Open a new, empty SQL query pane scoped to a connection + database. */
-  openQuery: (profileId: string, profileName: string, database: string) => void;
+  openQuery: (profileId: string, profileName: string, database: string) => string;
+  /** Open a new query tab holding the SQL this table view amounts to. */
+  openQueryFromTable: (tabId: string) => Promise<void>;
   setQuerySql: (tabId: string, sql: string) => void;
   /** Set the query pane's row cap (null = no limit). */
   setQueryMaxRows: (tabId: string, maxRows: number | null) => void;
+  setQueryFilters: (tabId: string, filters: ColumnFilter[] | ((prev: ColumnFilter[]) => ColumnFilter[])) => void;
+  setQueryInspectorHeight: (tabId: string, height: number) => void;
   /** Switch a query pane to another connection (connecting if needed) and
    * default its database to a valid one. */
   setQueryConnection: (tabId: string, profileId: string) => Promise<void>;
   setQueryDatabase: (tabId: string, database: string) => void;
   /** Run the query pane's SQL against its connection + database. */
-  executeQuery: (tabId: string) => Promise<void>;
+  /** `sql` overrides the editor text, e.g. after {{placeholders}} were filled in. */
+  executeQuery: (tabId: string, sql?: string) => Promise<void>;
+  setQueryParamValues: (tabId: string, values: Record<string, string>) => void;
   /** EXPLAIN the query pane's SQL and grade it; `runAnalyze` measures real
    * timings (read-only statements only). Sets the tab's analysis + EXPLAIN grid. */
-  explainQuery: (tabId: string, runAnalyze?: boolean) => Promise<void>;
+  explainQuery: (tabId: string, runAnalyze?: boolean, sql?: string) => Promise<void>;
   /** Clear the current Explain analysis for a query tab. */
   clearAnalysis: (tabId: string) => void;
   /** Request cancellation of a running query (KILL QUERY server-side). */
@@ -1686,6 +1714,39 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tabId }));
     loadSavedQueries(tabId, set, get);
     loadQueryHistory(tabId, set, get);
+    return tabId;
+  },
+
+  openQueryFromTable: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "rows") return;
+    const hidden = new Set(tab.hiddenColumns);
+    const columns = (tab.data?.columns ?? [])
+      .filter((c) => !hidden.has(c.name))
+      .map((c) => ({ column: c.name, alias: tab.columnAliases[c.name] ?? null }));
+    /* With the Relations panel showing, its open peeks ride along as JSON
+       columns; with it hidden, the query is the plain table view. */
+    const relationsOpen = (tab.relationsOpen ?? Boolean(tab.peekAll)) && !tab.peekAll?.closed;
+    const peeks = relationsOpen ? peekQuerySpecs(tab.peekAll) : [];
+    try {
+      const sql = await ipc.renderTableSql({
+        profileId: tab.profileId,
+        database: tab.database,
+        table: tab.table,
+        columns,
+        sort: tab.sort,
+        filters: tab.filters,
+        peeks,
+      });
+      const queryTabId = get().openQuery(tab.profileId, tab.profileName, tab.database);
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === queryTabId && t.kind === "query" ? { ...t, sql, savedSql: sql, fromTable: true, inspectorOpen: true } : t
+        ),
+      }));
+    } catch (e) {
+      notifyError(`Could not build the query: ${String(e)}`);
+    }
   },
 
   setQuerySql: (tabId, sql) => {
@@ -1700,6 +1761,24 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "query" ? { ...t, maxRows } : t
+      ),
+    }));
+  },
+
+  setQueryFilters: (tabId, filters) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query"
+          ? { ...t, filters: typeof filters === "function" ? filters(t.filters ?? []) : filters }
+          : t
+      ),
+    }));
+  },
+
+  setQueryInspectorHeight: (tabId, inspectorHeight) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query" ? { ...t, inspectorHeight } : t
       ),
     }));
   },
@@ -1753,12 +1832,20 @@ export const useStore = create<Store>((set, get) => ({
     loadQueryHistory(tabId, set, get);
   },
 
-  executeQuery: async (tabId) => {
+  setQueryParamValues: (tabId, paramValues) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId && t.kind === "query" ? { ...t, paramValues } : t
+      ),
+    }));
+  },
+
+  executeQuery: async (tabId, sql) => {
     const tab = get().tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "query" || tab.loading) return;
-    if (!tab.sql.trim()) return;
+    const sqlAtExecute = sql ?? tab.sql;
+    if (!sqlAtExecute.trim()) return;
     const startedAt = Date.now();
-    const sqlAtExecute = tab.sql;
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "query"
@@ -1866,21 +1953,19 @@ export const useStore = create<Store>((set, get) => ({
             : t
         ),
       }));
+      /* The query tab shows the error in its results pane, so no toast here. */
       if (wasStopped) notifyInfo("Query stopped.");
-      /* Keyed per tab so a new failure supersedes this pane's previous query
-         error (even with different text) — only the latest query error shows. */
-      else notifyError(`Query failed: ${msg}`, `query-error:${tabId}`);
     } finally {
       unlisten();
     }
   },
 
-  explainQuery: async (tabId, runAnalyze = false) => {
+  explainQuery: async (tabId, runAnalyze = false, sql) => {
     const tab = get().tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "query" || tab.loading) return;
     if (!tab.sql.trim()) return;
     const startedAt = Date.now();
-    const sqlAtRun = tab.sql;
+    const sqlAtRun = sql ?? tab.sql;
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "query"
@@ -1940,7 +2025,6 @@ export const useStore = create<Store>((set, get) => ({
             : t
         ),
       }));
-      notifyError(`Explain failed: ${msg}`, `query-error:${tabId}`);
     }
   },
 
@@ -1976,7 +2060,13 @@ export const useStore = create<Store>((set, get) => ({
       notifyError("Pick a database before saving a query.");
       return;
     }
-    const query: SavedQuery = { name: trimmed, sql: tab.sql };
+    const query: SavedQuery = {
+      name: trimmed,
+      sql: tab.sql,
+      inspectorOpen: tab.inspectorOpen ?? false,
+      inspectorHeight: tab.inspectorHeight,
+      filters: tab.filters ?? [],
+    };
     try {
       await ipc.saveSavedQuery(tab.profileId, tab.database, query);
       const savedQueries = await ipc.listSavedQueries(tab.profileId, tab.database);
@@ -2005,7 +2095,16 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId && t.kind === "query"
-          ? { ...t, sql: saved.sql, activeSavedQuery: name, savedSql: saved.sql }
+          ? {
+              ...t,
+              sql: saved.sql,
+              activeSavedQuery: name,
+              savedSql: saved.sql,
+              /* Older saves carry no view state; leave the tab's as it is. */
+              inspectorOpen: saved.inspectorOpen ?? t.inspectorOpen,
+              inspectorHeight: saved.inspectorHeight ?? t.inspectorHeight,
+              filters: saved.filters ?? t.filters,
+            }
           : t
       ),
     }));
@@ -3230,4 +3329,9 @@ async function refreshFoldersEverywhere(
 
     return next;
   });
+}
+
+/* Dev only: lets screenshot and debugging scripts read the store from the page. */
+if (import.meta.env.DEV) {
+  (window as unknown as { __dbsageStore?: typeof useStore }).__dbsageStore = useStore;
 }

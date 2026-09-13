@@ -27,6 +27,9 @@ interface Props {
   /** Extra classes for the popup menu container (e.g. font-size — the option
    * buttons inherit it, since the global rule pins their own font-size). */
   menuClassName?: string;
+  /** Where the menu opens: below the trigger, left-aligned (default), or above
+   * it, right-aligned — for a trigger at the bottom-right of a pane. */
+  placement?: "below-left" | "above-right";
   /** Muted text shown in the trigger when no option matches `value`. */
   placeholder?: string;
   /** Compact trigger: only the current option's icon (or `icon`) and the
@@ -49,6 +52,7 @@ export function StyledSelect({
   icon,
   className,
   menuClassName,
+  placement = "below-left",
   placeholder,
   iconOnly = false,
 }: Props) {
@@ -159,11 +163,19 @@ export function StyledSelect({
               "fixed z-[60] max-h-72 overflow-auto rounded border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm shadow-xl shadow-black/60 py-1 text-[12px]",
               menuClassName
             )}
-            style={{
-              left: rect.left,
-              top: rect.bottom + 4,
-              minWidth: Math.max(rect.width, 220),
-            }}
+            style={
+              placement === "above-right"
+                ? {
+                    right: window.innerWidth - rect.right,
+                    bottom: window.innerHeight - rect.top + 4,
+                    minWidth: Math.max(rect.width, 160),
+                  }
+                : {
+                    left: rect.left,
+                    top: rect.bottom + 4,
+                    minWidth: Math.max(rect.width, 220),
+                  }
+            }
           >
             {options.map((o, i) => (
               <button

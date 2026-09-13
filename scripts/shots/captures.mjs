@@ -19,7 +19,7 @@
  *
  * Sizes are CSS pixels; the saved PNG is scaled by the display's pixel ratio.
  */
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import {
@@ -48,8 +48,48 @@ import {
 const SALES = { name: "Sales", firstTable: "orders" };
 const MAIN = '[data-el="main-pane"]';
 const FIXTURE_JSON = resolve("scripts/shots/fixtures/test.json");
-const SETTINGS_FILE = resolve(tmpdir(), "dbsage-settings-2026-08-30.dbsage");
+const SETTINGS_FILE = resolve(tmpdir(), "dbsage-workspace-2026-08-30.dbsage");
 const SETTINGS_PASSPHRASE = "screenshots";
+/* A plaintext workspace file from an "old laptop": its host matches no
+   connection here, so Import Workspace offers to map it. */
+const FOREIGN_FILE = resolve(tmpdir(), "dbsage-workspace-old-laptop.dbsage");
+const FOREIGN_BUNDLE = {
+  app: "DBSage",
+  format: "dbsage-state",
+  version: 1,
+  exportedAt: "2026-08-30T12:00:00Z",
+  relations: {
+    "old-laptop": {
+      [DB]: [
+        { id: "shot-rel-1", fromTable: "orders", fromColumn: "customer_id", toTable: "customers", toColumn: "id", kind: "has_one", name: "Customer" },
+      ],
+    },
+  },
+};
+
+const PARAMS_SQL = `SELECT id, status, total
+FROM orders
+WHERE status = '{{Order status=shipped|Pending=pending|Cancelled=cancelled}}'
+  AND total >= {{Minimum total}}
+ORDER BY id DESC`;
+
+const NESTED_SQL = `SELECT COLUMN_NAME, DATA_TYPE
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = '${DB}'
+  AND TABLE_NAME = '{{Table^SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=\\'${DB}\\' ORDER BY TABLE_NAME}}'
+  AND COLUMN_NAME = '{{Column^SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=\\'${DB}\\' AND TABLE_NAME=\\'{{Table}}\\'}}'`;
+
+const STAR_SQL = `SELECT o.*, c.name
+FROM orders o
+JOIN customers c ON c.id = o.customer_id`;
+
+/** Replace the query editor's text (a controlled textarea). */
+async function setEditorSql(page, sql) {
+  const editor = page.locator('textarea[data-el="query-editor"]');
+  await editor.click();
+  await editor.fill(sql);
+  await page.keyboard.press("Escape");
+}
 
 export const captures = [
   {
@@ -537,6 +577,46 @@ export const captures = [
     after: (page) => dismissDialogs(page),
   },
   {
+    name: "query-expand-star",
+    origin: MAIN,
+    pad: 16,
+    targets: ['[data-el="query-toolbar"]', '[data-el="expand-star-dialog"]'],
+    async steps(page) {
+      await setEditorSql(page, STAR_SQL);
+      await page.locator('[data-el="query-expand-star-btn"]').click();
+      await page.locator('[data-el="expand-star-dialog"] input[type="checkbox"]').first().waitFor();
+    },
+    after: (page) => dismissDialogs(page),
+  },
+  {
+    name: "query-params",
+    origin: MAIN,
+    pad: 16,
+    targets: ['[data-el="query-editor"]', '[data-el="query-params-dialog"]'],
+    async steps(page) {
+      await setEditorSql(page, PARAMS_SQL);
+      await page.locator('[data-el="query-execute-btn"]').click();
+      await page.locator('[data-el="query-params-dialog"]').waitFor();
+      await page.locator('[data-el="query-param-input"]').fill("100");
+    },
+    after: (page) => dismissDialogs(page),
+  },
+  {
+    name: "query-params-nested",
+    pad: 12,
+    targets: ['[data-el="query-params-dialog"]'],
+    async steps(page) {
+      await setEditorSql(page, NESTED_SQL);
+      await page.locator('[data-el="query-execute-btn"]').click();
+      const dialog = page.locator('[data-el="query-params-dialog"]');
+      await dialog.waitFor();
+      /* Both menus load: the outer one after the inner one has its first value. */
+      await dialog.locator('[data-el="query-param-select"]').nth(1).waitFor();
+      await page.waitForTimeout(300);
+    },
+    after: (page) => dismissDialogs(page),
+  },
+  {
     name: "query-multi",
     origin: MAIN,
     pad: 0,
@@ -623,6 +703,79 @@ export const captures = [
     },
   },
   {
+    /* Hand-set scene (grab mode): the table view before choosing to Query. */
+    name: "table-to-query-source",
+    window: { width: 1300, height: 760 },
+    full: true,
+    async steps() {},
+  },
+  {
+    name: "table-to-query",
+    window: { width: 1300, height: 760 },
+    full: true,
+    async steps(page) {
+      await openTable(page, "orders", SALES);
+      await cell(page, 1, 2).click();
+      const panel = page.locator('[data-el="relations-panel"]');
+      if (!(await panel.isVisible())) {
+        await page.locator('[data-el="relations-toggle-btn"]').click();
+        await panel.waitFor();
+      }
+      /* The saved layout may already show the Customer peek; clicking its tab
+         again would close it. */
+      const peekPanel = page.locator('[data-el="integrated-peek-panel"]');
+      if (!(await peekPanel.isVisible())) {
+        await panel.getByRole("button", { name: /Customer peek tab/ }).click();
+        await peekPanel.waitFor();
+      }
+      await page.waitForTimeout(800);
+      await page.locator('[data-el="table-to-query-btn"]').click();
+      await page.locator('textarea[data-el="query-editor"]').waitFor();
+      await page.locator('[data-el="query-execute-btn"]').click();
+      await page.locator('[data-el="grid-row"]').first().waitFor();
+      await page.locator('[data-row-index="0"] [data-el="row-gutter"]').click();
+      await page.waitForTimeout(300);
+    },
+    after: (page) => closeAllTabs(page),
+  },
+  {
+    name: "relations-export",
+    pad: 12,
+    targets: ['[data-el="export-relations-dialog"]'],
+    async steps(page) {
+      await openDb(page);
+      await page.locator('[data-el="relationships-btn"]').click();
+      await page.locator('[data-el="relation-table-row"]').first().waitFor();
+      await page.locator('[data-el="export-relations-btn"]').click();
+      await page.locator('[data-el="export-relations-dialog"]').waitFor();
+    },
+    after: (page) => dismissDialogs(page),
+  },
+  {
+    name: "relations-clear-warning",
+    pad: 12,
+    targets: ['[data-el="clear-relations-dialog"]'],
+    async steps(page) {
+      await page.locator('[data-el="clear-relations-btn"]').click();
+      await page.locator('[data-el="clear-relations-peek-warning"]').waitFor();
+    },
+    async after(page) {
+      await dismissDialogs(page);
+      await closeAllTabs(page);
+    },
+  },
+  {
+    name: "db-export-setup",
+    pad: 12,
+    targets: ['[data-el="export-database-setup-dialog"]'],
+    async steps(page) {
+      await openDb(page);
+      await page.locator('[data-el="database-export-settings"]').click();
+      await page.locator('[data-el="export-database-setup-dialog"]').waitFor();
+    },
+    after: (page) => dismissDialogs(page),
+  },
+  {
     name: "main-first_run",
     full: true,
     async steps(page) {
@@ -663,7 +816,7 @@ export const captures = [
       const open = pickNativeFile(SETTINGS_FILE);
       await page.locator('[data-el="import-choose-btn"]').click();
       await open;
-      await page.getByText("dbsage-settings-2026-08-30.dbsage").waitFor();
+      await page.getByText("dbsage-workspace-2026-08-30.dbsage").waitFor();
       await page.locator('[data-el="import-passphrase-input"]').fill(SETTINGS_PASSPHRASE);
     },
   },
@@ -678,6 +831,26 @@ export const captures = [
     async after(page) {
       await page.locator('[data-el="state-transfer-close-btn"]').click();
       rmSync(SETTINGS_FILE, { force: true });
+    },
+  },
+  {
+    name: "main-import-host-map",
+    pad: 12,
+    targets: ['[data-el="state-transfer-dialog"]'],
+    async steps(page) {
+      writeFileSync(FOREIGN_FILE, JSON.stringify(FOREIGN_BUNDLE, null, 2));
+      await openAppMenu(page, "File");
+      await page.locator('[data-el="menu-import-state"]').click();
+      const open = pickNativeFile(FOREIGN_FILE);
+      await page.locator('[data-el="import-choose-btn"]').click();
+      await open;
+      await page.getByText("dbsage-workspace-old-laptop.dbsage").waitFor();
+      await page.locator('[data-el="import-unlock-btn"]').click();
+      await page.locator('[data-el="import-host-map"]').waitFor();
+    },
+    async after(page) {
+      await page.locator('[data-el="state-transfer-close-btn"]').click();
+      rmSync(FOREIGN_FILE, { force: true });
     },
   },
   {

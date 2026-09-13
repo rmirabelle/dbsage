@@ -44,7 +44,7 @@ export const HELP_SCREENSHOTS = {
   "table-actions": { physicalWidth: 1000, physicalHeight: 720, framing: "tiles and menu" },
   "schema-compare": { physicalWidth: 1440, physicalHeight: 850, framing: "main pane" },
   "backup-restore": { physicalWidth: 1000, physicalHeight: 720, framing: "dialog crop" },
-  "table-overview": { physicalWidth: 1440, physicalHeight: 850, framing: "main pane" },
+  "table-overview": { physicalWidth: 1488, physicalHeight: 790, framing: "main pane" },
   "column-controls": { physicalWidth: 1100, physicalHeight: 760, framing: "grid crop" },
   "row-editing": { physicalWidth: 1200, physicalHeight: 760, framing: "grid and editor" },
   "copy-export": { physicalWidth: 1000, physicalHeight: 720, framing: "grid and menu" },
@@ -64,10 +64,10 @@ export const HELP_SCREENSHOTS = {
   "main-first_run": { physicalWidth: 1333, physicalHeight: 790, framing: "annotated main window" },
   "main-file-import": { physicalWidth: 400, physicalHeight: 159, framing: "File menu crop" },
   "main-import_dialog": { physicalWidth: 680, physicalHeight: 403, framing: "import dialog" },
-  "main-import_dialog-confirm": { physicalWidth: 680, physicalHeight: 520, framing: "import preview dialog" },
-  "main-db": { physicalWidth: 1333, physicalHeight: 790, framing: "connected main window" },
+  "main-import_dialog-confirm": { physicalWidth: 666, physicalHeight: 505, framing: "import preview dialog" },
+  "main-db": { physicalWidth: 2058, physicalHeight: 1753, framing: "connected main window" },
   "main-db-folder": { physicalWidth: 1098, physicalHeight: 373, framing: "database folder view" },
-  "main-db-context": { physicalWidth: 829, physicalHeight: 609, framing: "table context menu" },
+  "main-db-context": { physicalWidth: 774, physicalHeight: 609, framing: "table context menu" },
   "main-new_connection": { physicalWidth: 580, physicalHeight: 636, framing: "new connection dialog" },
   "db-drag_to_folder": { physicalWidth: 843, physicalHeight: 301, framing: "annotated folder drop target" },
   "db-drag_to_db": { physicalWidth: 466, physicalHeight: 361, framing: "annotated database drop target" },
@@ -100,11 +100,20 @@ export const HELP_SCREENSHOTS = {
   "table-new_indexes": { physicalWidth: 966, physicalHeight: 745, framing: "annotated Indexes tab" },
   "table-fks": { physicalWidth: 966, physicalHeight: 745, framing: "annotated Foreign Keys tab" },
   "query-overview": { physicalWidth: 1333, physicalHeight: 790, framing: "annotated query workspace" },
-  "query-explain": { physicalWidth: 1259, physicalHeight: 893, framing: "annotated Query Analysis panel" },
-  "query-new": { physicalWidth: 861, physicalHeight: 420, framing: "annotated Saved queries menu" },
-  "query-history": { physicalWidth: 930, physicalHeight: 661, framing: "annotated Query History" },
+  "query-explain": { physicalWidth: 1324, physicalHeight: 893, framing: "annotated Query Analysis panel" },
+  "query-new": { physicalWidth: 861, physicalHeight: 474, framing: "annotated Saved queries menu" },
+  "query-history": { physicalWidth: 930, physicalHeight: 730, framing: "annotated Query History" },
+  "query-params": { physicalWidth: 569, physicalHeight: 322, framing: "editor with placeholders plus the Query parameters dialog" },
+  "query-params-nested": { physicalWidth: 582, physicalHeight: 337, framing: "Query parameters dialog with an inner field filled and an outer query-fed menu" },
+  "query-expand-star": { physicalWidth: 574, physicalHeight: 586, framing: "toolbar * button with the Replace * with columns dialog" },
+  "table-to-query-source": { physicalWidth: 1492, physicalHeight: 1079, framing: "table view with filters and the Customer peek open, before to Query" },
+  "table-to-query": { physicalWidth: 1489, physicalHeight: 1024, framing: "the generated query tab with the peek as a JSON column" },
+  "main-import-host-map": { physicalWidth: 671, physicalHeight: 645, framing: "Import Workspace step 2 with a host mapping row" },
+  "db-export-setup": { physicalWidth: 571, physicalHeight: 495, framing: "Export database setup dialog" },
+  "relations-export": { physicalWidth: 572, physicalHeight: 299, framing: "Export relations dialog" },
+  "relations-clear-warning": { physicalWidth: 770, physicalHeight: 383, framing: "Clear all relations dialog with the peek layout warning list" },
   "query-multi": { physicalWidth: 773, physicalHeight: 591, framing: "annotated result-set tabs" },
-  "relations": { physicalWidth: 966, physicalHeight: 410, framing: "Relations View" },
+  "relations": { physicalWidth: 1014, physicalHeight: 410, framing: "Relations View" },
   "relation-edit": { physicalWidth: 930, physicalHeight: 351, framing: "Edit Relation dialog" },
   "relations-copy": { physicalWidth: 630, physicalHeight: 350, framing: "Copy Relations dialog" },
   "relations-menu": { physicalWidth: 1625, physicalHeight: 875, framing: "annotated cell Relations menu" },
@@ -186,7 +195,7 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               {
                 type: "paragraph",
-                text: "Connections live in the left sidebar. On a new installation, choose + beside Connections to create one. A dimmed connection with a disconnected icon is already saved but is not currently connected; click it once to connect. If you are moving from another DB Sage installation, File > Settings > Import Settings can restore exported connections and other workspace settings instead.",
+                text: "Connections live in the left sidebar. On a new installation, choose + beside Connections to create one. A dimmed connection with a disconnected icon is already saved but is not currently connected; click it once to connect. If you are moving from another DB Sage installation, File > Import Workspace can restore exported connections and other workspace data instead.",
               },
               shot(
                 "main-first_run",
@@ -250,7 +259,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               {
                 type: "note",
                 title: "Safe credential storage",
-                text: "Saved passwords are protected by Windows Credential Manager rather than stored in the settings file. An exported settings file must use a passphrase whenever connection profiles are included.",
+                text: "Saved passwords are protected by Windows Credential Manager rather than stored in the workspace file. An exported workspace file must use a passphrase whenever connection profiles are included.",
               },
             ],
           },
@@ -693,7 +702,7 @@ export const HELP_GROUPS: HelpGroup[] = [
               shot(
                 "table-overview",
                 "Table View showing rows and its toolbar",
-                "The toolbar handles schema editing, inserts, refresh, import, saved views, export, and the Inspector. Paging controls stay at the bottom."
+                "The toolbar handles schema editing, inserts, refresh, import, to Query, saved views, export, and the Inspector. to Query opens a new query tab with the SQL this view amounts to: its visible columns with their aliases, its filters, and its sort. With the Relations panel showing, the selected peek at each level rides along as a JSON column; see From a table view to a query. Paging controls stay at the bottom."
               ),
               {
                 type: "bullets",
@@ -958,7 +967,7 @@ export const HELP_GROUPS: HelpGroup[] = [
                 items: [
                   "Choose the expand button beside SHOW to open Edit JSON display. Drag its header to move it, or drag its resize corner for more space.",
                   "Type or paste into Expressions. Separate display expressions with commas; newlines can spread a long expression across several lines without starting a new expression.",
-                  "Property suggestions appear after a short typing pause. Use Up/Down to choose, Enter or Tab to insert, or Escape to dismiss. At the root, suggestions show document keys. Inside items[prop=value] or [prop=value], they show keys from the first item of the corresponding sampled arrays. Each array is sampled once per editor session from up to 100 table rows, merged with up to 100 loaded rows; result grids use loaded rows only. Sampling uses the highest primary-key values when there is a single-column primary key, which need not be the most recently edited rows. Suggestions are hints, not a complete JSON schema; deeper nested array paths are not suggested yet.",
+                  "At the root of an expression, press Ctrl+Space to list document keys; typing alone never opens the list there. Inside items[…] suggestions appear after a short typing pause. Use Up/Down to choose, Enter or Tab to insert, or Escape to dismiss. Inside items[prop=value] or [prop=value], they show keys from the first item of the corresponding sampled arrays. Each array is sampled once per editor session from up to 100 table rows, merged with up to 100 loaded rows; result grids use loaded rows only. Sampling uses the highest primary-key values when there is a single-column primary key, which need not be the most recently edited rows. Suggestions are hints, not a complete JSON schema; deeper nested array paths are not suggested yet.",
                   "Check Preview against the current row. Use its previous and next buttons to try other loaded rows. With no loaded rows, you can still write and apply valid expressions.",
                   "Use the Expression guide below the panels for examples and notes. Validation appears below Expressions; correct any syntax error before applying.",
                   "Choose Apply to update the column and close both the editor and the column menu, revealing the result. Cancel or Escape discards changes made in the editor and returns to the column menu.",
@@ -1093,15 +1102,16 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               shot(
                 "query-overview",
-                "DB Sage query tab annotated with the connection and database selectors, Execute, Saved queries, History, Insert, Export, and the result filter controls",
-                "A query tab combines connection and database selectors, execution tools, the SQL editor, and a results grid. The grid supports the same post-query filtering and sorting as Table View, and Export sends selected rows to Excel, JSON, and other formats.",
+                "DB Sage query tab annotated with the connection and database selectors, Execute, Saved, the SQL group with History, the * button, Insert and Format, the results toolbar with timings, and the Max rows control in the footer",
+                "A query tab combines connection and database selectors, execution tools, the SQL editor, and a results grid. The toolbar's left side holds Execute, Explain, and Saved; its right side, under the SQL label, holds History, the * expander, Insert, and Format. The results toolbar shows server and round-trip times, and Max rows sits in the footer.",
                 "wide"
               ),
               {
                 type: "steps",
                 items: [
                   "Choose the connection and database at the left of the toolbar.",
-                  "Write SQL in the editor. Completion suggests keywords, tables, and columns based on FROM and JOIN context.",
+                  "Write SQL in the editor. Completion suggests keywords, tables, and columns based on FROM and JOIN context, plus words you have already written, such as a table name typed earlier.",
+                  "The list opens on its own as you type a keyword, table, or column. When the caret follows a space and nothing is typed yet, press Ctrl+Space to open it.",
                 ],
               },
               shot(
@@ -1114,7 +1124,27 @@ export const HELP_GROUPS: HelpGroup[] = [
                 start: 3,
                 items: [
                   "Press Ctrl+Enter or choose Execute to run the current statement or selection.",
-                  "Use Stop while a long query is running. Adjust Max rows before running when you need a larger or unlimited result.",
+                  "Use Stop while a long query is running. Adjust Max rows in the results footer before running when you need a larger or unlimited result.",
+                ],
+              },
+            ],
+          },
+          {
+            title: "Expand * into columns",
+            blocks: [
+              shot(
+                "query-expand-star",
+                "The * button in the query toolbar and the Replace * with columns dialog with a table picker and a column checklist",
+                "When a select list holds a star, the toolbar shows a * button. Its dialog pre-selects the star's table and lets you keep only the columns you want.",
+                "inline-right"
+              ),
+              {
+                type: "bullets",
+                items: [
+                  "The button appears only for a star in a select list: multiplication, stars inside strings or comments, and stars inside {{placeholders}} do not count.",
+                  "The table is pre-selected from the star: an alias.* picks that alias's table, a bare * picks the first FROM table. The table field is searchable.",
+                  "Use All and None on the column checklist, then OK. The star becomes the kept columns; alias.* keeps its prefix on each column.",
+                  "With several stars, the button shows their count and replaces the one nearest the cursor.",
                 ],
               },
             ],
@@ -1134,8 +1164,9 @@ export const HELP_GROUPS: HelpGroup[] = [
                 items: [
                   "Multi-statement SQL produces numbered result-set tabs with row or affected-row summaries.",
                   "Max rows protects the app from accidentally fetching a huge result. A capped result is clearly marked.",
-                  "Query results share the table grid's sorting, filters, column visibility, selection, Copy As, Export, and Inspector tools.",
-                  "The footer separates server execution time from total round-trip and transfer time.",
+                  "Query results share the table grid's sorting, filters, column visibility, row selection, Export, and Inspector tools. Right-click does nothing on result rows, and only one cell can be highlighted at a time; whole rows still select as ranges.",
+                  "With a cell selected, a copy button appears in the results toolbar. It copies the cell's value as the Inspector would show it.",
+                  "The results toolbar separates server execution time from total round-trip and transfer time. Hovering a value shows nothing in the help strip; use the Inspector to read long values.",
                 ],
               },
               shot(
@@ -1176,7 +1207,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       },
       {
         id: "query-tools",
-        title: "Saved queries and tools",
+        title: "Saved Queries and History",
         summary: "Reuse SQL, inspect history, generate snippets, and choose a formatting style.",
         sections: [
           {
@@ -1184,7 +1215,7 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               {
                 type: "paragraph",
-                text: "The Saved menu lists saved queries for the current connection and holds the name field for saving the current SQL. When you open a new Query tab, the Saved menu expands automatically so you can pick a query at once.",
+                text: "The Saved menu lists saved queries for the current connection and holds the name field for saving the current SQL. When you open a new Query tab, the Saved menu expands automatically so you can pick a query at once; a tab opened with to Query from a table view is the exception, since it already holds its SQL.",
               },
               shot(
                 "query-new",
@@ -1196,19 +1227,141 @@ export const HELP_GROUPS: HelpGroup[] = [
                 type: "bullets",
                 items: [
                   "Save a query with a name, open saved SQL later, or explicitly overwrite the active saved query.",
-                  "Query History lets you recover recently executed SQL.",
+                  "A saved query also remembers whether the Inspector panel was open, its height, and any column filters on the results grid. Loading the query restores all three.",
+                  "A saved query whose SQL holds {{placeholders}} shows a braces icon in the menu, and loading it opens the parameter dialog at once. See Parameterized queries.",
                 ],
               },
               shot(
                 "query-history",
-                "Query History list with recent SQL and relative timestamps",
-                "History keeps recently executed SQL with the time it ran. Click an entry to load it into the editor, remove a single entry with its X, or use Clear all."
+                "Query History dialog with a page of colored SQL entries, relative timestamps, paging controls, and a resize corner",
+                "History keeps recently executed SQL with the time it ran, ten entries per page and colored as in the editor. Click an entry to load it into the editor, remove a single entry with its X, or use Clear all. Drag the bottom-right corner to resize; the size is remembered."
               ),
               {
                 type: "bullets",
                 items: [
                   "Insert adds generated SQL snippets, including structured helpers such as AS_JSON.",
                   "Format applies the selected formatting style to the current statement.",
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "query-params",
+        title: "Parameterized queries",
+        summary: "Write placeholders that ask for values when the query runs.",
+        sections: [
+          {
+            title: "Placeholders",
+            blocks: [
+              shot(
+                "query-params",
+                "SQL editor with two blue placeholders and the Query parameters dialog asking for a text value and a menu choice",
+                "Placeholders are colored blue in the editor. Execute or Explain opens the Query parameters dialog, which asks for each value before the query runs.",
+                "wide"
+              ),
+              {
+                type: "bullets",
+                items: [
+                  "{{Primary Email}} asks for a text value labeled Primary Email.",
+                  "{{Locked=1|Unlocked=0}} shows a menu with the labels Locked and Unlocked and injects 1 or 0. An option without = uses its label as its value.",
+                  "The same name repeated anywhere in the SQL is asked once. Write the options on one instance and repeat the bare name, such as {{State}}, elsewhere.",
+                  "Put quotes around a placeholder yourself when the value is a string, as in email = '{{Primary Email}}'. The injected value is escaped, so quotes and backslashes in it are safe.",
+                  "Completion stays off inside a placeholder, and the * button ignores stars inside one.",
+                ],
+              },
+            ],
+          },
+          {
+            title: "Menus filled by a query",
+            blocks: [
+              {
+                type: "paragraph",
+                text: "{{State^SELECT code, label FROM us_states}} runs the query after the caret when the dialog opens and shows the rows as a searchable menu. One result column is both label and value. Two columns are the value to inject, then the label to show. Rows with a NULL value are skipped, duplicate labels get the value appended, and the list stops at 1,000 rows.",
+              },
+              {
+                type: "bullets",
+                items: [
+                  "The option query runs on the tab's own connection and database.",
+                  "If the option query fails or returns no rows, the field becomes a text input and shows the error under it, so you can still run.",
+                  "Your last choice is re-selected when it is still in the list; otherwise the first option is chosen.",
+                  "When the placeholder sits inside a quoted string, write the option query's own quotes as \' or \", for example WHERE TABLE_SCHEMA=\'next_dev\'.",
+                ],
+              },
+            ],
+          },
+          {
+            title: "Nested placeholders",
+            blocks: [
+              shot(
+                "query-params-nested",
+                "Query parameters dialog with a Database field filled and a Column field whose menu was loaded from that database",
+                "An inner placeholder feeds an outer one. The dialog lists the inner field first and re-runs the outer query whenever the inner value changes.",
+                "inline-right"
+              ),
+              {
+                type: "paragraph",
+                text: "An option query can hold placeholders of its own, written with balanced braces: {{Column^SELECT name FROM cols WHERE db=\'{{Database}}\'}}. The dialog lists Database above Column, shows Column as waiting until Database has a value, then runs the Column query with that value and re-runs it whenever Database changes. A placeholder that depends on itself, directly or through another, is reported as an error.",
+              },
+            ],
+          },
+          {
+            title: "Run, remember, and save",
+            blocks: [
+              {
+                type: "bullets",
+                items: [
+                  "Execute and Explain both open the dialog and run the filled-in SQL. The editor keeps the placeholders, so you can run again with new values.",
+                  "The dialog pre-fills each field with the value you used last time in that tab.",
+                  "Save a parameterized query like any other. It shows a braces icon in the Saved queries menu, and loading it opens the dialog at once and runs on confirm.",
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "query-from-table",
+        title: "From a table view to a query",
+        summary: "Turn a table view, with or without its relation peeks, into SQL you can edit.",
+        sections: [
+          {
+            title: "The to Query button",
+            blocks: [
+              shot(
+                "table-to-query-source",
+                "A table view with a filter applied and the Customer peek open in the Relations panel, with the to Query button in the toolbar",
+                "The starting point: a table view with its filters, sort, and the peek you want to carry along.",
+                "wide"
+              ),
+              shot(
+                "table-to-query",
+                "The query tab that to Query generated, with the table's filter in the WHERE clause and a Customer JSON column in the results",
+                "to Query opens a new query tab holding the SQL the table view amounts to. With the Relations panel showing, the selected peek at each level becomes a JSON column.",
+                "wide"
+              ),
+              {
+                type: "bullets",
+                items: [
+                  "Choose to Query in the table toolbar. The new tab lists the visible columns with their aliases, or * when nothing is hidden or aliased, then the view's filters with their values written in, then its sort.",
+                  "Filters render exactly as the grid runs them, including JSON path filters, date-only filters, and relation filters.",
+                  "The editor is sized to the generated SQL, up to half the pane, and the Inspector opens so you can read the JSON results.",
+                ],
+              },
+            ],
+          },
+          {
+            title: "Relation peeks as JSON columns",
+            blocks: [
+              {
+                type: "bullets",
+                items: [
+                  "With the Relations panel hidden, you get the plain table query. With it showing, the selected peek tab at each level is added as a column named after the tab.",
+                  "A has-one peek becomes a JSON_OBJECT of its visible columns, with the peek's aliases as keys, its filters, its sort, and LIMIT 1.",
+                  "A has-many peek becomes a JSON_ARRAYAGG of such objects with its filters. MySQL's JSON_ARRAYAGG accepts no ORDER BY, so a has-many peek's sort is not applied.",
+                  "A selected nested peek appears as a key inside its parent's object. Each level gets its own table alias, so a self-relation still resolves.",
+                  "Hidden peek tabs and unselected sibling tabs are left out. Select the tabs you want at each level before choosing to Query.",
                 ],
               },
             ],
@@ -1255,18 +1408,18 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               shot(
                 "relations",
-                "Relations View listing four relations grouped by source table, with the search box, + Relation, Copy All, Clear All, Export, and Import toolbar",
+                "Relations View listing four relations grouped by source table, with the search box, + Relation, All (copy), All (delete), Export, and Import toolbar",
                 "Relations are grouped by source table and labeled HAS ONE or HAS MANY. Each row shows the label and the matching columns. Click a relation to edit it.",
                 "wide"
               ),
               {
                 type: "paragraph",
-                text: "Relations belong to DB Sage, not to the database, so they travel easily. Copy All copies every relation to another database on any connection, which is useful when a copy of a database has the same tables. Export writes the relations to a portable file, and Import reads that file into another database or another DB Sage installation.",
+                text: "Relations belong to DB Sage, not to the database, so they travel easily. The All button with the copy icon copies every relation to another database on any connection, which is useful when a copy of a database has the same tables. Export writes the relations to a portable file, and Import reads that file into another database or another DB Sage installation.",
               },
               shot(
                 "relations-copy",
                 "Copy Relations dialog with connection and database selectors",
-                "Copy All copies every relation on the current database to another database, on the same or a different connection. Copy stays disabled until you pick a different target."
+                "The All button with the copy icon copies every relation on the current database to another database, on the same or a different connection. Copy stays disabled until you pick a different target."
               ),
             ],
           },
@@ -1296,9 +1449,27 @@ export const HELP_GROUPS: HelpGroup[] = [
               {
                 type: "bullets",
                 items: [
-                  "Search by table, copy all relations to another database, or export/import them as a portable file.",
-                  "Refresh after schema changes. Clear All removes only DB Sage relations, never database constraints.",
+                  "Search by table, copy all relations to another database, or export/import them as a portable file. Export first shows what the file will contain and how many relations it holds; Import shows the same list above its overwrite warning.",
+                  "Refresh after schema changes. The All button with the trash icon removes only DB Sage relations, never database constraints.",
                 ],
+              },
+              shot(
+                "relations-export",
+                "Export relations dialog listing the DB relations category and the number of relations the file will hold",
+                "Export confirms what the file carries before the save prompt.",
+                "inline-left"
+              ),
+              shot(
+                "relations-clear-warning",
+                "Clear all relations dialog listing tables whose saved peek layouts use these relations, with a peek count per table",
+                "Clear All checks the saved layouts for the database. When tables hold peek layouts built on these relations, it lists them so you can export the relations first.",
+                "inline-right"
+              ),
+              {
+                type: "note",
+                title: "Clearing relations orphans peek layouts",
+                tone: "warning",
+                text: "Peek layouts are stored per table and keyed by relation. After Clear All, each listed table drops those peeks the next time it opens. Importing a relations file exported beforehand brings the same relations back and reconnects the layouts; relations recreated by hand get new keys and do not.",
               },
             ],
           },
@@ -1449,21 +1620,21 @@ export const HELP_GROUPS: HelpGroup[] = [
       },
       {
         id: "workspace-settings",
-        title: "Transfer settings and update",
-        summary: "Transfer DB Sage state and keep the application current.",
+        title: "Transfer workspace and update",
+        summary: "Move your workspace or a database setup between installations, and keep the application current.",
         sections: [
           {
-            title: "Import and export settings",
+            title: "Import and export a workspace",
             blocks: [
               shot(
                 "main-file-import",
-                "DB Sage Settings dialog showing Import Settings and Export Settings",
-                "Open File > Settings to import a .dbsage settings file or create one for transfer to another installation.",
+                "File menu showing Import Workspace and Export Workspace",
+                "Open the File menu to import a .dbsage workspace file or create one for transfer to another installation.",
                 "inline-right"
               ),
               {
                 type: "paragraph",
-                text: "A .dbsage file can carry connection profiles, relations, table folders, column setups, table view presets, and saved queries. Export lets you choose the categories to include. A passphrase is required when connections are included because they contain saved passwords; for other categories, encryption is optional.",
+                text: "A workspace file (.dbsage) can carry connection profiles, relations, table folders, column setups, table view presets, and saved queries. It does not carry the application settings shown in the Settings dialog. Export Workspace lets you choose the categories to include. A passphrase is required when connections are included because they contain saved passwords; for other categories, encryption is optional.",
               },
               {
                 type: "note",
@@ -1477,14 +1648,14 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               shot(
                 "main-import_dialog",
-                "Import Settings dialog with a selected .dbsage file and masked passphrase",
+                "Import Workspace dialog with a selected .dbsage file and masked passphrase",
                 "Choose the exported .dbsage file and enter its passphrase when it is encrypted, then choose Continue to preview its contents.",
                 "inline-left"
               ),
               {
                 type: "steps",
                 items: [
-                  "Choose File > Settings > Import Settings, then select the .dbsage file.",
+                  "Choose File > Import Workspace, then select the .dbsage file.",
                   "Enter the passphrase if the export is encrypted. Leave it empty for an unencrypted export.",
                   "Choose Continue. DB Sage validates and reads the file without merging anything yet.",
                 ],
@@ -1496,7 +1667,7 @@ export const HELP_GROUPS: HelpGroup[] = [
             blocks: [
               shot(
                 "main-import_dialog-confirm",
-                "Import Settings preview listing selectable categories and item counts",
+                "Import Workspace preview listing selectable categories and item counts",
                 "The preview shows how many items each category contains. Clear any category you do not want to merge before choosing Import.",
                 "inline-right"
               ),
@@ -1504,18 +1675,34 @@ export const HELP_GROUPS: HelpGroup[] = [
                 type: "paragraph",
                 text: "Import merges only the checked categories. Items with matching internal IDs are updated and new items are added; categories you clear remain unchanged. Review the counts, choose Import, and wait for the completion summary before closing the dialog.",
               },
+              shot(
+                "main-import-host-map",
+                "Import Workspace step 2 with a host that has no matching connection and a menu to pick the connection it belongs to",
+                "A host with no connection here can be pointed at one of your connections before the merge.",
+                "inline-left"
+              ),
+              {
+                type: "paragraph",
+                text: "Folders, relations, layouts, and saved queries are stored under the host name of the connection they belong to. If the file names a host that none of your connections use, for example localhost on the old computer and 192.168.1.20 here, the dialog lists that host and lets you pick the connection it should belong to. Choose Keep to import it under the original host name instead; it becomes visible once you add a connection to that host.",
+              },
             ],
           },
           {
-            title: "Import layouts into another database",
+            title: "Move a database setup to another database",
             blocks: [
+              shot(
+                "db-export-setup",
+                "Export database setup dialog listing DB relations, table folder names, column filters and peek layouts, saved views, and saved queries",
+                "Export database setup shows the five categories the file will carry before asking where to save it.",
+                "inline-right"
+              ),
               {
                 type: "steps",
                 items: [
-                  "Open the source database and choose Export settings in its toolbar. The file contains that database's column setups, relations, table folders, saved views, and saved queries. Connection passwords and other databases are excluded. File > Settings > Export Settings remains the full-application backup tool.",
-                  "Open the destination database, choose Import settings in its toolbar, and select the exported file. The source and destination database names do not need to match. There are no categories or database mappings to select.",
-                  "Choose Import to apply the settings directly. Check compatibility is optional; it shows counts and skipped items without applying anything. Compatibility is checked during import even if you do not request the preview.",
-                  "Matching settings are replaced. Folders are merged: a table already in a destination folder stays there, only unfoldered tables move into imported folders, and existing folders are kept. Missing tables, columns, and unavailable relation peeks are skipped and listed in the completion details. Tables and columns are matched by exact name.",
+                  "Open the source database and choose Export database setup in its toolbar. A dialog lists what the file will contain: saved queries, relations, table folder names, column filters, peek window layouts, and saved views for that database. Connection passwords and other databases are excluded. Choose Export, then pick where to save the file. File > Export Workspace remains the full-application backup tool.",
+                  "Open the destination database, choose Import database setup in its toolbar, and select the exported file. The dialog lists the same items and states that they will be replaced for that database. The source and destination database names do not need to match. There are no categories or database mappings to select.",
+                  "Choose Import to apply the setup directly. Check compatibility is optional; it shows counts and skipped items without applying anything. Compatibility is checked during import even if you do not request the preview.",
+                  "Matching items are replaced. Folders are merged: a table already in a destination folder stays there, only unfoldered tables move into imported folders, and existing folders are kept. Missing tables, columns, and unavailable relation peeks are skipped and listed in the completion details. Tables and columns are matched by exact name.",
                   "Open destination table tabs reload automatically with their integrated peeks. Nested peeks use your destination connection and follow its selected rows. Database tables and data are unchanged.",
                   "Saved query text is copied unchanged. If it explicitly names the source database, edit those names before running the query against another database.",
                 ],

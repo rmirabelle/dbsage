@@ -1,13 +1,9 @@
 import { useEffect } from "react";
-import { FileArrowDown, FileArrowUp, X } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react";
 import { useUi, type AppSettings } from "../state/ui";
 
 interface Props {
   onClose: () => void;
-  onImport: () => void;
-  onExport: () => void;
-  /** An Import/Export dialog is open on top: Escape belongs to it, not to us. */
-  childOpen?: boolean;
 }
 
 /** One row per setting: label, help text, and the checkbox that changes it. */
@@ -24,16 +20,15 @@ const SETTINGS: { key: keyof AppSettings; label: string; help: string }[] = [
   },
 ];
 
-export function SettingsDialog({ onClose, onImport, onExport, childOpen = false }: Props) {
+export function SettingsDialog({ onClose }: Props) {
   const settings = useUi((s) => s.settings);
   const setSetting = useUi((s) => s.setSetting);
 
   useEffect(() => {
-    if (childOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, childOpen]);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -68,27 +63,6 @@ export function SettingsDialog({ onClose, onImport, onExport, childOpen = false 
               </span>
             </label>
           ))}
-        </div>
-
-        <div className="px-4 py-4 border-t border-zinc-800 space-y-3">
-          <div className="flex items-center gap-2">
-            <button
-              data-el="settings-import-btn"
-              onClick={onImport}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-accent-500 text-[#042f2e] hover:bg-accent-400 transition-colors"
-            >
-              <FileArrowDown size={15} />
-              Import Settings
-            </button>
-            <button
-              data-el="settings-export-btn"
-              onClick={onExport}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors"
-            >
-              <FileArrowUp size={15} />
-              Export Settings
-            </button>
-          </div>
         </div>
       </div>
     </div>

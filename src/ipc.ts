@@ -6,6 +6,8 @@ import type {
   ColumnFilter,
   ColumnInfo,
   ColumnSetup,
+  PeekLayoutTable,
+  PeekQuerySpec,
   Folder,
   ForeignKeyDef,
   ImportSummary,
@@ -36,6 +38,7 @@ import type {
   StateCounts,
   StateSelection,
   StateImportSource,
+  StateImportHost,
   StateImportMapping,
   StateMappingPreview,
   TableInfo,
@@ -80,6 +83,18 @@ export const ipc = {
     invoke<TableInfo[]>("list_tables", { profileId, database }),
   listColumns: (profileId: string, database: string, table: string) =>
     invoke<ColumnInfo[]>("list_columns", { profileId, database, table }),
+  /** The SQL a table view amounts to (visible columns, aliases, filters, sort). */
+  renderTableSql: (args: {
+    profileId: string;
+    database: string;
+    table: string;
+    columns: { column: string; alias: string | null }[];
+    sort: SortSpec | null;
+    filters: ColumnFilter[];
+    /** Open relation peeks to render as JSON columns; nested peeks inside. */
+    peeks: PeekQuerySpec[];
+  }) => invoke<string>("render_table_sql", args),
+
   fetchRows: (args: {
     profileId: string;
     database: string;
@@ -455,6 +470,9 @@ export const ipc = {
     invoke<void>("save_saved_query", { profileId, database, query }),
   deleteSavedQuery: (profileId: string, database: string, name: string) =>
     invoke<void>("delete_saved_query", { profileId, database, name }),
+  /** Tables whose saved peek layouts would be lost if this database's relations were deleted. */
+  listPeekLayoutTables: (profileId: string, database: string) =>
+    invoke<PeekLayoutTable[]>("list_peek_layout_tables", { profileId, database }),
   saveColumnSetup: (
     profileId: string,
     database: string,
@@ -472,12 +490,14 @@ export const ipc = {
   takeLaunchFile: () => invoke<string | null>("take_launch_file"),
   /** "database" for a single-database export, "app" for a full settings export. */
   stateFileKind: (path: string) => invoke<"app" | "database">("state_file_kind", { path }),
+  stateImportHosts: (path: string, passphrase: string) =>
+    invoke<StateImportHost[]>("state_import_hosts", { path, passphrase }),
   stateImportSources: (path: string, passphrase: string) =>
     invoke<StateImportSource[]>("state_import_sources", { path, passphrase }),
   previewStateMapping: (path: string, passphrase: string, selection: StateSelection, mapping: StateImportMapping) =>
     invoke<StateMappingPreview>("preview_state_mapping", { path, passphrase, selection, mapping }),
-  importState: (path: string, passphrase: string, selection: StateSelection, mapping?: StateImportMapping, previewToken?: string) =>
-    invoke<ImportSummary>("import_state", { path, passphrase, selection, mapping, previewToken }),
+  importState: (path: string, passphrase: string, selection: StateSelection, mapping?: StateImportMapping, previewToken?: string, hostMap?: Record<string, string>) =>
+    invoke<ImportSummary>("import_state", { path, passphrase, selection, mapping, previewToken, hostMap }),
 
   exportQuery: (args: {
     path: string;

@@ -9,11 +9,13 @@ import {
   UploadSimple,
   File as FileIcon,
 } from "@phosphor-icons/react";
+import { CATEGORY_ICONS } from "./stateCategoryIcons";
 import { ipc } from "../ipc";
 import { useStore } from "../state/store";
 import {
   STATE_CATEGORIES,
   type StateCounts,
+  type StateImportHost,
   type StateSelection,
 } from "../types";
 
@@ -26,7 +28,7 @@ interface Props {
   initialPath?: string;
 }
 
-const FILTERS = [{ name: "DB Sage State", extensions: ["dbsage"] }];
+const FILTERS = [{ name: "DB Sage Workspace", extensions: ["dbsage"] }];
 
 const allSelected = (): StateSelection => ({
   profiles: true,
@@ -51,11 +53,11 @@ const totalCount = (counts: StateCounts) =>
 
 export function StateTransferDialog({ mode, onClose, initialPath }: Props) {
   return mode === "export" ? (
-    <DialogShell title="Export Settings" onClose={onClose}>
+    <DialogShell title="Export Workspace" onClose={onClose}>
       <ExportBody onClose={onClose} />
     </DialogShell>
   ) : (
-    <DialogShell title="Import Settings" onClose={onClose}>
+    <DialogShell title="Import Workspace" onClose={onClose}>
       <ImportBody onClose={onClose} initialPath={initialPath} />
     </DialogShell>
   );
@@ -94,6 +96,7 @@ function CategoryChecklist({
               onChange={(e) => onToggle(key, e.target.checked)}
               className="accent-[#06b6d4] h-3.5 w-3.5"
             />
+            <span className={"shrink-0 " + (available ? "" : "opacity-40")}>{CATEGORY_ICONS[key]}</span>
             <span className="flex-1">{label}</span>
             {count !== undefined && (
               <span className="text-[11px] tabular-nums text-zinc-500">{count}</span>
@@ -127,7 +130,7 @@ function ExportBody({ onClose }: { onClose: () => void }) {
       setError("Passphrases do not match.");
       return;
     }
-    const defaultName = `dbsage-settings-${new Date()
+    const defaultName = `dbsage-workspace-${new Date()
       .toISOString()
       .slice(0, 10)}.dbsage`;
     const path = await save({ defaultPath: defaultName, filters: FILTERS });
@@ -150,7 +153,7 @@ function ExportBody({ onClose }: { onClose: () => void }) {
         <div className="flex items-start gap-2 text-[12px] text-zinc-200">
           <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-400" weight="fill" />
           <div>
-            <div>Settings exported successfully.</div>
+            <div>Workspace exported successfully.</div>
             <div className="mt-1 break-all text-[11px] text-zinc-500">{done}</div>
           </div>
         </div>
@@ -221,9 +224,13 @@ function ExportBody({ onClose }: { onClose: () => void }) {
 
 function ImportBody({ onClose, initialPath }: { onClose: () => void; initialPath?: string }) {
   const reloadAfterImport = useStore((s) => s.reloadAfterImport);
+  const profiles = useStore((s) => s.profiles);
   const [path, setPath] = useState<string | null>(initialPath ?? null);
   const [passphrase, setPassphrase] = useState("");
   const [counts, setCounts] = useState<StateCounts | null>(null);
+  const [hosts, setHosts] = useState<StateImportHost[]>([]);
+  /** Source host → chosen destination host. Missing or empty = keep as-is. */
+  const [hostMap, setHostMap] = useState<Record<string, string>>({});
   const [selection, setSelection] = useState<StateSelection>(allSelected);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -232,6 +239,19 @@ function ImportBody({ onClose, initialPath }: { onClose: () => void; initialPath
   const fileName = path ? path.split(/[\\/]/).pop() : null;
   const canPreview = path !== null && !busy;
   const anySelected = Object.values(selection).some(Boolean);
+
+  /**
+   * Hosts that have a connection here, each with the connection names that use
+   * it. A workspace host that matches none of these has nowhere to land unless
+   * the user points it at one of them.
+   */
+  const knownHosts = new Map<string, string[]>();
+  for (const p of profiles) {
+    knownHosts.set(p.host, [...(knownHosts.get(p.host) ?? []), p.name]);
+  }
+  const unresolvedHosts = hosts.filter(
+    (h) => !knownHosts.has(h.host) && !(selection.profiles && h.hasProfile)
+  );
 
   const handleChoose = async () => {
     const picked = await open({ multiple: false, filters: FILTERS });
@@ -248,7 +268,10 @@ function ImportBody({ onClose, initialPath }: { onClose: () => void; initialPath
     setBusy(true);
     try {
       const result = await ipc.previewState(path, passphrase);
+      const fileHosts = await ipc.stateImportHosts(path, passphrase);
       setCounts(result);
+      setHosts(fileHosts);
+      setHostMap({});
       setSelection(fromCounts(result));
     } catch (e) {
       setError(String(e));
@@ -262,7 +285,12 @@ function ImportBody({ onClose, initialPath }: { onClose: () => void; initialPath
     setError(null);
     setBusy(true);
     try {
-      const result = await ipc.importState(path, passphrase, selection);
+      const chosen = Object.fromEntries(
+        unresolvedHosts
+          .filter((h) => hostMap[h.host])
+          .map((h) => [h.host, hostMap[h.host]])
+      );
+      const result = await ipc.importState(path, passphrase, selection, undefined, undefined, chosen);
       await reloadAfterImport();
       setSummary(result);
     } catch (e) {
@@ -273,7 +301,7 @@ function ImportBody({ onClose, initialPath }: { onClose: () => void; initialPath
   };
 
   if (summary) {
-    const parts = STATE_CATEGORIES.map((c) => `${summary[c.key]} ${c.label.toLowerCase()}`);
+    const parts = STATE_CATEGORIES.map((c) => `${summary[c.key]} ${c.label}`);
     return (
       <Result onClose={onClose}>
         <div className="flex items-start gap-2 text-[12px] text-zinc-200">
@@ -301,7 +329,7 @@ function ImportBody({ onClose, initialPath }: { onClose: () => void; initialPath
             {" "}Items with a matching id are updated; everything else is added.
             {totalCount(counts) === 0 && (
               <span className="block mt-1 text-amber-400">
-                This file contains no importable settings.
+                This file contains no importable workspace data.
               </span>
             )}
           </p>
@@ -312,6 +340,37 @@ function ImportBody({ onClose, initialPath }: { onClose: () => void; initialPath
               setSelection((s) => ({ ...s, [key]: checked }))
             }
           />
+          {unresolvedHosts.length > 0 && (
+            <div data-el="import-host-map" className="space-y-2">
+              <p className="text-[11px] leading-relaxed text-zinc-400">
+                These hosts have no connection here. Pick the connection each one
+                belongs to, or keep the host name to use it later.
+              </p>
+              {unresolvedHosts.map((h) => (
+                <label key={h.host} className="block min-w-0">
+                  <span className="block truncate text-[11px] text-zinc-300">
+                    <span className="font-semibold">{h.host}</span>
+                    <span className="text-zinc-500"> · {h.databases.join(", ")}</span>
+                  </span>
+                  <select
+                    data-el="import-host-select"
+                    value={hostMap[h.host] ?? ""}
+                    onChange={(e) =>
+                      setHostMap((m) => ({ ...m, [h.host]: e.target.value }))
+                    }
+                    className="dbs-input mt-1"
+                  >
+                    <option value="">Keep as {h.host}</option>
+                    {[...knownHosts].map(([host, names]) => (
+                      <option key={host} value={host}>
+                        {names.join(", ")} ({host})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          )}
         </fieldset>
         <Footer error={error} onClose={onClose}>
           <button
@@ -333,8 +392,8 @@ function ImportBody({ onClose, initialPath }: { onClose: () => void; initialPath
     <>
       <div className="px-4 py-4 space-y-3">
         <p className="text-[11px] leading-relaxed text-zinc-400">
-          Open an encrypted DB Sage settings file. After unlocking it, you can
-          choose which categories to merge into your existing settings.
+          Open a DB Sage workspace file. After unlocking it, you can
+          select which workspace features to merge into your current workspace.
         </p>
         <Field label="File">
           <button

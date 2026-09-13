@@ -13,6 +13,7 @@ import clsx from "clsx";
 import { highlightSql } from "../lib/sqlHighlight";
 import {
   analyzeCompletion,
+  documentTokens,
   filterByPrefix,
   resolveQualifierTable,
   type CompletionKind,
@@ -47,6 +48,10 @@ export interface SqlEditorHandle {
   focus: () => void;
   /** Replace the current selection with `text`, leaving the caret after it. */
   insertText: (text: string) => void;
+  /** The caret offset (selection start). */
+  getCaret: () => number;
+  /** Replace `[start, end)` with `text`, leaving the caret after it. */
+  replaceRange: (start: number, end: number, text: string) => void;
 }
 
 /**
@@ -74,9 +79,24 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
   const pendingCaretRef = useRef<number | null>(null);
   /** Suppress auto-open for exactly this value (just accepted a suggestion). */
   const suppressValueRef = useRef<string | null>(null);
+  /** True only between a keystroke that changed the text and the next auto-open
+   * check, so a mouse click or arrow key landing on a word never pops the list. */
+  const typedRef = useRef(false);
 
   const setRefs = (node: HTMLTextAreaElement | null) => {
     innerRef.current = node;
+  };
+
+  const replace = (start: number, end: number, text: string) => {
+    const ta = innerRef.current;
+    if (!ta) return;
+    const next = ta.value.slice(0, start) + text + ta.value.slice(end);
+    suppressValueRef.current = next;
+    pendingCaretRef.current = start + text.length;
+    setOpen(false);
+    manualRef.current = false;
+    onChange(next);
+    requestAnimationFrame(() => innerRef.current?.focus());
   };
 
   useImperativeHandle(forwardedRef, () => ({
@@ -87,17 +107,10 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
     insertText: (text: string) => {
       const ta = innerRef.current;
       if (!ta) return;
-      const cur = ta.value;
-      const start = ta.selectionStart;
-      const end = ta.selectionEnd;
-      const next = cur.slice(0, start) + text + cur.slice(end);
-      suppressValueRef.current = next;
-      pendingCaretRef.current = start + text.length;
-      setOpen(false);
-      manualRef.current = false;
-      onChange(next);
-      requestAnimationFrame(() => innerRef.current?.focus());
+      replace(ta.selectionStart, ta.selectionEnd, text);
     },
+    getCaret: () => innerRef.current?.selectionStart ?? 0,
+    replaceRange: replace,
   }));
 
   const query = useMemo(
@@ -107,28 +120,41 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
 
   const suggestions = useMemo<Suggestion[]>(() => {
     if (!completion || !query) return [];
+    let primary: Suggestion[] = [];
     if (query.kind === "table")
-      return filterByPrefix(completion.tables, query.prefix).map((label) => ({
+      primary = filterByPrefix(completion.tables, query.prefix).map((label) => ({
         label,
         kind: "table" as const,
       }));
-    if (query.kind === "keyword")
-      return filterByPrefix(completion.keywords, query.prefix).map((label) => ({
+    else if (query.kind === "keyword")
+      primary = filterByPrefix(completion.keywords, query.prefix).map((label) => ({
         label,
         kind: "keyword" as const,
       }));
-    if (query.kind === "column" && query.qualifier) {
+    else if (query.kind === "column" && query.qualifier) {
       const table = resolveQualifierTable(value, query.qualifier, completion.tables);
       const cols = table ? completion.columnsByTable[table.toLowerCase()] ?? [] : [];
-      return filterByPrefix(cols, query.prefix).map((label) => ({
+      primary = filterByPrefix(cols, query.prefix).map((label) => ({
         label,
         kind: "column" as const,
       }));
     }
-    return [];
-  }, [completion, query, value]);
+    /* Words already in the editor follow the primary list, minus keywords,
+       whatever the primary list already offers, and the word being typed. */
+    const listed = new Set(primary.map((s) => s.label.toLowerCase()));
+    const tokens = documentTokens(value, query.from, caret, [
+      ...completion.keywords,
+      ...listed,
+      query.prefix,
+    ]);
+    const extra = filterByPrefix(tokens, query.prefix).map((label) => ({
+      label,
+      kind: "token" as const,
+    }));
+    return [...primary, ...extra];
+  }, [completion, query, value, caret]);
 
-  /* Auto-open for table/column contexts; keyword context is Ctrl+Space only. */
+  /* Auto-open while a word is being typed; an empty word needs Ctrl+Space. */
   useEffect(() => {
     if (suggestions.length === 0) {
       setOpen(false);
@@ -139,11 +165,14 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
       setOpen(false);
       return;
     }
-    if (query?.auto || manualRef.current) {
+    const typed = typedRef.current;
+    typedRef.current = false;
+    if ((query?.auto && typed) || manualRef.current) {
       setOpen(true);
       setSelIndex(0);
       return;
     }
+    /* A caret move without typing (click, arrow keys) closes the list. */
     setOpen(false);
   }, [suggestions, query, value]);
 
@@ -222,10 +251,12 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
         spellCheck={false}
         placeholder={placeholder}
         onChange={(e) => {
+          typedRef.current = true;
           onChange(e.target.value);
           setCaret(e.target.selectionStart);
         }}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+        onMouseDown={closePopup}
         onBlur={closePopup}
         onScroll={(e) => {
           const ta = e.currentTarget;
@@ -313,10 +344,12 @@ export const SqlEditor = forwardRef<SqlEditorHandle, Props>(function SqlEditor(
                       ? "text-emerald-400"
                       : s.kind === "column"
                       ? "text-accent-400"
+                      : s.kind === "token"
+                      ? "text-zinc-500"
                       : "text-purple-400"
                   )}
                 >
-                  {s.kind === "table" ? "tbl" : s.kind === "column" ? "col" : "kw"}
+                  {s.kind === "table" ? "tbl" : s.kind === "column" ? "col" : s.kind === "token" ? "txt" : "kw"}
                 </span>
                 <span className="truncate">{s.label}</span>
               </div>
